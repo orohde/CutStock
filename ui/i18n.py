@@ -1,0 +1,499 @@
+"""Internationalisierung – einfaches Dictionary-basiertes System.
+
+Sprachen: Deutsch (de), Englisch (en), Französisch (fr), Italienisch (it).
+Standard: Englisch. Gespeichert in settings.json neben der DB.
+"""
+
+TRANSLATIONS = {
+    # ---- App / Fenster ----
+    "app.title": {
+        "de": "CutStock – Verschnittoptimierung",
+        "en": "CutStock – Cut Optimization",
+        "fr": "CutStock – Optimisation de coupe",
+        "it": "CutStock – Ottimizzazione del taglio",
+    },
+    # ---- Tabs ----
+    "tab.material_stock": {
+        "de": "Material && Lager",
+        "en": "Material && Stock",
+        "fr": "Matériau && Stock",
+        "it": "Materiale && Magazzino",
+    },
+    "tab.projects": {
+        "de": "Projekte", "en": "Projects", "fr": "Projets", "it": "Progetti",
+    },
+    "tab.optimization": {
+        "de": "Optimierung", "en": "Optimization", "fr": "Optimisation",
+        "it": "Ottimizzazione",
+    },
+    "tab.settings": {
+        "de": "Einstellungen", "en": "Settings", "fr": "Paramètres",
+        "it": "Impostazioni",
+    },
+    # ---- Material & Lager ----
+    "mat.title": {
+        "de": "Materialien", "en": "Materials", "fr": "Matériaux",
+        "it": "Materiali",
+    },
+    "mat.new": {
+        "de": "Neues Material", "en": "New Material", "fr": "Nouveau matériau",
+        "it": "Nuovo materiale",
+    },
+    "mat.edit": {
+        "de": "Material bearbeiten", "en": "Edit Material", "fr": "Modifier matériau",
+        "it": "Modifica materiale",
+    },
+    "mat.name": {"de": "Name:", "en": "Name:", "fr": "Nom:", "it": "Nome:"},
+    "mat.type": {"de": "Typ:", "en": "Type:", "fr": "Type:", "it": "Tipo:"},
+    "mat.plate": {"de": "Platte", "en": "Panel", "fr": "Panneau", "it": "Pannello"},
+    "mat.bar": {"de": "Stange", "en": "Bar", "fr": "Barre", "it": "Barra"},
+    "mat.thickness": {
+        "de": "Dicke:", "en": "Thickness:", "fr": "Épaisseur:",
+        "it": "Spessore:",
+    },
+    "mat.cross_w": {
+        "de": "Querschnitt Breite:", "en": "Cross-section Width:",
+        "fr": "Largeur section:", "it": "Larghezza sezione:",
+    },
+    "mat.cross_d": {
+        "de": "Querschnitt Tiefe:", "en": "Cross-section Depth:",
+        "fr": "Profondeur section:", "it": "Profondità sezione:",
+    },
+    "mat.grain": {
+        "de": "Maserung:", "en": "Grain:", "fr": "Veinage:",
+        "it": "Venatura:",
+    },
+    "mat.grain.none": {
+        "de": "Keine (frei drehbar)", "en": "None (freely rotatable)",
+        "fr": "Aucun (rotation libre)", "it": "Nessuna (rotazione libera)",
+    },
+    "mat.grain.long": {
+        "de": "Längs (lange Kante)", "en": "Lengthwise (long edge)",
+        "fr": "Longitudinal (long côté)", "it": "Longitudinale (lato lungo)",
+    },
+    "mat.grain.cross": {
+        "de": "Quer (kurze Kante)", "en": "Crosswise (short edge)",
+        "fr": "Transversal (court côté)", "it": "Trasversale (lato corto)",
+    },
+    "mat.trim": {
+        "de": "Besäumung (Rand):", "en": "Edge trim:", "fr": "Délignage:",
+        "it": "Rifilatura (bordo):",
+    },
+    "mat.min_rest_l": {
+        "de": "Min-Restlänge:", "en": "Min rest length:", "fr": "Longueur min reste:",
+        "it": "Lunghezza min resto:",
+    },
+    "mat.min_rest_w": {
+        "de": "Min-Restbreite:", "en": "Min rest width:", "fr": "Largeur min reste:",
+        "it": "Larghezza min resto:",
+    },
+    "mat.dim": {
+        "de": "Dicke/Querschnitt", "en": "Thickness/Section",
+        "fr": "Épaisseur/Section", "it": "Spessore/Sezione",
+    },
+    # ---- Lager / Stock ----
+    "stock.title": {
+        "de": "Lagerbestand", "en": "Stock", "fr": "Stock",
+        "it": "Magazzino",
+    },
+    "stock.new": {
+        "de": "Lagerstück hinzufügen", "en": "Add Stock Piece",
+        "fr": "Ajouter pièce de stock", "it": "Aggiungi pezzo a magazzino",
+    },
+    "stock.edit": {
+        "de": "Lagerstück bearbeiten", "en": "Edit Stock Piece",
+        "fr": "Modifier pièce de stock", "it": "Modifica pezzo a magazzino",
+    },
+    "stock.length": {
+        "de": "Länge:", "en": "Length:", "fr": "Longueur:", "it": "Lunghezza:",
+    },
+    "stock.width": {
+        "de": "Breite:", "en": "Width:", "fr": "Largeur:", "it": "Larghezza:",
+    },
+    "stock.qty": {
+        "de": "Stückzahl:", "en": "Quantity:", "fr": "Quantité:", "it": "Quantità:",
+    },
+    # ---- Projekte ----
+    "proj.title": {
+        "de": "Projekte", "en": "Projects", "fr": "Projets", "it": "Progetti",
+    },
+    "proj.new": {
+        "de": "Neues Projekt", "en": "New Project", "fr": "Nouveau projet",
+        "it": "Nuovo progetto",
+    },
+    "proj.name": {
+        "de": "Projektname:", "en": "Project name:", "fr": "Nom du projet:",
+        "it": "Nome progetto:",
+    },
+    "proj.name_hint": {
+        "de": "z.B. Regal Wohnzimmer", "en": "e.g. Living room shelf",
+        "fr": "p.ex. Étagère salon", "it": "es. Scaffale soggiorno",
+    },
+    "proj.parts": {
+        "de": "Teile", "en": "Parts", "fr": "Pièces", "it": "Pezzi",
+    },
+    # ---- Teile / Parts ----
+    "part.new": {
+        "de": "Neues Teil", "en": "New Part", "fr": "Nouvelle pièce",
+        "it": "Nuovo pezzo",
+    },
+    "part.edit": {
+        "de": "Teil bearbeiten", "en": "Edit Part", "fr": "Modifier pièce",
+        "it": "Modifica pezzo",
+    },
+    "part.add": {
+        "de": "Teil hinzufügen", "en": "Add Part", "fr": "Ajouter pièce",
+        "it": "Aggiungi pezzo",
+    },
+    "part.label": {"de": "Label:", "en": "Label:", "fr": "Label:", "it": "Etichetta:"},
+    "part.label_hint": {
+        "de": "z.B. Seitenwand links", "en": "e.g. Left side panel",
+        "fr": "p.ex. Panneau latéral gauche", "it": "es. Pannello laterale sinistro",
+    },
+    "part.grain.any": {
+        "de": "Egal (frei drehbar)", "en": "Any (freely rotatable)",
+        "fr": "Indifférent (rotation libre)", "it": "Indifferente (rotazione libera)",
+    },
+    "part.grain.long": {
+        "de": "Längs (∥ Teillänge)", "en": "Lengthwise (∥ part length)",
+        "fr": "Longitudinal (∥ longueur pièce)",
+        "it": "Longitudinale (∥ lunghezza pezzo)",
+    },
+    "part.grain.cross": {
+        "de": "Quer (∥ Teilbreite)", "en": "Crosswise (∥ part width)",
+        "fr": "Transversal (∥ largeur pièce)",
+        "it": "Trasversale (∥ larghezza pezzo)",
+    },
+    # ---- Sägeblätter / Saw Blades ----
+    "blade.title": {
+        "de": "Sägeblätter", "en": "Saw Blades", "fr": "Lames de scie",
+        "it": "Lame da sega",
+    },
+    "blade.new": {
+        "de": "Neues Sägeblatt", "en": "New Saw Blade",
+        "fr": "Nouvelle lame de scie", "it": "Nuova lama da sega",
+    },
+    "blade.edit": {
+        "de": "Sägeblatt bearbeiten", "en": "Edit Saw Blade",
+        "fr": "Modifier lame de scie", "it": "Modifica lama da sega",
+    },
+    "blade.name": {"de": "Name:", "en": "Name:", "fr": "Nom:", "it": "Nome:"},
+    "blade.kerf": {
+        "de": "Schnittbreite:", "en": "Kerf width:", "fr": "Largeur de trait:",
+        "it": "Larghezza di taglio:",
+    },
+    # ---- Optimierung ----
+    "opt.project": {
+        "de": "Projekt:", "en": "Project:", "fr": "Projet:", "it": "Progetto:",
+    },
+    "opt.material": {
+        "de": "Material:", "en": "Material:", "fr": "Matériau:", "it": "Materiale:",
+    },
+    "opt.blade": {
+        "de": "Sägeblatt:", "en": "Saw blade:", "fr": "Lame:", "it": "Lama:",
+    },
+    "opt.run": {
+        "de": "Optimieren", "en": "Optimize", "fr": "Optimiser", "it": "Ottimizza",
+    },
+    "opt.confirm": {
+        "de": "Bestätigen (gesägt)", "en": "Confirm (cut)",
+        "fr": "Confirmer (découpé)", "it": "Conferma (tagliato)",
+    },
+    "opt.pdf": {
+        "de": "PDF Export", "en": "PDF Export", "fr": "Export PDF",
+        "it": "Esporta PDF",
+    },
+    "opt.result": {
+        "de": "Ergebnis: {n_plans} Lagerstück(e) verwendet, {n_parts} Teile platziert, Verschnitt: {waste}%",
+        "en": "Result: {n_plans} stock piece(s) used, {n_parts} parts placed, Waste: {waste}%",
+        "fr": "Résultat: {n_plans} pièce(s) de stock, {n_parts} pièces placées, Chute: {waste}%",
+        "it": "Risultato: {n_plans} pezzo/i a magazzino, {n_parts} pezzi piazzati, Sfrido: {waste}%",
+    },
+    "opt.missing": {
+        "de": "FEHLEND", "en": "MISSING", "fr": "MANQUANT", "it": "MANCANTE",
+    },
+    "opt.no_parts": {
+        "de": "Keine offenen Teile für dieses Material.",
+        "en": "No open parts for this material.",
+        "fr": "Aucune pièce ouverte pour ce matériau.",
+        "it": "Nessun pezzo aperto per questo materiale.",
+    },
+    "opt.no_stock": {
+        "de": "Kein Lagerstück für dieses Material vorhanden.",
+        "en": "No stock piece available for this material.",
+        "fr": "Aucune pièce de stock disponible pour ce matériau.",
+        "it": "Nessun pezzo a magazzino disponibile per questo materiale.",
+    },
+    "opt.confirm_msg": {
+        "de": "Schnittplan übernehmen?\n- Verbrauchte Lagerstücke werden ausgetragen\n- Verwertbare Reste werden eingebucht\n- Teile werden als gesägt markiert",
+        "en": "Apply cutting plan?\n- Used stock pieces will be removed\n- Usable remnants will be added to stock\n- Parts will be marked as cut",
+        "fr": "Appliquer le plan de coupe?\n- Les pièces de stock utilisées seront retirées\n- Les chutes utilisables seront ajoutées au stock\n- Les pièces seront marquées comme coupées",
+        "it": "Applicare il piano di taglio?\n- I pezzi a magazzino utilizzati verranno rimossi\n- Gli sfridi riutilizzabili verranno aggiunti al magazzino\n- I pezzi verranno contrassegnati come tagliati",
+    },
+    "opt.done": {
+        "de": "Schnittplan bestätigt. Lager aktualisiert.",
+        "en": "Cutting plan confirmed. Stock updated.",
+        "fr": "Plan de coupe confirmé. Stock mis à jour.",
+        "it": "Piano di taglio confermato. Magazzino aggiornato.",
+    },
+    # ---- Einstellungen ----
+    "set.window": {
+        "de": "Fenster", "en": "Window", "fr": "Fenêtre", "it": "Finestra",
+    },
+    "set.remember_size": {
+        "de": "Fenstergröße und -position merken",
+        "en": "Remember window size and position",
+        "fr": "Mémoriser taille et position de la fenêtre",
+        "it": "Ricorda dimensione e posizione della finestra",
+    },
+    "set.appearance": {
+        "de": "Aussehen", "en": "Appearance", "fr": "Apparence", "it": "Aspetto",
+    },
+    "set.theme": {
+        "de": "Farbschema:", "en": "Color theme:", "fr": "Thème:",
+        "it": "Tema colori:",
+    },
+    "set.unit": {
+        "de": "Maßeinheit:", "en": "Unit:", "fr": "Unité:",
+        "it": "Unità di misura:",
+    },
+    "set.language": {
+        "de": "Sprache:", "en": "Language:", "fr": "Langue:", "it": "Lingua:",
+    },
+    "set.restart_now": {
+        "de": "Die Änderung wird nach einem Neustart wirksam.\nJetzt neu starten?",
+        "en": "The change takes effect after a restart.\nRestart now?",
+        "fr": "Le changement prend effet après un redémarrage.\nRedémarrer maintenant?",
+        "it": "La modifica avrà effetto dopo un riavvio.\nRiavviare ora?",
+    },
+    "set.storage": {
+        "de": "Speicherorte", "en": "Storage", "fr": "Stockage",
+        "it": "Archiviazione",
+    },
+    "set.db_path": {
+        "de": "Datenbank:", "en": "Database:", "fr": "Base de données:",
+        "it": "Database:",
+    },
+    "set.settings_path": {
+        "de": "Einstellungen:", "en": "Settings:", "fr": "Paramètres:",
+        "it": "Impostazioni:",
+    },
+    # ---- Allgemein ----
+    "btn.save": {
+        "de": "Speichern", "en": "Save", "fr": "Enregistrer", "it": "Salva",
+    },
+    "btn.cancel": {
+        "de": "Abbrechen", "en": "Cancel", "fr": "Annuler", "it": "Annulla",
+    },
+    "btn.edit": {
+        "de": "Bearbeiten", "en": "Edit", "fr": "Modifier", "it": "Modifica",
+    },
+    "btn.delete": {
+        "de": "Löschen", "en": "Delete", "fr": "Supprimer", "it": "Elimina",
+    },
+    "btn.remove": {
+        "de": "Entfernen", "en": "Remove", "fr": "Retirer", "it": "Rimuovi",
+    },
+    "btn.new": {
+        "de": "Neu", "en": "New", "fr": "Nouveau", "it": "Nuovo",
+    },
+    "btn.create": {
+        "de": "Anlegen", "en": "Create", "fr": "Créer", "it": "Crea",
+    },
+    "btn.confirm": {
+        "de": "Bestätigen", "en": "Confirm", "fr": "Confirmer", "it": "Conferma",
+    },
+    "dlg.delete_title": {
+        "de": "Löschen", "en": "Delete", "fr": "Supprimer", "it": "Elimina",
+    },
+    "dlg.delete_material": {
+        "de": "Material und alle zugehörigen Daten löschen?\n\n- {n} Lagerstück(e) werden entfernt\n- Teile mit diesem Material werden aus Projekten entfernt",
+        "en": "Delete material and all related data?\n\n- {n} stock piece(s) will be removed\n- Parts using this material will be removed from projects",
+        "fr": "Supprimer le matériau et toutes les données liées?\n\n- {n} pièce(s) de stock seront retirées\n- Les pièces utilisant ce matériau seront retirées des projets",
+        "it": "Eliminare il materiale e tutti i dati associati?\n\n- {n} pezzo/i a magazzino verranno rimossi\n- I pezzi che utilizzano questo materiale verranno rimossi dai progetti",
+    },
+    "dlg.delete_stock": {
+        "de": "Lagerstück wirklich löschen?",
+        "en": "Really delete stock piece?",
+        "fr": "Vraiment supprimer la pièce de stock?",
+        "it": "Eliminare davvero il pezzo a magazzino?",
+    },
+    "dlg.delete_project": {
+        "de": "Projekt und alle Teile löschen?",
+        "en": "Delete project and all parts?",
+        "fr": "Supprimer le projet et toutes les pièces?",
+        "it": "Eliminare il progetto e tutti i pezzi?",
+    },
+    "dlg.delete_part": {
+        "de": "Teil wirklich entfernen?",
+        "en": "Really remove part?",
+        "fr": "Vraiment retirer la pièce?",
+        "it": "Rimuovere davvero il pezzo?",
+    },
+    "dlg.delete_blade": {
+        "de": "Sägeblatt wirklich löschen?",
+        "en": "Really delete saw blade?",
+        "fr": "Vraiment supprimer la lame de scie?",
+        "it": "Eliminare davvero la lama da sega?",
+    },
+    "dlg.select_project": {
+        "de": "Bitte zuerst ein Projekt wählen.",
+        "en": "Please select a project first.",
+        "fr": "Veuillez d'abord sélectionner un projet.",
+        "it": "Selezionare prima un progetto.",
+    },
+    "dlg.select_material": {
+        "de": "Bitte zuerst ein Material wählen.",
+        "en": "Please select a material first.",
+        "fr": "Veuillez d'abord sélectionner un matériau.",
+        "it": "Selezionare prima un materiale.",
+    },
+    "dlg.select_all": {
+        "de": "Bitte Projekt, Material und Sägeblatt wählen.",
+        "en": "Please select project, material and saw blade.",
+        "fr": "Veuillez sélectionner projet, matériau et lame.",
+        "it": "Selezionare progetto, materiale e lama.",
+    },
+    "status.open": {
+        "de": "offen", "en": "open", "fr": "ouvert", "it": "aperto",
+    },
+    "status.cut": {
+        "de": "gesägt", "en": "cut", "fr": "coupé", "it": "tagliato",
+    },
+    "hint": {"de": "Hinweis", "en": "Note", "fr": "Note", "it": "Nota"},
+    "error": {"de": "Fehler", "en": "Error", "fr": "Erreur", "it": "Errore"},
+    "done": {"de": "Erledigt", "en": "Done", "fr": "Terminé", "it": "Fatto"},
+    # ---- Import / Export ----
+    "proj.export": {
+        "de": "Export", "en": "Export", "fr": "Exporter", "it": "Esporta",
+    },
+    "proj.import": {
+        "de": "Import", "en": "Import", "fr": "Importer", "it": "Importa",
+    },
+    "proj.export_done": {
+        "de": "Projekt erfolgreich exportiert.",
+        "en": "Project exported successfully.",
+        "fr": "Projet exporté avec succès.",
+        "it": "Progetto esportato con successo.",
+    },
+    "proj.import_done": {
+        "de": "{n} Teil(e) erfolgreich importiert.",
+        "en": "{n} part(s) imported successfully.",
+        "fr": "{n} pièce(s) importée(s) avec succès.",
+        "it": "{n} pezzo/i importato/i con successo.",
+    },
+    "proj.import_missing": {
+        "de": "Folgende Materialien wurden nicht gefunden, betroffene Teile übersprungen:\n{materials}",
+        "en": "The following materials were not found, affected parts skipped:\n{materials}",
+        "fr": "Les matériaux suivants n'ont pas été trouvés, pièces concernées ignorées:\n{materials}",
+        "it": "I seguenti materiali non sono stati trovati, pezzi interessati saltati:\n{materials}",
+    },
+    # ---- Backup / Restore ----
+    "set.backup": {
+        "de": "Backup", "en": "Backup", "fr": "Sauvegarde", "it": "Backup",
+    },
+    "set.backup_create": {
+        "de": "Backup erstellen", "en": "Create Backup",
+        "fr": "Créer une sauvegarde", "it": "Crea backup",
+    },
+    "set.backup_restore": {
+        "de": "Backup wiederherstellen", "en": "Restore Backup",
+        "fr": "Restaurer sauvegarde", "it": "Ripristina backup",
+    },
+    "set.backup_done": {
+        "de": "Backup erfolgreich erstellt.", "en": "Backup created successfully.",
+        "fr": "Sauvegarde créée avec succès.", "it": "Backup creato con successo.",
+    },
+    "set.backup_confirm": {
+        "de": "Alle aktuellen Daten werden überschrieben. Fortfahren?",
+        "en": "All current data will be overwritten. Continue?",
+        "fr": "Toutes les données actuelles seront écrasées. Continuer?",
+        "it": "Tutti i dati attuali verranno sovrascritti. Continuare?",
+    },
+    "set.backup_invalid": {
+        "de": "Ungültiges Backup: Die ZIP-Datei enthält keine gültige Datenbank.",
+        "en": "Invalid backup: The ZIP file does not contain a valid database.",
+        "fr": "Sauvegarde invalide: le fichier ZIP ne contient pas de base de données valide.",
+        "it": "Backup non valido: il file ZIP non contiene un database valido.",
+    },
+    "set.backup_restored": {
+        "de": "Backup erfolgreich wiederhergestellt. Die App wird neu gestartet.",
+        "en": "Backup restored successfully. The app will restart.",
+        "fr": "Sauvegarde restaurée avec succès. L'application va redémarrer.",
+        "it": "Backup ripristinato con successo. L'app verrà riavviata.",
+    },
+    # ---- Statistik ----
+    "stat.title": {
+        "de": "Statistik", "en": "Statistics", "fr": "Statistiques",
+        "it": "Statistiche",
+    },
+    "stat.stock_used": {
+        "de": "Lagerstücke verwendet", "en": "Stock pieces used",
+        "fr": "Pièces de stock utilisées", "it": "Pezzi a magazzino utilizzati",
+    },
+    "stat.parts_placed": {
+        "de": "Teile platziert", "en": "Parts placed",
+        "fr": "Pièces placées", "it": "Pezzi piazzati",
+    },
+    "stat.parts_missing": {
+        "de": "Fehlende Teile", "en": "Missing parts",
+        "fr": "Pièces manquantes", "it": "Pezzi mancanti",
+    },
+    "stat.total_waste": {
+        "de": "Gesamtverschnitt", "en": "Total waste",
+        "fr": "Chute totale", "it": "Sfrido totale",
+    },
+    "stat.utilization": {
+        "de": "Materialausnutzung", "en": "Material utilization",
+        "fr": "Utilisation du matériau", "it": "Utilizzo del materiale",
+    },
+    "stat.per_stock": {
+        "de": "Pro Lagerstück", "en": "Per stock piece",
+        "fr": "Par pièce de stock", "it": "Per pezzo a magazzino",
+    },
+    "opt.preview": {
+        "de": "Vorschau", "en": "Preview", "fr": "Aperçu", "it": "Anteprima",
+    },
+    "opt.algo_greedy": {
+        "de": "Schnell (Greedy)", "en": "Fast (Greedy)",
+        "fr": "Rapide (Greedy)", "it": "Veloce (Greedy)",
+    },
+    "opt.algo_nested": {
+        "de": "Nested Guillotine (Platten)", "en": "Nested Guillotine (Panels)",
+        "fr": "Guillotine imbriquée (Panneaux)", "it": "Ghigliottina nidificata (Pannelli)",
+    },
+    "opt.algo_ga": {
+        "de": "Gründlich (GA)", "en": "Thorough (GA)",
+        "fr": "Approfondi (GA)", "it": "Approfondito (GA)",
+    },
+}
+
+LANGUAGES = {"en": "English", "de": "Deutsch", "fr": "Français", "it": "Italiano"}
+
+_current_lang = None
+
+
+def current_language() -> str:
+    global _current_lang
+    if _current_lang is None:
+        from core.settings import get_settings
+        _current_lang = get_settings().value("appearance/language", "en")
+    return _current_lang
+
+
+def set_language(lang: str):
+    global _current_lang
+    _current_lang = lang
+    from core.settings import get_settings
+    get_settings().setValue("appearance/language", lang)
+
+
+def t(key: str, **kwargs) -> str:
+    """Übersetzung holen. Fehlende Keys geben den Key selbst zurück."""
+    entry = TRANSLATIONS.get(key)
+    if not entry:
+        return key
+    text = entry.get(current_language(), entry.get("en", key))
+    if kwargs:
+        text = text.format(**kwargs)
+    return text
