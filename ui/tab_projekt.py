@@ -105,6 +105,8 @@ class ProjektTab(QWidget):
 
     def _refresh_projekte(self):
         self.proj_table.blockSignals(True)
+        self.teil_table.setRowCount(0)
+        self.proj_table.setCurrentCell(-1, -1)
         projekte = self.db.list_projekte()
         self.proj_table.setRowCount(len(projekte))
         for i, p in enumerate(projekte):
