@@ -57,6 +57,16 @@ def main():
     app = QApplication(sys.argv)
     lock = AppLock(DEFAULT_DB)
 
+    # Alte Lock-Dateien aufräumen (Migration von Datei- auf DB-Lock)
+    from pathlib import Path
+    for old_file in [DEFAULT_DB.parent / "cutstock.lock",
+                     DEFAULT_DB.parent / "cutstock.shutdown"]:
+        if old_file.exists():
+            try:
+                old_file.unlink()
+            except OSError:
+                pass
+
     if not check_lock(app, lock):
         sys.exit(0)
 

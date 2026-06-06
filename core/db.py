@@ -90,6 +90,12 @@ CREATE TABLE IF NOT EXISTS lagerstueck (
     stueckzahl  INTEGER NOT NULL DEFAULT 1
 );
 
+CREATE TABLE IF NOT EXISTS app_lock (
+    id          INTEGER PRIMARY KEY CHECK(id = 1),
+    hostname    TEXT    NOT NULL DEFAULT '',
+    heartbeat   REAL    NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS saegeblatt (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     name           TEXT    NOT NULL,

@@ -101,5 +101,6 @@ class MainWindow(QMainWindow):
         self.db.conn.commit()
         if not self._shutdown_by_remote:
             self.lock.release()
+        self.lock.close()
         self.db.close()
         super().closeEvent(event)

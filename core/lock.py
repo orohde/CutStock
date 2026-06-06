@@ -1,22 +1,19 @@
-"""Dateibasierter Lock-Mechanismus für iCloud-Synchronisation.
+"""DB-basierter Lock-Mechanismus für iCloud-Synchronisation.
 
-Legt eine Lock-Datei neben der DB ab. Da diese über iCloud synchronisiert
-wird, können andere Macs erkennen, dass die App bereits geöffnet ist.
+Der Lock wird direkt in der SQLite-Datenbank gespeichert (Tabelle app_lock).
+Da die DB über iCloud synchronisiert wird, ist kein separates Lock-File nötig.
 
-Der Lock enthält einen Heartbeat-Timestamp der alle paar Sekunden
-aktualisiert wird. Ein Lock gilt als abgelaufen wenn der Heartbeat
-älter als STALE_SECONDS ist – das macht den Mechanismus robust gegen
-iCloud-Sync-Verzögerungen und nicht sauber beendete Instanzen.
+Heartbeat-Timestamp wird regelmäßig aktualisiert. Ein Lock gilt als
+abgelaufen wenn der Heartbeat älter als STALE_SECONDS ist.
 """
 
 from __future__ import annotations
 
-import json
 import platform
 import time
 from pathlib import Path
 
-STALE_SECONDS = 120  # iCloud kann Minuten fuer Sync brauchen
+STALE_SECONDS = 120
 
 
 def _hostname() -> str:
@@ -25,18 +22,34 @@ def _hostname() -> str:
 
 class AppLock:
     def __init__(self, db_path: Path):
-        self.lock_file = db_path.parent / "cutstock.lock"
-        self.shutdown_file = db_path.parent / "cutstock.shutdown"
+        self.db_path = db_path
         self.hostname = _hostname()
+        # Eigene DB-Verbindung für Lock (unabhängig von der Haupt-DB)
+        self._conn = None
+
+    def _get_conn(self):
+        if self._conn is None:
+            import sqlite3
+            self._conn = sqlite3.connect(str(self.db_path))
+            self._conn.execute("PRAGMA journal_mode = DELETE")
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS app_lock (
+                    id INTEGER PRIMARY KEY CHECK(id = 1),
+                    hostname TEXT NOT NULL DEFAULT '',
+                    heartbeat REAL NOT NULL DEFAULT 0
+                )""")
+            self._conn.commit()
+        return self._conn
 
     def read_lock(self) -> dict | None:
-        if not self.lock_file.exists():
-            return None
         try:
-            data = json.loads(self.lock_file.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and "hostname" in data:
-                return data
-        except (json.JSONDecodeError, OSError):
+            conn = self._get_conn()
+            row = conn.execute(
+                "SELECT hostname, heartbeat FROM app_lock WHERE id=1"
+            ).fetchone()
+            if row:
+                return {"hostname": row[0], "heartbeat": row[1]}
+        except Exception:
             pass
         return None
 
@@ -44,9 +57,9 @@ class AppLock:
         lock = self.read_lock()
         if not lock:
             return False
-        if lock.get("hostname") == self.hostname:
+        if lock["hostname"] == self.hostname:
             return False
-        age = time.time() - lock.get("heartbeat", lock.get("timestamp", 0))
+        age = time.time() - lock["heartbeat"]
         if age > STALE_SECONDS:
             return False
         return True
@@ -55,73 +68,70 @@ class AppLock:
         lock = self.read_lock()
         if not lock:
             return "Niemand"
-        host = lock.get("hostname", "?")
-        ts = lock.get("heartbeat", lock.get("timestamp", 0))
+        host = lock["hostname"]
+        ts = lock["heartbeat"]
         if ts:
             import datetime
             dt = datetime.datetime.fromtimestamp(ts)
             zeit = dt.strftime("%d.%m.%Y %H:%M:%S")
             age = int(time.time() - ts)
             if age > STALE_SECONDS:
-                return f"{host} (letzter Heartbeat vor {age}s – vermutlich nicht mehr aktiv)"
+                return f"{host} (letzter Heartbeat vor {age}s)"
         else:
             zeit = "?"
         return f"{host} (aktiv seit {zeit})"
 
     def acquire(self):
+        conn = self._get_conn()
         now = time.time()
-        data = {
-            "hostname": self.hostname,
-            "timestamp": now,
-            "heartbeat": now,
-        }
-        self.lock_file.write_text(
-            json.dumps(data, indent=2), encoding="utf-8")
-        if self.shutdown_file.exists():
-            try:
-                self.shutdown_file.unlink()
-            except OSError:
-                pass
+        conn.execute(
+            "INSERT OR REPLACE INTO app_lock (id, hostname, heartbeat) "
+            "VALUES (1, ?, ?)", (self.hostname, now))
+        conn.commit()
 
     def heartbeat(self):
-        """Heartbeat aktualisieren – zeigt dass die Instanz noch lebt."""
-        lock = self.read_lock()
-        if lock and lock.get("hostname") == self.hostname:
-            lock["heartbeat"] = time.time()
-            try:
-                self.lock_file.write_text(
-                    json.dumps(lock, indent=2), encoding="utf-8")
-            except OSError:
-                pass
+        try:
+            conn = self._get_conn()
+            conn.execute(
+                "UPDATE app_lock SET heartbeat=? WHERE id=1 AND hostname=?",
+                (time.time(), self.hostname))
+            conn.commit()
+        except Exception:
+            pass
 
     def release(self):
-        lock = self.read_lock()
-        if lock and lock.get("hostname") == self.hostname:
-            try:
-                self.lock_file.unlink()
-            except OSError:
-                pass
+        try:
+            conn = self._get_conn()
+            conn.execute(
+                "DELETE FROM app_lock WHERE id=1 AND hostname=?",
+                (self.hostname,))
+            conn.commit()
+        except Exception:
+            pass
 
     def request_remote_shutdown(self):
-        data = {
-            "requested_by": self.hostname,
-            "timestamp": time.time(),
-        }
-        self.shutdown_file.write_text(
-            json.dumps(data, indent=2), encoding="utf-8")
+        """Shutdown-Signal: hostname auf spezielle Markierung setzen."""
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT OR REPLACE INTO app_lock (id, hostname, heartbeat) "
+            "VALUES (1, ?, ?)",
+            (f"SHUTDOWN_BY:{self.hostname}", time.time()))
+        conn.commit()
 
     def is_shutdown_requested(self) -> bool:
-        if not self.shutdown_file.exists():
+        lock = self.read_lock()
+        if not lock:
             return False
-        try:
-            data = json.loads(self.shutdown_file.read_text(encoding="utf-8"))
-            return data.get("requested_by") != self.hostname
-        except (json.JSONDecodeError, OSError):
-            return False
+        return (lock["hostname"].startswith("SHUTDOWN_BY:") and
+                not lock["hostname"].endswith(self.hostname))
 
     def clear_shutdown_signal(self):
-        try:
-            if self.shutdown_file.exists():
-                self.shutdown_file.unlink()
-        except OSError:
-            pass
+        pass  # acquire() überschreibt den SHUTDOWN-Eintrag
+
+    def close(self):
+        if self._conn:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
