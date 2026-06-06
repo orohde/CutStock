@@ -506,22 +506,17 @@ class OptimierungTab(QWidget):
     def _on_teil_cut(self, label: str):
         """Wird aufgerufen wenn ein Teil in der Grafik angeklickt wird.
 
-        Bei jeder Markierung wird sofort:
-        - gesaegt_anzahl im Projekt aktualisiert
-        - Bei erster Markierung auf einem Lagerstück: Lagerstück verbrauchen
-        - Reste sofort als neues Lagerstück einbuchen
-        - Bei Abwahl: Lagerstück zurückbuchen, Reste entfernen
+        Aktualisiert nur gesaegt_anzahl im Projekt.
+        Lager wird NICHT verändert – das passiert nur beim Bestätigen.
+        Der Optimierer plant beim nächsten Lauf nur die offenen Teile.
         """
         if not self._lauf_projekt_id:
             return
         projekt = self.db.get_projekt(self._lauf_projekt_id)
         if not projekt:
             return
-        mat = self.db.get_material(self._lauf_material_id)
-        if not mat:
-            return
 
-        # 1) gesaegt_anzahl aktualisieren
+        # gesaegt_anzahl aktualisieren
         marked_count = 0
         for i in range(self.result_layout.count()):
             w = self.result_layout.itemAt(i).widget()
@@ -535,48 +530,6 @@ class OptimierungTab(QWidget):
                 teil.gesaegt_anzahl = min(marked_count, teil.stueckzahl)
                 self.db.save_teil(teil)
                 break
-
-        # 2) Lager pro Schnittplan-Widget aktualisieren
-        for i in range(self.result_layout.count()):
-            w = self.result_layout.itemAt(i).widget()
-            if not isinstance(w, SchnittplanWidget):
-                continue
-
-            has_marks = len(w.marked) > 0
-            was_consumed = getattr(w, '_stock_consumed', False)
-
-            if has_marks and not was_consumed:
-                # Erste Markierung: Lagerstück verbrauchen + Reste einbuchen
-                ls = self.db.get_lagerstueck(w.plan.lagerstueck_id)
-                if ls:
-                    self.db.lager_verbrauchen(w.plan.lagerstueck_id)
-                # Reste einbuchen und IDs merken
-                rest_ids = []
-                for rest in w.plan.reste:
-                    if mat.typ == MaterialTyp.STANGE:
-                        r = self.db.rest_einbuchen(mat.id, rest[0])
-                    else:
-                        r = self.db.rest_einbuchen(mat.id, rest[0], rest[1])
-                    if r:
-                        rest_ids.append(r.id)
-                w._rest_ids = rest_ids
-                w._stock_consumed = True
-
-            elif not has_marks and was_consumed:
-                # Alle Markierungen entfernt: rückgängig machen
-                # Reste wieder entfernen
-                for rid in getattr(w, '_rest_ids', []):
-                    self.db.delete_lagerstueck(rid)
-                w._rest_ids = []
-                # Lagerstück zurückbuchen
-                from core.models import Lagerstueck
-                ls = Lagerstueck(
-                    material_id=self._lauf_material_id,
-                    laenge=w.plan.lager_laenge,
-                    breite=w.plan.lager_breite,
-                    stueckzahl=1)
-                self.db.save_lagerstueck(ls)
-                w._stock_consumed = False
 
     def _confirm(self):
         """Alle Teile auf einmal als gesägt markieren + Lager anpassen."""
