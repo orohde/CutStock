@@ -52,7 +52,7 @@ class MainWindow(QMainWindow):
 
         self._heartbeat_timer = QTimer(self)
         self._heartbeat_timer.timeout.connect(self._tick)
-        self._heartbeat_timer.start(10000)
+        self._heartbeat_timer.start(30000)  # 30s – passend zu STALE_SECONDS=120
 
     def _tick(self):
         self.lock.heartbeat()

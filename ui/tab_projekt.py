@@ -185,6 +185,7 @@ class ProjektTab(QWidget):
             teil.projekt_id = pid
             self.db.save_teil(teil)
             self._refresh_teile(pid)
+            self._refresh_projekte_progress()
 
     def _edit_teil(self):
         pid = self._get_selected_projekt_id()
@@ -203,6 +204,7 @@ class ProjektTab(QWidget):
             updated.projekt_id = pid
             self.db.save_teil(updated)
             self._refresh_teile(pid)
+            self._refresh_projekte_progress()
 
     def _delete_teil(self):
         pid = self._get_selected_projekt_id()
@@ -217,6 +219,7 @@ class ProjektTab(QWidget):
         if reply == QMessageBox.StandardButton.Yes:
             self.db.delete_teil(tid)
             self._refresh_teile(pid)
+            self._refresh_projekte_progress()
 
     def _cut_plus(self):
         pid = self._get_selected_projekt_id()

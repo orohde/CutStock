@@ -16,7 +16,7 @@ import platform
 import time
 from pathlib import Path
 
-STALE_SECONDS = 30
+STALE_SECONDS = 120  # iCloud kann Minuten fuer Sync brauchen
 
 
 def _hostname() -> str:
