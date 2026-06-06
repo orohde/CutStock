@@ -297,13 +297,29 @@ class OptimierungTab(QWidget):
         self.refresh()
 
     def refresh(self):
+        """Combos aktualisieren – Ergebnis bleibt erhalten."""
+        old_pid = self.proj_combo.currentData()
+        old_mid = self.mat_combo.currentData()
+
         self.proj_combo.blockSignals(True)
         self.proj_combo.clear()
         for p in self.db.list_projekte():
             self.proj_combo.addItem(p.name, p.id)
+        # Vorherige Auswahl wiederherstellen wenn möglich
+        if old_pid is not None:
+            idx = self.proj_combo.findData(old_pid)
+            if idx >= 0:
+                self.proj_combo.setCurrentIndex(idx)
         self.proj_combo.blockSignals(False)
 
-        self._projekt_changed()
+        # Material aktualisieren ohne Ergebnis zu löschen
+        self.mat_combo.blockSignals(True)
+        self._update_mat_combo()
+        if old_mid is not None:
+            idx = self.mat_combo.findData(old_mid)
+            if idx >= 0:
+                self.mat_combo.setCurrentIndex(idx)
+        self.mat_combo.blockSignals(False)
 
         self.blade_combo.clear()
         for s in self.db.list_saegeblaetter():
@@ -311,6 +327,9 @@ class OptimierungTab(QWidget):
 
     def _projekt_changed(self):
         self._clear_result()
+        self._update_mat_combo()
+
+    def _update_mat_combo(self):
         self.mat_combo.clear()
         pid = self.proj_combo.currentData()
         if pid is None:
@@ -491,24 +510,53 @@ class OptimierungTab(QWidget):
         projekt = self.db.get_projekt(self._lauf_projekt_id)
         if not projekt:
             return
-        # Das passende Teil im Projekt finden und gesaegt_anzahl anpassen
+
+        # Zähle markierte Instanzen dieses Labels über alle Schnittplan-Widgets
+        marked_count = 0
+        for i in range(self.result_layout.count()):
+            w = self.result_layout.itemAt(i).widget()
+            if isinstance(w, SchnittplanWidget):
+                for j, p in enumerate(w.plan.platzierungen):
+                    if p.teil_label == label and j in w.marked:
+                        marked_count += 1
+
         for teil in projekt.teile:
             if teil.label == label and teil.material_id == self._lauf_material_id:
-                # Prüfen ob der Klick markiert oder demarkiert wurde
-                # (Widget toggle ist schon passiert)
-                # Zähle wie viele Instanzen dieses Labels aktuell markiert sind
-                marked_count = 0
-                for i in range(self.result_layout.count()):
-                    w = self.result_layout.itemAt(i).widget()
-                    if isinstance(w, SchnittplanWidget):
-                        for j, p in enumerate(w.plan.platzierungen):
-                            if p.teil_label == label and j in w.marked:
-                                marked_count += 1
                 teil.gesaegt_anzahl = min(marked_count, teil.stueckzahl)
                 self.db.save_teil(teil)
                 break
 
+        # Prüfe ob ein Lagerstück komplett abgearbeitet ist
+        self._check_complete_stocks()
+
+    def _check_complete_stocks(self):
+        """Lagerstücke verbrauchen und Reste einbuchen wenn alle Teile drauf gesägt sind."""
+        if not self.ergebnis:
+            return
+        mat = self.db.get_material(self._lauf_material_id)
+        if not mat:
+            return
+
+        for i in range(self.result_layout.count()):
+            w = self.result_layout.itemAt(i).widget()
+            if not isinstance(w, SchnittplanWidget):
+                continue
+            # Sind alle Teile auf diesem Lagerstück markiert?
+            if len(w.marked) == len(w.plan.platzierungen) and len(w.marked) > 0:
+                # Bereits verarbeitet? (Lagerstück existiert noch?)
+                ls = self.db.get_lagerstueck(w.plan.lagerstueck_id)
+                if ls is None:
+                    continue  # schon verbraucht
+                # Lagerstück verbrauchen und Reste einbuchen
+                self.db.lager_verbrauchen(w.plan.lagerstueck_id)
+                for rest_l, rest_b in w.plan.reste:
+                    if mat.typ == MaterialTyp.STANGE:
+                        self.db.rest_einbuchen(mat.id, rest_l)
+                    else:
+                        self.db.rest_einbuchen(mat.id, rest_l, rest_b)
+
     def _confirm(self):
+        """Alle Teile auf einmal als gesägt markieren + Lager anpassen."""
         if not self.ergebnis or not self._lauf_projekt_id:
             return
 
@@ -525,26 +573,23 @@ class OptimierungTab(QWidget):
             return
 
         for plan in self.ergebnis.schnittplaene:
-            self.db.lager_verbrauchen(plan.lagerstueck_id)
-            for rest_l, rest_b in plan.reste:
-                if mat.typ == MaterialTyp.STANGE:
-                    self.db.rest_einbuchen(mat.id, rest_l)
-                else:
-                    self.db.rest_einbuchen(mat.id, rest_l, rest_b)
+            ls = self.db.get_lagerstueck(plan.lagerstueck_id)
+            if ls:  # nur wenn noch nicht einzeln verbraucht
+                self.db.lager_verbrauchen(plan.lagerstueck_id)
+                for rest_l, rest_b in plan.reste:
+                    if mat.typ == MaterialTyp.STANGE:
+                        self.db.rest_einbuchen(mat.id, rest_l)
+                    else:
+                        self.db.rest_einbuchen(mat.id, rest_l, rest_b)
 
         projekt = self.db.get_projekt(self._lauf_projekt_id)
         if projekt:
-            platzierte_labels = {p.teil_label for sp in self.ergebnis.schnittplaene
-                                 for p in sp.platzierungen}
             for teil in projekt.teile:
-                if (teil.label in platzierte_labels
-                        and teil.material_id == self._lauf_material_id):
-                    from core.models import TeilStatus
-                    teil.status = TeilStatus.GESAEGT
+                if teil.material_id == self._lauf_material_id:
+                    teil.gesaegt_anzahl = teil.stueckzahl
                     self.db.save_teil(teil)
 
-        QMessageBox.information(self, t("done"),
-                                t("opt.done"))
+        QMessageBox.information(self, t("done"), t("opt.done"))
         self.btn_confirm.setEnabled(False)
         self.ergebnis = None
 
