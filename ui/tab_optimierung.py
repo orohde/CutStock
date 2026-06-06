@@ -319,8 +319,8 @@ class OptimierungTab(QWidget):
         if not projekt:
             return
 
-        teile = [t for t in projekt.teile
-                 if t.material_id == mid and t.status.value == "offen"]
+        teile = [teil for teil in projekt.teile
+                 if teil.material_id == mid and teil.offen_anzahl > 0]
 
         if not teile:
             QMessageBox.information(self, t("hint"),
@@ -338,7 +338,7 @@ class OptimierungTab(QWidget):
         if mat.typ == MaterialTyp.STANGE:
             vorrat = [StangenVorrat(ls.id, ls.laenge - 2 * rand, ls.stueckzahl)
                       for ls in lager if ls.laenge - 2 * rand > 0]
-            teil_list = [(t.label, t.laenge, t.stueckzahl) for t in teile]
+            teil_list = [(teil.label, teil.laenge, teil.offen_anzahl) for teil in teile]
             opt_fn = optimize_1d_ga if algo == "ga" else optimize_1d
             self.ergebnis = opt_fn(teil_list, vorrat, blade.schnittbreite)
         else:
@@ -346,9 +346,9 @@ class OptimierungTab(QWidget):
                                     ls.breite - 2 * rand, ls.stueckzahl)
                       for ls in lager
                       if ls.laenge - 2 * rand > 0 and ls.breite - 2 * rand > 0]
-            teil_list = [(t.label, t.laenge, t.breite, t.stueckzahl) for t in teile]
-            teil_dreh = {t.label: drehung_fuer_teil(mat.maserung, t.maserung)
-                         for t in teile}
+            teil_list = [(teil.label, teil.laenge, teil.breite, teil.offen_anzahl) for teil in teile]
+            teil_dreh = {teil.label: drehung_fuer_teil(mat.maserung, teil.maserung)
+                         for teil in teile}
             if algo == "ga":
                 opt_fn = optimize_2d_ga
             elif algo == "nested":

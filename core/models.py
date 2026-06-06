@@ -89,9 +89,17 @@ class Teil:
     laenge: float = 0.0
     breite: float = 0.0
     stueckzahl: int = 1
-    # Gewünschte Maserungsrichtung (nur Platte)
+    gesaegt_anzahl: int = 0
     maserung: Maserung = Maserung.EGAL
     status: TeilStatus = TeilStatus.OFFEN
+
+    @property
+    def offen_anzahl(self) -> int:
+        return max(0, self.stueckzahl - self.gesaegt_anzahl)
+
+    @property
+    def ist_komplett(self) -> bool:
+        return self.gesaegt_anzahl >= self.stueckzahl
 
 
 def drehung_fuer_teil(mat_maserung: Maserung, teil_maserung: Maserung

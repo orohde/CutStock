@@ -28,11 +28,14 @@ class ProjektTab(QWidget):
         left = QGroupBox(t("proj.title"))
         left_layout = QVBoxLayout(left)
         self.proj_table = QTableWidget()
-        self.proj_table.setColumnCount(2)
-        self.proj_table.setHorizontalHeaderLabels([t("proj.name").rstrip(":"), ""])
+        self.proj_table.setColumnCount(3)
+        self.proj_table.setHorizontalHeaderLabels([
+            t("proj.name").rstrip(":"), t("proj.progress"), ""])
         self.proj_table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.Stretch)
-        self.proj_table.setColumnHidden(1, True)
+        self.proj_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.ResizeToContents)
+        self.proj_table.setColumnHidden(2, True)
         self.proj_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.proj_table.currentCellChanged.connect(self._projekt_selected)
         left_layout.addWidget(self.proj_table)
@@ -60,7 +63,7 @@ class ProjektTab(QWidget):
         self.teil_table.setHorizontalHeaderLabels([
             t("part.label").rstrip(":"), t("mat.type").rstrip(":"),
             t("opt.material").rstrip(":"), t("stock.length").rstrip(":"),
-            t("stock.width").rstrip(":"), t("stock.qty").rstrip(":"),
+            t("stock.width").rstrip(":"), t("proj.progress"),
             "Status", "",
         ])
         self.teil_table.horizontalHeader().setSectionResizeMode(
@@ -77,9 +80,16 @@ class ProjektTab(QWidget):
         btn_edit_teil.clicked.connect(self._edit_teil)
         btn_del_teil = QPushButton(t("btn.remove"))
         btn_del_teil.clicked.connect(self._delete_teil)
+        btn_cut_plus = QPushButton(t("part.cut_plus"))
+        btn_cut_plus.clicked.connect(self._cut_plus)
+        btn_cut_minus = QPushButton(t("part.cut_minus"))
+        btn_cut_minus.clicked.connect(self._cut_minus)
         teil_btns.addWidget(btn_add_teil)
         teil_btns.addWidget(btn_edit_teil)
         teil_btns.addWidget(btn_del_teil)
+        teil_btns.addStretch()
+        teil_btns.addWidget(btn_cut_plus)
+        teil_btns.addWidget(btn_cut_minus)
         right_layout.addLayout(teil_btns)
 
         splitter.addWidget(left)
@@ -99,7 +109,12 @@ class ProjektTab(QWidget):
         self.proj_table.setRowCount(len(projekte))
         for i, p in enumerate(projekte):
             self.proj_table.setItem(i, 0, QTableWidgetItem(p.name))
-            self.proj_table.setItem(i, 1, QTableWidgetItem(str(p.id)))
+            total = sum(teil.stueckzahl for teil in p.teile)
+            done = sum(teil.gesaegt_anzahl for teil in p.teile)
+            progress = QTableWidgetItem(f"{done} / {total}")
+            progress.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.proj_table.setItem(i, 1, progress)
+            self.proj_table.setItem(i, 2, QTableWidgetItem(str(p.id)))
         self.proj_table.blockSignals(False)
         if projekte:
             self.proj_table.selectRow(0)
@@ -109,7 +124,7 @@ class ProjektTab(QWidget):
         row = self.proj_table.currentRow()
         if row < 0:
             return None
-        return int(self.proj_table.item(row, 1).text())
+        return int(self.proj_table.item(row, 2).text())
 
     def _projekt_selected(self):
         pid = self._get_selected_projekt_id()
@@ -132,7 +147,10 @@ class ProjektTab(QWidget):
             self.teil_table.setItem(i, 3, QTableWidgetItem(f"{teil.laenge:.1f}"))
             self.teil_table.setItem(i, 4, QTableWidgetItem(
                 f"{teil.breite:.1f}" if teil.breite > 0 else "–"))
-            self.teil_table.setItem(i, 5, QTableWidgetItem(str(teil.stueckzahl)))
+            fortschritt = f"{teil.gesaegt_anzahl} / {teil.stueckzahl}"
+            progress_item = QTableWidgetItem(fortschritt)
+            progress_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.teil_table.setItem(i, 5, progress_item)
             self.teil_table.setItem(i, 6, QTableWidgetItem(t(status_key)))
             self.teil_table.setItem(i, 7, QTableWidgetItem(str(teil.id)))
 
@@ -198,6 +216,52 @@ class ProjektTab(QWidget):
             self.db.delete_teil(tid)
             self._refresh_teile(pid)
 
+    def _cut_plus(self):
+        pid = self._get_selected_projekt_id()
+        row = self.teil_table.currentRow()
+        if pid is None or row < 0:
+            return
+        tid = int(self.teil_table.item(row, 7).text())
+        teile = self.db.list_teile(pid)
+        teil = next((t_item for t_item in teile if t_item.id == tid), None)
+        if not teil:
+            return
+        if teil.gesaegt_anzahl < teil.stueckzahl:
+            teil.gesaegt_anzahl += 1
+            self.db.save_teil(teil)
+            self._refresh_teile(pid)
+            self._refresh_projekte_progress()
+
+    def _cut_minus(self):
+        pid = self._get_selected_projekt_id()
+        row = self.teil_table.currentRow()
+        if pid is None or row < 0:
+            return
+        tid = int(self.teil_table.item(row, 7).text())
+        teile = self.db.list_teile(pid)
+        teil = next((t_item for t_item in teile if t_item.id == tid), None)
+        if not teil:
+            return
+        if teil.gesaegt_anzahl > 0:
+            teil.gesaegt_anzahl -= 1
+            self.db.save_teil(teil)
+            self._refresh_teile(pid)
+            self._refresh_projekte_progress()
+
+    def _refresh_projekte_progress(self):
+        """Nur den Fortschritt in der Projektliste aktualisieren."""
+        for i in range(self.proj_table.rowCount()):
+            pid_item = self.proj_table.item(i, 2)
+            if not pid_item:
+                continue
+            pid = int(pid_item.text())
+            projekt = self.db.get_projekt(pid)
+            if projekt:
+                total = sum(t_item.stueckzahl for t_item in projekt.teile)
+                done = sum(t_item.gesaegt_anzahl for t_item in projekt.teile)
+                progress = QTableWidgetItem(f"{done} / {total}")
+                progress.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.proj_table.setItem(i, 1, progress)
 
     def _export_projekt(self):
         pid = self._get_selected_projekt_id()

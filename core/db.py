@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS teil (
     laenge      REAL    NOT NULL,
     breite      REAL    NOT NULL DEFAULT 0,
     stueckzahl  INTEGER NOT NULL DEFAULT 1,
+    gesaegt_anzahl INTEGER NOT NULL DEFAULT 0,
     maserung    TEXT    NOT NULL DEFAULT 'egal',
     status      TEXT    NOT NULL DEFAULT 'offen' CHECK(status IN ('offen','gesägt'))
 );
@@ -152,6 +153,12 @@ class Database:
         if "maserung" not in teil_cols:
             self.conn.execute(
                 "ALTER TABLE teil ADD COLUMN maserung TEXT NOT NULL DEFAULT 'egal'")
+        if "gesaegt_anzahl" not in teil_cols:
+            self.conn.execute(
+                "ALTER TABLE teil ADD COLUMN gesaegt_anzahl INTEGER NOT NULL DEFAULT 0")
+            # Bestehende gesägte Teile migrieren
+            self.conn.execute(
+                "UPDATE teil SET gesaegt_anzahl = stueckzahl WHERE status = 'gesägt'")
 
     def close(self):
         self.conn.commit()
@@ -348,24 +355,32 @@ class Database:
     # ------------------------------------------------------------------
 
     def save_teil(self, t: Teil) -> Teil:
+        # Status aus gesaegt_anzahl ableiten
+        if t.gesaegt_anzahl >= t.stueckzahl:
+            t.status = TeilStatus.GESAEGT
+        elif t.gesaegt_anzahl > 0:
+            t.status = TeilStatus.OFFEN  # teilweise
+        else:
+            t.status = TeilStatus.OFFEN
+
         if t.id is None:
             cur = self.conn.execute(
                 """INSERT INTO teil
                    (projekt_id, label, typ, material_id, laenge, breite,
-                    stueckzahl, maserung, status)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                    stueckzahl, gesaegt_anzahl, maserung, status)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (t.projekt_id, t.label, t.typ.value, t.material_id,
-                 t.laenge, t.breite, t.stueckzahl,
+                 t.laenge, t.breite, t.stueckzahl, t.gesaegt_anzahl,
                  t.maserung.value, t.status.value),
             )
             t.id = cur.lastrowid
         else:
             self.conn.execute(
                 """UPDATE teil SET projekt_id=?, label=?, typ=?, material_id=?,
-                   laenge=?, breite=?, stueckzahl=?, maserung=?, status=?
-                   WHERE id=?""",
+                   laenge=?, breite=?, stueckzahl=?, gesaegt_anzahl=?,
+                   maserung=?, status=? WHERE id=?""",
                 (t.projekt_id, t.label, t.typ.value, t.material_id,
-                 t.laenge, t.breite, t.stueckzahl,
+                 t.laenge, t.breite, t.stueckzahl, t.gesaegt_anzahl,
                  t.maserung.value, t.status.value, t.id),
             )
         self.conn.commit()
@@ -390,6 +405,7 @@ class Database:
             label=row["label"], typ=MaterialTyp(row["typ"]),
             material_id=row["material_id"], laenge=row["laenge"],
             breite=row["breite"], stueckzahl=row["stueckzahl"],
+            gesaegt_anzahl=row["gesaegt_anzahl"],
             maserung=mas,
             status=TeilStatus(row["status"]),
         )

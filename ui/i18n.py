@@ -466,6 +466,15 @@ TRANSLATIONS = {
         "de": "Gründlich (GA)", "en": "Thorough (GA)",
         "fr": "Approfondi (GA)", "it": "Approfondito (GA)",
     },
+    "proj.progress": {
+        "de": "Fortschritt", "en": "Progress", "fr": "Progression", "it": "Progresso",
+    },
+    "part.cut_plus": {
+        "de": "Gesägt +1", "en": "Cut +1", "fr": "Coupé +1", "it": "Tagliato +1",
+    },
+    "part.cut_minus": {
+        "de": "Gesägt -1", "en": "Cut -1", "fr": "Coupé -1", "it": "Tagliato -1",
+    },
 }
 
 LANGUAGES = {"en": "English", "de": "Deutsch", "fr": "Français", "it": "Italiano"}
