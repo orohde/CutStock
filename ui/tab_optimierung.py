@@ -552,11 +552,11 @@ class OptimierungTab(QWidget):
                     self.db.lager_verbrauchen(w.plan.lagerstueck_id)
                 # Reste einbuchen und IDs merken
                 rest_ids = []
-                for rest_l, rest_b in w.plan.reste:
+                for rest in w.plan.reste:
                     if mat.typ == MaterialTyp.STANGE:
-                        r = self.db.rest_einbuchen(mat.id, rest_l)
+                        r = self.db.rest_einbuchen(mat.id, rest[0])
                     else:
-                        r = self.db.rest_einbuchen(mat.id, rest_l, rest_b)
+                        r = self.db.rest_einbuchen(mat.id, rest[0], rest[1])
                     if r:
                         rest_ids.append(r.id)
                 w._rest_ids = rest_ids
@@ -599,11 +599,11 @@ class OptimierungTab(QWidget):
             ls = self.db.get_lagerstueck(plan.lagerstueck_id)
             if ls:  # nur wenn noch nicht einzeln verbraucht
                 self.db.lager_verbrauchen(plan.lagerstueck_id)
-                for rest_l, rest_b in plan.reste:
+                for rest in plan.reste:
                     if mat.typ == MaterialTyp.STANGE:
-                        self.db.rest_einbuchen(mat.id, rest_l)
+                        self.db.rest_einbuchen(mat.id, rest[0])
                     else:
-                        self.db.rest_einbuchen(mat.id, rest_l, rest_b)
+                        self.db.rest_einbuchen(mat.id, rest[0], rest[1])
 
         projekt = self.db.get_projekt(self._lauf_projekt_id)
         if projekt:
