@@ -5,8 +5,8 @@ from PySide6.QtWidgets import (
     QLabel, QScrollArea, QGroupBox, QMessageBox, QFrame, QFileDialog,
     QGridLayout,
 )
-from PySide6.QtGui import QPainter, QColor, QPen, QFont
-from PySide6.QtCore import Qt, QRectF, QSize
+from PySide6.QtGui import QPainter, QColor, QPen, QFont, QBrush
+from PySide6.QtCore import Qt, QRectF, QSize, Signal
 
 from core.db import Database
 from core.models import MaterialTyp, drehung_fuer_teil
@@ -29,23 +29,42 @@ FARBEN = [
 class SchnittplanWidget(QFrame):
     """Zeichnet einen einzelnen Schnittplan (Stange oder Platte).
 
-    Für 2D-Platten: berechnet die ideale Höhe aus dem Seitenverhältnis
-    der Platte relativ zur verfügbaren Breite. Passt sich bei
-    Fenstergrößenänderung automatisch an (heightForWidth).
+    Teile können angeklickt werden um sie als gesägt zu markieren.
     """
 
+    teil_clicked = Signal(str)  # Signal: teil_label wurde angeklickt
+
     def __init__(self, plan: Schnittplan, farb_map: dict[str, QColor],
-                 is_1d: bool = False):
+                 is_1d: bool = False, plan_name: str = ""):
         super().__init__()
         self.plan = plan
         self.farb_map = farb_map
         self.is_1d = is_1d
+        self.plan_name = plan_name
+        self.marked: set[int] = set()  # Indices der als gesägt markierten Teile
+        self._rects: list[QRectF] = []  # Klickbare Bereiche (wird in paintEvent befüllt)
         self.setFrameStyle(QFrame.Shape.Box)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         if is_1d:
             self.setMinimumHeight(80)
             self.setMaximumHeight(80)
         else:
             self.setMinimumHeight(200)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            pos = event.position()
+            for i, rect in enumerate(self._rects):
+                if rect.contains(pos):
+                    if i in self.marked:
+                        self.marked.discard(i)
+                    else:
+                        self.marked.add(i)
+                    self.update()
+                    label = self.plan.platzierungen[i].teil_label
+                    self.teil_clicked.emit(label)
+                    break
+        super().mousePressEvent(event)
 
     def hasHeightForWidth(self) -> bool:
         return not self.is_1d
@@ -73,6 +92,7 @@ class SchnittplanWidget(QFrame):
 
     def paintEvent(self, event):
         super().paintEvent(event)
+        self._rects = []
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
@@ -106,20 +126,24 @@ class SchnittplanWidget(QFrame):
         font_dim = QFont()
         font_dim.setPointSize(11)
 
-        for p in self.plan.platzierungen:
+        for i, p in enumerate(self.plan.platzierungen):
             x = ox + p.x * scale
             pw = p.laenge * scale
-            farbe = self.farb_map.get(p.teil_label, QColor("#CCCCCC"))
+            rect = QRectF(x, oy + 2, pw, h - 4)
+            self._rects.append(rect)
+            is_marked = i in self.marked
+            farbe = QColor("#888888") if is_marked else self.farb_map.get(p.teil_label, QColor("#CCCCCC"))
             painter.setBrush(farbe)
             painter.setPen(QPen(Qt.GlobalColor.black, 1))
-            painter.drawRect(QRectF(x, oy + 2, pw, h - 4))
+            painter.drawRect(rect)
             painter.setPen(Qt.GlobalColor.black)
+            label_text = f"✓ {p.teil_label}" if is_marked else p.teil_label
             label_rect = QRectF(x, oy + 2, pw, h / 2 - 2)
             dim_rect = QRectF(x, oy + h / 2, pw, h / 2 - 2)
             painter.setFont(font_label)
             painter.drawText(label_rect,
                              Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
-                             p.teil_label)
+                             label_text)
             painter.setFont(font_dim)
             painter.drawText(dim_rect,
                              Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
@@ -137,17 +161,21 @@ class SchnittplanWidget(QFrame):
         font_dim = QFont()
         font_dim.setPointSize(max(11, base_size - 3))
 
-        for p in self.plan.platzierungen:
+        for i, p in enumerate(self.plan.platzierungen):
             x = ox + p.x * scale
             y = oy + p.y * scale
             pw = p.laenge * scale
             ph = p.breite * scale
-            farbe = self.farb_map.get(p.teil_label, QColor("#CCCCCC"))
+            rect = QRectF(x, y, pw, ph)
+            self._rects.append(rect)
+            is_marked = i in self.marked
+            farbe = QColor("#888888") if is_marked else self.farb_map.get(p.teil_label, QColor("#CCCCCC"))
             painter.setBrush(farbe)
             painter.setPen(QPen(Qt.GlobalColor.black, 1))
-            painter.drawRect(QRectF(x, y, pw, ph))
+            painter.drawRect(rect)
 
             painter.setPen(Qt.GlobalColor.black)
+            label_text = f"✓ {p.teil_label}" if is_marked else p.teil_label
             dim_text = f"{p.laenge:.0f} x {p.breite:.0f}"
             if p.gedreht:
                 dim_text += " ↻"
@@ -156,7 +184,7 @@ class SchnittplanWidget(QFrame):
             painter.setFont(font_label)
             painter.drawText(label_rect,
                              Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
-                             p.teil_label)
+                             label_text)
             painter.setFont(font_dim)
             painter.drawText(dim_rect,
                              Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
@@ -181,6 +209,7 @@ class OptimierungTab(QWidget):
         ctrl.addWidget(self.proj_combo)
         ctrl.addWidget(QLabel(t("opt.material")))
         self.mat_combo = QComboBox()
+        self.mat_combo.currentIndexChanged.connect(self._clear_result)
         ctrl.addWidget(self.mat_combo)
         ctrl.addWidget(QLabel(t("opt.blade")))
         self.blade_combo = QComboBox()
@@ -281,6 +310,7 @@ class OptimierungTab(QWidget):
             self.blade_combo.addItem(f"{s.name} ({s.schnittbreite} mm)", s.id)
 
     def _projekt_changed(self):
+        self._clear_result()
         self.mat_combo.clear()
         pid = self.proj_combo.currentData()
         if pid is None:
@@ -363,6 +393,18 @@ class OptimierungTab(QWidget):
         self._lauf_projekt_id = pid
         self._show_result(mat.typ == MaterialTyp.STANGE)
 
+    def _clear_result(self):
+        """Ergebnis zurücksetzen (bei Projekt/Material-Wechsel)."""
+        self.ergebnis = None
+        while self.result_layout.count():
+            child = self.result_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        self.stats_box.setVisible(False)
+        self.btn_confirm.setEnabled(False)
+        self.btn_preview.setEnabled(False)
+        self.btn_pdf.setEnabled(False)
+
     def _show_result(self, is_1d: bool):
         while self.result_layout.count():
             child = self.result_layout.takeAt(0)
@@ -399,14 +441,16 @@ class OptimierungTab(QWidget):
 
         # Pro Lagerstück
         zeilen = []
-        for plan in erg.schnittplaene:
+        typ_label = t("mat.bar") if is_1d else t("mat.plate")
+        for idx, plan in enumerate(erg.schnittplaene):
+            buchstabe = chr(65 + idx) if idx < 26 else str(idx + 1)
             n_teile_plan = len(plan.platzierungen)
             if plan.lager_breite > 0:
                 masse = f"{plan.lager_laenge:.0f} x {plan.lager_breite:.0f} mm"
             else:
                 masse = f"{plan.lager_laenge:.0f} mm"
             zeilen.append(
-                f"#{plan.lagerstueck_id}  {masse}  –  "
+                f"{typ_label} {buchstabe}  {masse}  –  "
                 f"{100 - plan.verschnitt_prozent:.1f}% {t('stat.utilization').lower()}  "
                 f"({plan.verschnitt_prozent:.1f}% {t('stat.total_waste').lower()})  –  "
                 f"{n_teile_plan} {t('stat.parts_placed').lower()}"
@@ -419,21 +463,50 @@ class OptimierungTab(QWidget):
                          for p in sp.platzierungen})
         farb_map = {label: FARBEN[i % len(FARBEN)] for i, label in enumerate(labels)}
 
+        typ_label = t("mat.bar") if is_1d else t("mat.plate")
         for i, plan in enumerate(erg.schnittplaene):
+            buchstabe = chr(65 + i) if i < 26 else str(i + 1)
+            plan_name = f"{typ_label} {buchstabe}"
             label = QLabel(
-                f"<b>Lagerstück #{plan.lagerstueck_id}</b> – "
+                f"<b>{plan_name}</b> – "
                 f"{plan.lager_laenge:.0f}"
                 f"{'×' + f'{plan.lager_breite:.0f}' if plan.lager_breite > 0 else ''} mm"
-                f"  (Verschnitt: {plan.verschnitt_prozent:.1f}%)"
+                f"  ({t('stat.total_waste')}: {plan.verschnitt_prozent:.1f}%)"
             )
             label.setStyleSheet("padding: 4px 0;")
             self.result_layout.addWidget(label)
-            widget = SchnittplanWidget(plan, farb_map, is_1d)
+            widget = SchnittplanWidget(plan, farb_map, is_1d,
+                                       plan_name=plan_name)
+            widget.teil_clicked.connect(self._on_teil_cut)
             self.result_layout.addWidget(widget)
 
         self.btn_confirm.setEnabled(bool(erg.schnittplaene))
         self.btn_preview.setEnabled(bool(erg.schnittplaene))
         self.btn_pdf.setEnabled(bool(erg.schnittplaene))
+
+    def _on_teil_cut(self, label: str):
+        """Wird aufgerufen wenn ein Teil in der Grafik angeklickt wird."""
+        if not self._lauf_projekt_id:
+            return
+        projekt = self.db.get_projekt(self._lauf_projekt_id)
+        if not projekt:
+            return
+        # Das passende Teil im Projekt finden und gesaegt_anzahl anpassen
+        for teil in projekt.teile:
+            if teil.label == label and teil.material_id == self._lauf_material_id:
+                # Prüfen ob der Klick markiert oder demarkiert wurde
+                # (Widget toggle ist schon passiert)
+                # Zähle wie viele Instanzen dieses Labels aktuell markiert sind
+                marked_count = 0
+                for i in range(self.result_layout.count()):
+                    w = self.result_layout.itemAt(i).widget()
+                    if isinstance(w, SchnittplanWidget):
+                        for j, p in enumerate(w.plan.platzierungen):
+                            if p.teil_label == label and j in w.marked:
+                                marked_count += 1
+                teil.gesaegt_anzahl = min(marked_count, teil.stueckzahl)
+                self.db.save_teil(teil)
+                break
 
     def _confirm(self):
         if not self.ergebnis or not self._lauf_projekt_id:
