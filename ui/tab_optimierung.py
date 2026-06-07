@@ -198,6 +198,7 @@ class OptimierungTab(QWidget):
         self.ergebnis: OptimierungsErgebnis | None = None
         self._lauf_material_id: int | None = None
         self._lauf_projekt_id: int | None = None
+        self.is_1d_result: bool = False
 
         layout = QVBoxLayout(self)
 
@@ -410,7 +411,8 @@ class OptimierungTab(QWidget):
 
         self._lauf_material_id = mid
         self._lauf_projekt_id = pid
-        self._show_result(mat.typ == MaterialTyp.STANGE)
+        self.is_1d_result = mat.typ == MaterialTyp.STANGE
+        self._show_result(self.is_1d_result)
 
     def _clear_result(self):
         """Ergebnis zurücksetzen (bei Projekt/Material-Wechsel)."""
@@ -506,17 +508,20 @@ class OptimierungTab(QWidget):
     def _on_teil_cut(self, label: str):
         """Wird aufgerufen wenn ein Teil in der Grafik angeklickt wird.
 
-        Aktualisiert nur gesaegt_anzahl im Projekt.
-        Lager wird NICHT verändert – das passiert nur beim Bestätigen.
-        Der Optimierer plant beim nächsten Lauf nur die offenen Teile.
+        1) gesaegt_anzahl im Projekt aktualisieren
+        2) Lager live anpassen: Stange/Platte verbrauchen, tatsächlichen
+           Rest berechnen und einbuchen. Bei Abwahl: rückgängig machen.
         """
         if not self._lauf_projekt_id:
             return
         projekt = self.db.get_projekt(self._lauf_projekt_id)
         if not projekt:
             return
+        mat = self.db.get_material(self._lauf_material_id)
+        if not mat:
+            return
 
-        # gesaegt_anzahl aktualisieren
+        # 1) gesaegt_anzahl aktualisieren
         marked_count = 0
         for i in range(self.result_layout.count()):
             w = self.result_layout.itemAt(i).widget()
@@ -530,6 +535,71 @@ class OptimierungTab(QWidget):
                 teil.gesaegt_anzahl = min(marked_count, teil.stueckzahl)
                 self.db.save_teil(teil)
                 break
+
+        # Kerf bestimmen
+        sid = self.blade_combo.currentData()
+        blaetter = self.db.list_saegeblaetter()
+        blade = next((s for s in blaetter if s.id == sid), None)
+        kerf = blade.schnittbreite if blade else 3.0
+
+        # 2) Lager pro Schnittplan-Widget aktualisieren
+        for i in range(self.result_layout.count()):
+            w = self.result_layout.itemAt(i).widget()
+            if not isinstance(w, SchnittplanWidget):
+                continue
+
+            has_marks = len(w.marked) > 0
+            was_consumed = getattr(w, '_stock_consumed', False)
+            old_rest_id = getattr(w, '_rest_id', None)
+
+            if has_marks:
+                # Tatsächlichen Rest berechnen aus markierten Teilen
+                marked_parts = [w.plan.platzierungen[j] for j in w.marked]
+                if self.is_1d_result:
+                    used = sum(p.laenge for p in marked_parts)
+                    cuts = len(marked_parts)
+                    rest_val = w.plan.lager_laenge - used - kerf * cuts
+                    rest_tuple = (max(0, rest_val),)
+                else:
+                    # 2D: Plan-Reste verwenden (Guillotine-Schnitte)
+                    rest_tuple = None  # wird unten behandelt
+
+                if not was_consumed:
+                    # Erste Markierung: Stange/Platte verbrauchen
+                    self.db.lager_verbrauchen(w.plan.lagerstueck_id)
+                    w._stock_consumed = True
+
+                # Alten Rest entfernen falls vorhanden
+                if old_rest_id is not None:
+                    self.db.delete_lagerstueck(old_rest_id)
+                    w._rest_id = None
+
+                # Neuen Rest einbuchen
+                if self.is_1d_result and rest_tuple and rest_tuple[0] > 0:
+                    r = self.db.rest_einbuchen(mat.id, rest_tuple[0])
+                    if r:
+                        w._rest_id = r.id
+                elif not self.is_1d_result:
+                    # 2D: nur wenn ALLE Teile markiert, Plan-Reste einbuchen
+                    if len(w.marked) == len(w.plan.platzierungen):
+                        for rest in w.plan.reste:
+                            r = self.db.rest_einbuchen(mat.id, rest[0], rest[1])
+                            # Nur letzten merken (vereinfacht)
+
+            elif not has_marks and was_consumed:
+                # Alle Markierungen entfernt: rückgängig machen
+                if old_rest_id is not None:
+                    self.db.delete_lagerstueck(old_rest_id)
+                    w._rest_id = None
+                # Stange/Platte zurückbuchen
+                from core.models import Lagerstueck
+                ls = Lagerstueck(
+                    material_id=self._lauf_material_id,
+                    laenge=w.plan.lager_laenge,
+                    breite=w.plan.lager_breite,
+                    stueckzahl=1)
+                self.db.save_lagerstueck(ls)
+                w._stock_consumed = False
 
     def _confirm(self):
         """Alle Teile auf einmal als gesägt markieren + Lager anpassen."""
@@ -548,15 +618,28 @@ class OptimierungTab(QWidget):
         if not mat:
             return
 
-        for plan in self.ergebnis.schnittplaene:
-            ls = self.db.get_lagerstueck(plan.lagerstueck_id)
-            if ls:  # nur wenn noch nicht einzeln verbraucht
+        # Lagerstücke verbrauchen und Reste einbuchen
+        for i_layout in range(self.result_layout.count()):
+            w = self.result_layout.itemAt(i_layout).widget()
+            if not isinstance(w, SchnittplanWidget):
+                continue
+            plan = w.plan
+
+            # Alten Einzel-Rest entfernen falls vorhanden
+            old_rest_id = getattr(w, '_rest_id', None)
+            if old_rest_id is not None:
+                self.db.delete_lagerstueck(old_rest_id)
+
+            # Lagerstück verbrauchen falls noch nicht geschehen
+            if not getattr(w, '_stock_consumed', False):
                 self.db.lager_verbrauchen(plan.lagerstueck_id)
-                for rest in plan.reste:
-                    if mat.typ == MaterialTyp.STANGE:
-                        self.db.rest_einbuchen(mat.id, rest[0])
-                    else:
-                        self.db.rest_einbuchen(mat.id, rest[0], rest[1])
+
+            # Plan-Reste einbuchen (die korrekten Reste nach ALLEN Teilen)
+            for rest in plan.reste:
+                if mat.typ == MaterialTyp.STANGE:
+                    self.db.rest_einbuchen(mat.id, rest[0])
+                else:
+                    self.db.rest_einbuchen(mat.id, rest[0], rest[1])
 
         projekt = self.db.get_projekt(self._lauf_projekt_id)
         if projekt:
