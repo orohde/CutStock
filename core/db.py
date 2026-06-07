@@ -433,7 +433,7 @@ class Database:
 
     def rest_einbuchen(self, material_id: int, laenge: float,
                        breite: float = 0.0) -> Lagerstueck | None:
-        """Rest als neues Lagerstück einbuchen, wenn über Schwelle."""
+        """Rest als Lagerstück einbuchen. Gleiche Maße werden zusammengefasst."""
         mat = self.get_material(material_id)
         if not mat:
             return None
@@ -443,6 +443,12 @@ class Database:
         else:
             if laenge < mat.rest_min_laenge or breite < mat.rest_min_breite:
                 return None
+        # Bestehendes Lagerstück mit gleichen Maßen suchen
+        for existing in self.list_lagerstuecke(material_id):
+            if (abs(existing.laenge - laenge) < 0.1 and
+                    abs(existing.breite - breite) < 0.1):
+                existing.stueckzahl += 1
+                return self.save_lagerstueck(existing)
         ls = Lagerstueck(material_id=material_id, laenge=laenge,
                          breite=breite, stueckzahl=1)
         return self.save_lagerstueck(ls)
