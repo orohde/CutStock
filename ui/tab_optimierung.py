@@ -591,14 +591,21 @@ class OptimierungTab(QWidget):
                 if old_rest_id is not None:
                     self.db.delete_lagerstueck(old_rest_id)
                     w._rest_id = None
-                # Stange/Platte zurückbuchen
-                from core.models import Lagerstueck
-                ls = Lagerstueck(
-                    material_id=self._lauf_material_id,
-                    laenge=w.plan.lager_laenge,
-                    breite=w.plan.lager_breite,
-                    stueckzahl=1)
-                self.db.save_lagerstueck(ls)
+                # Stange/Platte zurückbuchen – bestehenden Eintrag suchen
+                existing = [ls for ls in self.db.list_lagerstuecke(self._lauf_material_id)
+                            if abs(ls.laenge - w.plan.lager_laenge) < 0.1
+                            and abs(ls.breite - w.plan.lager_breite) < 0.1]
+                if existing:
+                    existing[0].stueckzahl += 1
+                    self.db.save_lagerstueck(existing[0])
+                else:
+                    from core.models import Lagerstueck
+                    ls = Lagerstueck(
+                        material_id=self._lauf_material_id,
+                        laenge=w.plan.lager_laenge,
+                        breite=w.plan.lager_breite,
+                        stueckzahl=1)
+                    self.db.save_lagerstueck(ls)
                 w._stock_consumed = False
 
     def _confirm(self):
