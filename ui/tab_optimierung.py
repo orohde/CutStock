@@ -559,53 +559,36 @@ class OptimierungTab(QWidget):
                     used = sum(p.laenge for p in marked_parts)
                     cuts = len(marked_parts)
                     rest_val = w.plan.lager_laenge - used - kerf * cuts
-                    rest_tuple = (max(0, rest_val),)
                 else:
-                    # 2D: Plan-Reste verwenden (Guillotine-Schnitte)
-                    rest_tuple = None  # wird unten behandelt
+                    rest_val = 0
 
                 if not was_consumed:
                     # Erste Markierung: Stange/Platte verbrauchen
                     self.db.lager_verbrauchen(w.plan.lagerstueck_id)
                     w._stock_consumed = True
 
-                # Alten Rest entfernen falls vorhanden
+                # Alten Rest entfernen (Stückzahl -1, nicht komplett löschen)
                 if old_rest_id is not None:
-                    self.db.delete_lagerstueck(old_rest_id)
+                    self.db.lager_verbrauchen(old_rest_id)
                     w._rest_id = None
 
-                # Neuen Rest einbuchen
-                if self.is_1d_result and rest_tuple and rest_tuple[0] > 0:
-                    r = self.db.rest_einbuchen(mat.id, rest_tuple[0])
+                # Neuen Rest einbuchen (wird ggf. mit gleichem zusammengefasst)
+                if self.is_1d_result and rest_val > 0:
+                    r = self.db.rest_einbuchen(mat.id, rest_val)
                     if r:
                         w._rest_id = r.id
-                elif not self.is_1d_result:
-                    # 2D: nur wenn ALLE Teile markiert, Plan-Reste einbuchen
-                    if len(w.marked) == len(w.plan.platzierungen):
-                        for rest in w.plan.reste:
-                            r = self.db.rest_einbuchen(mat.id, rest[0], rest[1])
-                            # Nur letzten merken (vereinfacht)
 
             elif not has_marks and was_consumed:
                 # Alle Markierungen entfernt: rückgängig machen
+                # Rest entfernen
                 if old_rest_id is not None:
-                    self.db.delete_lagerstueck(old_rest_id)
+                    self.db.lager_verbrauchen(old_rest_id)
                     w._rest_id = None
-                # Stange/Platte zurückbuchen – bestehenden Eintrag suchen
-                existing = [ls for ls in self.db.list_lagerstuecke(self._lauf_material_id)
-                            if abs(ls.laenge - w.plan.lager_laenge) < 0.1
-                            and abs(ls.breite - w.plan.lager_breite) < 0.1]
-                if existing:
-                    existing[0].stueckzahl += 1
-                    self.db.save_lagerstueck(existing[0])
-                else:
-                    from core.models import Lagerstueck
-                    ls = Lagerstueck(
-                        material_id=self._lauf_material_id,
-                        laenge=w.plan.lager_laenge,
-                        breite=w.plan.lager_breite,
-                        stueckzahl=1)
-                    self.db.save_lagerstueck(ls)
+                # Original-Stange/Platte zurückbuchen
+                self.db.rest_einbuchen(
+                    self._lauf_material_id,
+                    w.plan.lager_laenge,
+                    w.plan.lager_breite)
                 w._stock_consumed = False
 
     def _confirm(self):
