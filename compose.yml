@@ -1,0 +1,14 @@
+services:
+  cutstock:
+    build: .
+    container_name: cutstock
+    restart: unless-stopped
+    ports:
+      - "8420:8000"
+    volumes:
+      - cutstock-data:/data
+    environment:
+      - CUTSTOCK_DB=/data/cutstock.db
+
+volumes:
+  cutstock-data:

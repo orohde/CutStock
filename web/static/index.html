@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CutStock</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header class="app-header">
+    <h1 data-i18n="app.title">CutStock</h1>
+    <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle theme">&#9790;</button>
+  </header>
+
+  <nav id="tab-bar">
+    <button class="tab-btn active" data-tab="material" data-i18n="tab.material_stock">Material &amp; Lager</button>
+    <button class="tab-btn" data-tab="projects" data-i18n="tab.projects">Projekte</button>
+    <button class="tab-btn" data-tab="optimization" data-i18n="tab.optimization">Optimierung</button>
+    <button class="tab-btn" data-tab="settings" data-i18n="tab.settings">Einstellungen</button>
+  </nav>
+
+  <main>
+
+    <section id="tab-material" class="tab-content active">
+      <div class="split-panel">
+        <div class="panel">
+          <div class="panel-header">
+            <h2 data-i18n="mat.title">Materialien</h2>
+            <div class="toolbar">
+              <button id="btn-mat-new" class="btn btn-sm" type="button" data-i18n="btn.new">Neu</button>
+              <button id="btn-mat-edit" class="btn btn-sm" type="button" data-i18n="btn.edit">Bearbeiten</button>
+              <button id="btn-mat-del" class="btn btn-sm btn-danger" type="button" data-i18n="btn.delete">Entfernen</button>
+            </div>
+          </div>
+          <div class="panel-content">
+            <table id="material-table" class="data-table">
+              <thead>
+                <tr>
+                  <th data-i18n="mat.name">Name</th>
+                  <th data-i18n="mat.type">Typ</th>
+                  <th data-i18n="mat.dim">Dicke/Querschnitt</th>
+                  <th data-i18n="mat.grain">Maserung</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header">
+            <h2 data-i18n="stock.title">Lagerbestand</h2>
+            <div class="toolbar">
+              <button id="btn-stock-new" class="btn btn-sm" type="button" data-i18n="btn.new">Neu</button>
+              <button id="btn-stock-edit" class="btn btn-sm" type="button" data-i18n="btn.edit">Bearbeiten</button>
+              <button id="btn-stock-del" class="btn btn-sm btn-danger" type="button" data-i18n="btn.delete">Entfernen</button>
+            </div>
+          </div>
+          <div class="panel-content">
+            <table id="stock-table" class="data-table">
+              <thead>
+                <tr>
+                  <th data-i18n="stock.length">Laenge</th>
+                  <th id="stock-col-width" data-i18n="stock.width">Breite</th>
+                  <th data-i18n="stock.qty">Stueckzahl</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-projects" class="tab-content">
+      <div class="split-panel">
+        <div class="panel">
+          <div class="panel-header">
+            <h2 data-i18n="proj.title">Projekte</h2>
+            <div class="toolbar">
+              <button id="btn-proj-new" class="btn btn-sm" type="button" data-i18n="btn.new">Neu</button>
+              <button id="btn-proj-edit" class="btn btn-sm" type="button" data-i18n="btn.edit">Bearbeiten</button>
+              <button id="btn-proj-del" class="btn btn-sm btn-danger" type="button" data-i18n="btn.delete">Entfernen</button>
+            </div>
+          </div>
+          <div class="panel-content">
+            <table id="project-list" class="data-table">
+              <thead>
+                <tr>
+                  <th data-i18n="proj.name">Name</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header">
+            <h2 data-i18n="proj.parts">Teile</h2>
+            <div class="toolbar">
+              <button id="btn-part-new" class="btn btn-sm" type="button" data-i18n="part.add">Neu</button>
+              <button id="btn-part-edit" class="btn btn-sm" type="button" data-i18n="btn.edit">Bearbeiten</button>
+              <button id="btn-part-del" class="btn btn-sm btn-danger" type="button" data-i18n="btn.delete">Entfernen</button>
+            </div>
+          </div>
+          <div class="panel-content">
+            <table id="parts-table" class="data-table">
+              <thead>
+                <tr>
+                  <th data-i18n="part.label">Label</th>
+                  <th data-i18n="mat.type">Typ</th>
+                  <th data-i18n="opt.material">Material</th>
+                  <th data-i18n="stock.length">Laenge</th>
+                  <th data-i18n="stock.width">Breite</th>
+                  <th data-i18n="stock.qty">Stueckzahl</th>
+                  <th data-i18n="proj.progress">Status</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-optimization" class="tab-content">
+      <div class="opt-controls">
+        <div class="form-group">
+          <label for="opt-project" data-i18n="opt.project">Projekt:</label>
+          <select id="opt-project"></select>
+        </div>
+        <div class="form-group">
+          <label for="opt-material" data-i18n="opt.material">Material:</label>
+          <select id="opt-material"></select>
+        </div>
+        <div class="form-group">
+          <label for="opt-blade" data-i18n="opt.blade">Saegeblatt:</label>
+          <select id="opt-blade"></select>
+        </div>
+        <div class="form-group">
+          <label for="opt-algorithm">Algorithmus</label>
+          <select id="opt-algorithm"></select>
+        </div>
+        <button id="btn-optimize" class="btn btn-primary" type="button" data-i18n="opt.run">Optimieren</button>
+      </div>
+      <div id="opt-results" class="hidden">
+        <div id="opt-stats" class="opt-stats"></div>
+        <div id="cut-plans" class="cut-plans"></div>
+        <div class="opt-actions">
+          <button id="btn-confirm" class="btn btn-primary" type="button" data-i18n="opt.confirm">Bestaetigen (gesaegt)</button>
+          <button id="btn-pdf" class="btn" type="button" data-i18n="opt.pdf">PDF Export</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-settings" class="tab-content">
+      <div class="settings-section">
+        <h3 data-i18n="set.appearance">Aussehen</h3>
+        <div class="form-group">
+          <label for="settings-lang" data-i18n="set.language">Sprache:</label>
+          <select id="settings-lang">
+            <option value="de">Deutsch</option>
+            <option value="en">English</option>
+            <option value="fr">Francais</option>
+            <option value="it">Italiano</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="settings-unit" data-i18n="set.unit">Masseinheit:</label>
+          <select id="settings-unit">
+            <option value="mm">Millimeter (mm)</option>
+            <option value="cm">Zentimeter (cm)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="settings-theme" data-i18n="set.theme">Farbschema:</label>
+          <select id="settings-theme">
+            <option value="auto">Auto (System)</option>
+            <option value="light">Hell</option>
+            <option value="dark">Dunkel</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h3 data-i18n="set.storage">Speicherorte</h3>
+        <div class="form-group">
+          <label data-i18n="set.db_path">Datenbank:</label>
+          <span id="storage-db" class="read-only">--</span>
+        </div>
+        <div class="form-group">
+          <label data-i18n="set.settings_path">Einstellungen:</label>
+          <span id="storage-settings" class="read-only">--</span>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h3 data-i18n="blade.title">Saegeblaetter</h3>
+        <div class="toolbar" style="margin-bottom: 8px;">
+          <button id="btn-blade-new" class="btn btn-sm" type="button" data-i18n="btn.new">Neu</button>
+          <button id="btn-blade-edit" class="btn btn-sm" type="button" data-i18n="btn.edit">Bearbeiten</button>
+          <button id="btn-blade-del" class="btn btn-sm btn-danger" type="button" data-i18n="btn.delete">Entfernen</button>
+        </div>
+        <table id="blade-table" class="data-table">
+          <thead>
+            <tr>
+              <th data-i18n="blade.name">Name</th>
+              <th data-i18n="blade.kerf">Schnittbreite</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <div id="modal-overlay" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modal-title"></h3>
+      </div>
+      <div id="modal-body" class="modal-body"></div>
+      <div class="modal-footer">
+        <button id="modal-cancel" class="btn" type="button" data-i18n="btn.cancel">Abbrechen</button>
+        <button id="modal-save" class="btn btn-primary" type="button" data-i18n="btn.save">Speichern</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
