@@ -839,6 +839,7 @@ function openModal(title, fields, data, onSave) {
         const formData = {};
         let valid = true;
         fields.forEach(f => {
+            if (f.hidden) return;
             const el = body.querySelector(`[name="${f.key}"]`);
             if (!el) return;
             let val;
