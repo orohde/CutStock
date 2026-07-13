@@ -241,6 +241,7 @@
 
       <div class="panel settings-section">
         <h3 class="fd-title fd-title--h5" data-i18n="hotkey.title">Tastenkuerzel</h3>
+        <p class="hotkey-hint" data-i18n="hotkey.hint">Auf eine Taste klicken, um sie zu aendern.</p>
         <table class="fd-table hotkey-table">
           <thead class="fd-table__header">
             <tr class="fd-table__row">
@@ -250,11 +251,11 @@
           </thead>
           <tbody class="fd-table__body">
             <tr class="fd-table__row"><td class="fd-table__cell"><kbd>1</kbd> &ndash; <kbd>4</kbd></td><td class="fd-table__cell" data-i18n="hotkey.tabs">Tab wechseln</td></tr>
-            <tr class="fd-table__row"><td class="fd-table__cell"><kbd>N</kbd></td><td class="fd-table__cell" data-i18n="hotkey.new">Neues Element (Material / Projekt / Bauteil / Saegeblatt)</td></tr>
-            <tr class="fd-table__row"><td class="fd-table__cell"><kbd>E</kbd></td><td class="fd-table__cell" data-i18n="hotkey.edit">Ausgewaehltes Element bearbeiten</td></tr>
-            <tr class="fd-table__row"><td class="fd-table__cell"><kbd data-i18n="hotkey.del_key">Entf</kbd></td><td class="fd-table__cell" data-i18n="hotkey.delete">Ausgewaehltes Element loeschen</td></tr>
-            <tr class="fd-table__row"><td class="fd-table__cell"><kbd>S</kbd></td><td class="fd-table__cell" data-i18n="hotkey.stock">Neuer Lagerbestand (Material-Tab)</td></tr>
-            <tr class="fd-table__row"><td class="fd-table__cell"><kbd>R</kbd></td><td class="fd-table__cell" data-i18n="hotkey.optimize">Optimierung starten</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd class="hotkey-edit" data-action="new">N</kbd></td><td class="fd-table__cell" data-i18n="hotkey.new">Neues Element (Material / Projekt / Bauteil / Saegeblatt)</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd class="hotkey-edit" data-action="edit">E</kbd></td><td class="fd-table__cell" data-i18n="hotkey.edit">Ausgewaehltes Element bearbeiten</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd class="hotkey-edit" data-action="delete">Entf</kbd></td><td class="fd-table__cell" data-i18n="hotkey.delete">Ausgewaehltes Element loeschen</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd class="hotkey-edit" data-action="stock">S</kbd></td><td class="fd-table__cell" data-i18n="hotkey.stock">Neuer Lagerbestand (Material-Tab)</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd class="hotkey-edit" data-action="optimize">R</kbd></td><td class="fd-table__cell" data-i18n="hotkey.optimize">Optimierung starten</td></tr>
             <tr class="fd-table__row"><td class="fd-table__cell"><kbd>Enter</kbd></td><td class="fd-table__cell" data-i18n="hotkey.save">Dialog speichern</td></tr>
             <tr class="fd-table__row"><td class="fd-table__cell"><kbd>Esc</kbd></td><td class="fd-table__cell" data-i18n="hotkey.close">Dialog schliessen</td></tr>
           </tbody>

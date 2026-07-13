@@ -5,7 +5,7 @@
 // ===========================================================================
 
 const State = {
-    settings: { language: 'de', unit: 'mm', theme: 'system' },
+    settings: { language: 'de', unit: 'mm', theme: 'system', hotkeys: {} },
     translations: {},
     materials: [],
     stock: [],
@@ -37,6 +37,28 @@ const PART_COLORS = [
 const THEME_ICONS = { system: '☾', light: '☀', dark: '☾' };
 const THEME_CYCLE = { system: 'light', light: 'dark', dark: 'system' };
 
+// Konfigurierbare Tastenkuerzel (Aktion -> Standard-Taste)
+const DEFAULT_HOTKEYS = {
+    new: 'n',
+    edit: 'e',
+    delete: 'Delete',
+    stock: 's',
+    optimize: 'r',
+};
+// Fuer Umbelegung gesperrt (fest vergeben)
+const RESERVED_KEYS = ['1', '2', '3', '4', 'enter', 'escape'];
+
+const hotkey = (action) =>
+    (State.settings.hotkeys || {})[action] || DEFAULT_HOTKEYS[action];
+
+const hotkeyMatches = (action, e) => {
+    const bound = hotkey(action).toLowerCase();
+    const key = e.key.toLowerCase();
+    if (key === bound) return true;
+    // Backspace als Alias, solange Loeschen auf Standard (Delete) steht
+    return action === 'delete' && bound === 'delete' && key === 'backspace';
+};
+
 const TYP_KEY = { 'Platte': 'mat.plate', 'Stange': 'mat.bar' };
 const GRAIN_KEY = {
     'keine': 'mat.grain.none', 'längs': 'mat.grain.long',
@@ -63,6 +85,7 @@ const applyTranslations = () => {
         const key = el.getAttribute('data-i18n');
         el.textContent = t(key);
     });
+    if (typeof renderHotkeyTable === 'function') renderHotkeyTable();
 };
 
 // ===========================================================================
@@ -1490,8 +1513,10 @@ function initEvents() {
             return;
         }
 
-        // N = Neu
-        if (e.key === 'n' && !e.ctrlKey && !e.metaKey) {
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+        // Neu
+        if (hotkeyMatches('new', e)) {
             e.preventDefault();
             if (tab === 'material') document.getElementById('btn-mat-new')?.click();
             else if (tab === 'projects') {
@@ -1502,8 +1527,8 @@ function initEvents() {
             return;
         }
 
-        // E = Bearbeiten
-        if (e.key === 'e' && !e.ctrlKey && !e.metaKey) {
+        // Bearbeiten
+        if (hotkeyMatches('edit', e)) {
             e.preventDefault();
             if (tab === 'material') {
                 if (State.selectedStockId) document.getElementById('btn-stock-edit')?.click();
@@ -1517,8 +1542,8 @@ function initEvents() {
             return;
         }
 
-        // Delete / Backspace = Löschen
-        if (e.key === 'Delete' || e.key === 'Backspace') {
+        // Löschen
+        if (hotkeyMatches('delete', e)) {
             e.preventDefault();
             if (tab === 'material') {
                 if (State.selectedStockId) document.getElementById('btn-stock-del')?.click();
@@ -1532,20 +1557,88 @@ function initEvents() {
             return;
         }
 
-        // S = Neuer Lagerbestand (Material-Tab)
-        if (e.key === 's' && !e.ctrlKey && !e.metaKey && tab === 'material') {
+        // Neuer Lagerbestand (Material-Tab)
+        if (hotkeyMatches('stock', e) && tab === 'material') {
             e.preventDefault();
             document.getElementById('btn-stock-new')?.click();
             return;
         }
 
-        // R = Optimierung starten
-        if (e.key === 'r' && !e.ctrlKey && !e.metaKey && tab === 'optimization') {
+        // Optimierung starten
+        if (hotkeyMatches('optimize', e) && tab === 'optimization') {
             e.preventDefault();
             document.getElementById('btn-optimize')?.click();
             return;
         }
     });
+
+    initHotkeyRebinding();
+}
+
+// ===========================================================================
+// 9b. HOTKEY-KONFIGURATION
+// ===========================================================================
+
+function hotkeyDisplay(key) {
+    const k = key.toLowerCase();
+    if (k === 'delete') return t('hotkey.del_key');
+    if (k === ' ' || k === 'space') return 'Space';
+    return key.length === 1 ? key.toUpperCase() : key;
+}
+
+function renderHotkeyTable() {
+    document.querySelectorAll('.hotkey-edit[data-action]').forEach(el => {
+        if (el.classList.contains('capturing')) return;
+        el.textContent = hotkeyDisplay(hotkey(el.dataset.action));
+    });
+}
+
+function initHotkeyRebinding() {
+    document.querySelectorAll('.hotkey-edit[data-action]').forEach(el => {
+        el.addEventListener('click', () => startHotkeyCapture(el));
+    });
+    renderHotkeyTable();
+}
+
+function startHotkeyCapture(el) {
+    if (el.classList.contains('capturing')) return;
+    const action = el.dataset.action;
+    el.classList.add('capturing');
+    el.textContent = t('hotkey.press');
+
+    const finish = () => {
+        el.classList.remove('capturing');
+        renderHotkeyTable();
+        document.removeEventListener('keydown', onKey, true);
+    };
+
+    const onKey = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) return;
+        if (e.key === 'Escape') { finish(); return; }
+
+        const newKey = e.key;
+        const lower = newKey.toLowerCase();
+
+        // Konflikt mit festen Tasten oder anderen Aktionen?
+        const conflict = RESERVED_KEYS.includes(lower) ||
+            Object.keys(DEFAULT_HOTKEYS).some(a =>
+                a !== action && hotkey(a).toLowerCase() === lower);
+        if (conflict) {
+            showToast(t('hotkey.conflict', { key: hotkeyDisplay(newKey) }), 'error');
+            finish();
+            return;
+        }
+
+        State.settings.hotkeys = { ...(State.settings.hotkeys || {}), [action]: newKey };
+        finish();
+        try {
+            await Api.updateSettings({ hotkeys: State.settings.hotkeys });
+        } catch { /* handled */ }
+    };
+
+    document.addEventListener('keydown', onKey, true);
 }
 
 // ===========================================================================

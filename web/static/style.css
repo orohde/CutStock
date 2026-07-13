@@ -323,6 +323,25 @@ kbd {
 
 .hotkey-table .fd-table__row { cursor: default; }
 
+.hotkey-hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--sapContent_LabelColor, #556b82);
+}
+
+kbd.hotkey-edit { cursor: pointer; }
+
+kbd.hotkey-edit:hover {
+  border-color: var(--sapField_Hover_BorderColor, #0064d9);
+  color: var(--sapSelectedColor, #0064d9);
+}
+
+kbd.hotkey-edit.capturing {
+  border-color: var(--sapField_Focus_BorderColor, #0032a5);
+  color: var(--sapContent_LabelColor, #556b82);
+  font-style: italic;
+}
+
 /* ----- Responsive ----- */
 
 @media (max-width: 900px) {

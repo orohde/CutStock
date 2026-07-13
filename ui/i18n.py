@@ -523,6 +523,22 @@ TRANSLATIONS = {
         "de": "Dialog schließen", "en": "Close dialog",
         "fr": "Fermer le dialogue", "it": "Chiudi finestra",
     },
+    "hotkey.hint": {
+        "de": "Auf eine Taste klicken, um sie zu ändern. Esc bricht ab.",
+        "en": "Click a key to change it. Esc cancels.",
+        "fr": "Cliquez sur une touche pour la modifier. Échap annule.",
+        "it": "Clicca su un tasto per modificarlo. Esc annulla.",
+    },
+    "hotkey.press": {
+        "de": "Taste drücken …", "en": "Press a key …",
+        "fr": "Appuyez sur une touche …", "it": "Premi un tasto …",
+    },
+    "hotkey.conflict": {
+        "de": "Taste {key} ist bereits belegt.",
+        "en": "Key {key} is already in use.",
+        "fr": "La touche {key} est déjà utilisée.",
+        "it": "Il tasto {key} è già in uso.",
+    },
 }
 
 LANGUAGES = {"en": "English", "de": "Deutsch", "fr": "Français", "it": "Italiano"}

@@ -217,6 +217,7 @@ class SettingsIn(BaseModel):
     language: Optional[str] = None
     unit: Optional[str] = None
     theme: Optional[str] = None
+    hotkeys: Optional[dict[str, str]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -365,6 +366,7 @@ def _get_settings_dict() -> dict:
         "language": s.value("appearance/language", "en"),
         "unit": s.value("appearance/unit", "mm"),
         "theme": s.value("appearance/theme", "system"),
+        "hotkeys": s.value("web/hotkeys", {}),
     }
 
 
@@ -379,6 +381,8 @@ def _update_settings(data: SettingsIn):
         s.setValue("appearance/unit", data.unit)
     if data.theme is not None:
         s.setValue("appearance/theme", data.theme)
+    if data.hotkeys is not None:
+        s.setValue("web/hotkeys", data.hotkeys)
 
 
 # ===========================================================================
