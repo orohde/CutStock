@@ -85,8 +85,10 @@ class MainWindow(QMainWindow):
                 self.restoreState(QByteArray(base64.b64decode(state)))
 
     def _apply_saved_theme(self):
-        theme_name = self.settings.value("appearance/theme", "Warm")
-        stylesheet = THEMES.get(theme_name, "")
+        from ui.tab_einstellungen import LEGACY_THEMES
+        theme_name = self.settings.value("appearance/theme", "Horizon Hell")
+        theme_name = LEGACY_THEMES.get(theme_name, theme_name)
+        stylesheet = THEMES.get(theme_name, THEMES["Horizon Hell"])
         QApplication.instance().setStyleSheet(stylesheet)
 
     def closeEvent(self, event):

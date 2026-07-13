@@ -8,228 +8,20 @@ from PySide6.QtWidgets import (
 )
 from core.settings import get_settings
 
+from ui.theme_horizon import HORIZON_LIGHT_QSS, HORIZON_DARK_QSS
+
 THEMES = {
+    "Horizon Hell": HORIZON_LIGHT_QSS,
+    "Horizon Dunkel": HORIZON_DARK_QSS,
     "Standard (System)": "",
-    "Dunkel": """
-        QWidget {
-            background-color: #2b2b2b;
-            color: #e0e0e0;
-            font-size: 13px;
-        }
-        QTableWidget {
-            background-color: #1e1e1e;
-            alternate-background-color: #2a2a2a;
-            gridline-color: #444;
-            selection-background-color: #3a6ea5;
-        }
-        QHeaderView::section {
-            background-color: #333;
-            color: #e0e0e0;
-            padding: 4px;
-            border: 1px solid #444;
-        }
-        QTabBar::tab {
-            background-color: #333;
-            color: #ccc;
-            padding: 8px 16px;
-            border: 1px solid #444;
-            margin-right: 2px;
-        }
-        QTabBar::tab:selected {
-            background-color: #3a6ea5;
-            color: white;
-        }
-        QPushButton {
-            background-color: #3a3a3a;
-            color: #e0e0e0;
-            border: 1px solid #555;
-            padding: 6px 14px;
-            border-radius: 3px;
-        }
-        QPushButton:hover { background-color: #4a4a4a; }
-        QPushButton:pressed { background-color: #3a6ea5; }
-        QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
-            background-color: #3a3a3a;
-            color: #e0e0e0;
-            border: 1px solid #555;
-            padding: 4px;
-            border-radius: 3px;
-        }
-        QGroupBox {
-            color: #e0e0e0;
-            border: 1px solid #555;
-            margin-top: 8px;
-            padding-top: 16px;
-        }
-        QGroupBox::title { padding: 0 6px; }
-        QScrollArea { border: none; }
-        QFrame { border-color: #555; }
-    """,
-    "Hell": """
-        QWidget {
-            background-color: #f5f5f5;
-            color: #1a1a1a;
-            font-size: 13px;
-        }
-        QTableWidget {
-            background-color: white;
-            alternate-background-color: #f0f4f8;
-            gridline-color: #ddd;
-            selection-background-color: #0078d4;
-            selection-color: white;
-        }
-        QHeaderView::section {
-            background-color: #e8e8e8;
-            color: #1a1a1a;
-            padding: 4px;
-            border: 1px solid #ccc;
-        }
-        QTabBar::tab {
-            background-color: #e0e0e0;
-            color: #333;
-            padding: 8px 16px;
-            border: 1px solid #ccc;
-            margin-right: 2px;
-        }
-        QTabBar::tab:selected {
-            background-color: #0078d4;
-            color: white;
-        }
-        QPushButton {
-            background-color: #e8e8e8;
-            color: #1a1a1a;
-            border: 1px solid #bbb;
-            padding: 6px 14px;
-            border-radius: 3px;
-        }
-        QPushButton:hover { background-color: #d0d0d0; }
-        QPushButton:pressed { background-color: #0078d4; color: white; }
-        QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
-            background-color: white;
-            color: #1a1a1a;
-            border: 1px solid #bbb;
-            padding: 4px;
-            border-radius: 3px;
-        }
-        QGroupBox {
-            color: #1a1a1a;
-            border: 1px solid #ccc;
-            margin-top: 8px;
-            padding-top: 16px;
-        }
-        QGroupBox::title { padding: 0 6px; }
-        QScrollArea { border: none; }
-    """,
-    "Blaugrau": """
-        QWidget {
-            background-color: #1e2a38;
-            color: #c8d6e5;
-            font-size: 13px;
-        }
-        QTableWidget {
-            background-color: #162230;
-            alternate-background-color: #1e2a38;
-            gridline-color: #2c3e50;
-            selection-background-color: #2980b9;
-        }
-        QHeaderView::section {
-            background-color: #243447;
-            color: #c8d6e5;
-            padding: 4px;
-            border: 1px solid #2c3e50;
-        }
-        QTabBar::tab {
-            background-color: #243447;
-            color: #8fa7bf;
-            padding: 8px 16px;
-            border: 1px solid #2c3e50;
-            margin-right: 2px;
-        }
-        QTabBar::tab:selected {
-            background-color: #2980b9;
-            color: white;
-        }
-        QPushButton {
-            background-color: #243447;
-            color: #c8d6e5;
-            border: 1px solid #2c3e50;
-            padding: 6px 14px;
-            border-radius: 3px;
-        }
-        QPushButton:hover { background-color: #2c3e50; }
-        QPushButton:pressed { background-color: #2980b9; }
-        QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
-            background-color: #243447;
-            color: #c8d6e5;
-            border: 1px solid #2c3e50;
-            padding: 4px;
-            border-radius: 3px;
-        }
-        QGroupBox {
-            color: #c8d6e5;
-            border: 1px solid #2c3e50;
-            margin-top: 8px;
-            padding-top: 16px;
-        }
-        QGroupBox::title { padding: 0 6px; }
-        QScrollArea { border: none; }
-        QFrame { border-color: #2c3e50; }
-    """,
-    "Warm": """
-        QWidget {
-            background-color: #2c2420;
-            color: #e8ddd3;
-            font-size: 13px;
-        }
-        QTableWidget {
-            background-color: #231e1a;
-            alternate-background-color: #2c2420;
-            gridline-color: #4a3f36;
-            selection-background-color: #8b5e3c;
-        }
-        QHeaderView::section {
-            background-color: #3a312a;
-            color: #e8ddd3;
-            padding: 4px;
-            border: 1px solid #4a3f36;
-        }
-        QTabBar::tab {
-            background-color: #3a312a;
-            color: #b0a090;
-            padding: 8px 16px;
-            border: 1px solid #4a3f36;
-            margin-right: 2px;
-        }
-        QTabBar::tab:selected {
-            background-color: #8b5e3c;
-            color: white;
-        }
-        QPushButton {
-            background-color: #3a312a;
-            color: #e8ddd3;
-            border: 1px solid #4a3f36;
-            padding: 6px 14px;
-            border-radius: 3px;
-        }
-        QPushButton:hover { background-color: #4a3f36; }
-        QPushButton:pressed { background-color: #8b5e3c; }
-        QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
-            background-color: #3a312a;
-            color: #e8ddd3;
-            border: 1px solid #4a3f36;
-            padding: 4px;
-            border-radius: 3px;
-        }
-        QGroupBox {
-            color: #e8ddd3;
-            border: 1px solid #4a3f36;
-            margin-top: 8px;
-            padding-top: 16px;
-        }
-        QGroupBox::title { padding: 0 6px; }
-        QScrollArea { border: none; }
-        QFrame { border-color: #4a3f36; }
-    """,
+}
+
+# Alte Theme-Namen (gespeicherte Einstellungen) auf Horizon abbilden
+LEGACY_THEMES = {
+    "Hell": "Horizon Hell",
+    "Warm": "Horizon Hell",
+    "Dunkel": "Horizon Dunkel",
+    "Blaugrau": "Horizon Dunkel",
 }
 
 
@@ -260,7 +52,8 @@ class EinstellungenTab(QWidget):
         self.theme_combo = QComboBox()
         self.theme_combo.setMinimumWidth(250)
         self.theme_combo.addItems(THEMES.keys())
-        saved_theme = self.settings.value("appearance/theme", "Warm")
+        saved_theme = self.settings.value("appearance/theme", "Horizon Hell")
+        saved_theme = LEGACY_THEMES.get(saved_theme, saved_theme)
         idx = self.theme_combo.findText(saved_theme)
         if idx >= 0:
             self.theme_combo.setCurrentIndex(idx)
