@@ -1,6 +1,6 @@
 services:
   cutstock:
-    build: .
+    image: git.rohde.one/oliver/cutstock:latest
     container_name: cutstock
     restart: unless-stopped
     ports:
