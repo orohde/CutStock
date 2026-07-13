@@ -6,9 +6,6 @@ services:
     ports:
       - "8420:8000"
     volumes:
-      - cutstock-data:/data
+      - /mnt/user/appdata/cutstock:/data
     environment:
       - CUTSTOCK_DB=/data/cutstock.db
-
-volumes:
-  cutstock-data:
