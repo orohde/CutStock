@@ -842,6 +842,8 @@ function openModal(title, fields, data, onSave) {
             if (f.hidden) return;
             const el = body.querySelector(`[name="${f.key}"]`);
             if (!el) return;
+            const grp = el.closest('.form-group');
+            if (grp && grp.style.display === 'none') return;
             let val;
             if (f.type === 'number') {
                 val = el.value === '' ? null : parseFloat(el.value);
@@ -1052,7 +1054,8 @@ function openPartDialog(part = null) {
     }
 
     const title = isEdit ? t('part.edit') : t('part.new');
-    const data = part ? { ...part } : { typ: 'Platte', stueckzahl: 1, gesaegt_anzahl: 0, maserung: 'egal' };
+    const defaultLabel = isEdit ? undefined : `Teil ${(State.parts || []).length + 1}`;
+    const data = part ? { ...part } : { typ: 'Platte', stueckzahl: 1, gesaegt_anzahl: 0, maserung: 'egal', label: defaultLabel };
 
     const currentTyp = data.typ || 'Platte';
 
@@ -1457,6 +1460,91 @@ function initEvents() {
         resizeTimer = setTimeout(() => {
             if (State.optimizationResult) renderOptResults();
         }, 250);
+    });
+
+    // ----- Hotkeys -----
+    document.addEventListener('keydown', (e) => {
+        const overlay = document.getElementById('modal-overlay');
+        const modalOpen = overlay?.classList.contains('active');
+
+        // Enter in modal = save
+        if (modalOpen && e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+            const active = document.activeElement;
+            if (active?.tagName === 'TEXTAREA') return;
+            e.preventDefault();
+            document.getElementById('modal-save')?.click();
+            return;
+        }
+
+        if (modalOpen) return;
+        if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
+
+        const tab = document.querySelector('.tab-btn.active')?.dataset.tab;
+
+        // Tab switching: 1-4
+        if (e.key >= '1' && e.key <= '4' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            const tabs = ['material', 'projects', 'optimization', 'settings'];
+            const target = tabs[parseInt(e.key) - 1];
+            const btn = document.querySelector(`.tab-btn[data-tab="${target}"]`);
+            if (btn) { e.preventDefault(); btn.click(); }
+            return;
+        }
+
+        // N = Neu
+        if (e.key === 'n' && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            if (tab === 'material') document.getElementById('btn-mat-new')?.click();
+            else if (tab === 'projects') {
+                if (State.selectedProjectId) document.getElementById('btn-part-new')?.click();
+                else document.getElementById('btn-proj-new')?.click();
+            }
+            else if (tab === 'settings') document.getElementById('btn-blade-new')?.click();
+            return;
+        }
+
+        // E = Bearbeiten
+        if (e.key === 'e' && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            if (tab === 'material') {
+                if (State.selectedStockId) document.getElementById('btn-stock-edit')?.click();
+                else document.getElementById('btn-mat-edit')?.click();
+            }
+            else if (tab === 'projects') {
+                if (State.selectedPartId) document.getElementById('btn-part-edit')?.click();
+                else document.getElementById('btn-proj-edit')?.click();
+            }
+            else if (tab === 'settings') document.getElementById('btn-blade-edit')?.click();
+            return;
+        }
+
+        // Delete / Backspace = Löschen
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+            e.preventDefault();
+            if (tab === 'material') {
+                if (State.selectedStockId) document.getElementById('btn-stock-del')?.click();
+                else document.getElementById('btn-mat-del')?.click();
+            }
+            else if (tab === 'projects') {
+                if (State.selectedPartId) document.getElementById('btn-part-del')?.click();
+                else document.getElementById('btn-proj-del')?.click();
+            }
+            else if (tab === 'settings') document.getElementById('btn-blade-del')?.click();
+            return;
+        }
+
+        // S = Neuer Lagerbestand (Material-Tab)
+        if (e.key === 's' && !e.ctrlKey && !e.metaKey && tab === 'material') {
+            e.preventDefault();
+            document.getElementById('btn-stock-new')?.click();
+            return;
+        }
+
+        // R = Optimierung starten
+        if (e.key === 'r' && !e.ctrlKey && !e.metaKey && tab === 'optimization') {
+            e.preventDefault();
+            document.getElementById('btn-optimize')?.click();
+            return;
+        }
     });
 }
 
