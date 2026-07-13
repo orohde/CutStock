@@ -2,7 +2,12 @@
 
 **Minimize waste. Maximize every board, bar, and panel.**
 
-CutStock is a desktop application for cut optimization (Verschnittoptimierung) that helps woodworkers, makers, and small workshops get the most out of their material. Whether you're cutting panels for a bookshelf or bars for a frame -- CutStock calculates the optimal cutting layout, tracks your stock, and exports print-ready cut plans as PDF.
+CutStock is a cut optimization tool (Verschnittoptimierung) that helps woodworkers, makers, and small workshops get the most out of their material. Whether you're cutting panels for a bookshelf or bars for a frame -- CutStock calculates the optimal cutting layout, tracks your stock, and exports print-ready cut plans as PDF.
+
+CutStock comes in two flavors that share the same optimization core:
+
+- **Desktop app** (macOS, Windows, Linux) -- double-click, works offline, data stays local
+- **Web app** (Docker) -- self-hosted, reachable from any browser or tablet in your network
 
 ![CutStock Optimization](docs/screenshot_platten.png)
 
@@ -18,13 +23,73 @@ CutStock is a desktop application for cut optimization (Verschnittoptimierung) t
 - **Project Management** -- organize parts by project, import/export as JSON
 - **Visual Cut Plans** -- color-coded cutting diagrams with labels and dimensions
 - **PDF Export** -- compact multi-page layout (2-column for bars, proportional for panels)
-- **Print Preview** -- opens PDF in your system viewer before saving
 - **Statistics** -- detailed waste analysis per stock piece and totals
-- **Backup/Restore** -- full database + settings as ZIP
+- **Backup/Restore** -- full database + settings as ZIP (desktop)
 - **Multi-language** -- English, Deutsch, Francais, Italiano
-- **5 Color Themes** -- Standard, Dark, Light, Blue-Grey, Warm
-- **Cross-platform** -- macOS (.app), Windows (.exe), Linux
-- **iCloud Sync** -- database and settings sync between Macs automatically
+- **SAP Horizon Design** -- identical Fiori look in desktop and web, light and dark theme
+- **Keyboard Shortcuts** -- fully keyboard-driven workflow, remappable in the web app
+- **Cross-platform** -- macOS (.app), Windows (.exe), Linux, Docker
+- **iCloud Sync** -- desktop database and settings sync between Macs automatically
+
+## Web App (Docker)
+
+The web app serves the same optimization engine through a FastAPI backend with a
+SAP Fiori (Horizon) interface. All assets are bundled -- no internet connection
+required at runtime.
+
+### Quick start with Docker Compose
+
+```yaml
+services:
+  cutstock:
+    image: ghcr.io/orohde/cutstock:latest
+    container_name: cutstock
+    restart: unless-stopped
+    ports:
+      - "8420:8000"
+    volumes:
+      - ./data:/data
+    environment:
+      - CUTSTOCK_DB=/data/cutstock.db
+```
+
+```bash
+docker compose up -d
+```
+
+Then open `http://localhost:8420` in your browser.
+
+### Quick start with docker run
+
+```bash
+docker run -d --name cutstock \
+  -p 8420:8000 \
+  -v "$(pwd)/data:/data" \
+  ghcr.io/orohde/cutstock:latest
+```
+
+### Build the image yourself
+
+```bash
+git clone https://github.com/orohde/CutStock.git
+cd CutStock
+docker build -t cutstock .
+docker run -d -p 8420:8000 -v "$(pwd)/data:/data" cutstock
+```
+
+### Notes
+
+| Topic | Detail |
+|-------|--------|
+| Port | Container listens on `8000`; map any host port you like (`8420` in the examples) |
+| Data | SQLite database + `settings.json` live in the `/data` volume |
+| Unraid | Use `/mnt/user/appdata/cutstock:/data` as the volume mapping |
+| Reverse proxy | Plain HTTP backend, works behind nginx, Traefik, Zoraxy, Caddy, ... |
+| Users | Single-user by design -- no authentication built in; use your reverse proxy/SSO if exposed |
+
+The web UI covers materials, stock, projects, parts, optimization with visual
+cut plans, PDF export, and settings. Keyboard shortcuts are listed on the
+Settings page and can be remapped there (click a key, press the new one).
 
 ## Screenshots
 
@@ -54,7 +119,7 @@ Select a project, material, saw blade, and algorithm. The optimizer calculates t
 
 ### Settings
 
-Configure language, color theme, unit (mm/cm), saw blades, and backup/restore.
+Configure language, color theme (Horizon light/dark), unit (mm/cm), saw blades, keyboard shortcuts, and backup/restore.
 
 ![Settings](docs/screenshot_einstellungen.png)
 
@@ -91,7 +156,7 @@ Guillotine cuts can be made with any standard saw. The remnants are always clean
 - **Grain direction** -- parts placed only in orientations that match the wood grain
 - **Finite stock** -- uses smallest/remnant pieces first, reports parts that don't fit
 
-## Download
+## Download (Desktop)
 
 Pre-built binaries for macOS and Windows are available on the [Releases page](https://github.com/orohde/CutStock/releases).
 
@@ -107,78 +172,84 @@ Pre-built binaries for macOS and Windows are available on the [Releases page](ht
 
 ## Installation (from source)
 
-### Prerequisites
+### Desktop
 
-- Python 3.12+
-- macOS, Windows, or Linux
-
-### Setup
+Prerequisites: Python 3.12+, macOS/Windows/Linux
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/orohde/CutStock.git
 cd CutStock
 ./setup.sh        # Creates venv, installs dependencies
+./run.sh          # Run (development)
 ```
 
-### Run (Development)
+Build a standalone app:
 
 ```bash
-./run.sh
+./build.sh          # macOS: creates dist/CutStock.app
+build_windows.bat   # Windows: creates dist\CutStock\CutStock.exe
 ```
 
-### Build Standalone App
+### Web (without Docker)
 
-**macOS:**
 ```bash
-./build.sh         # Creates dist/CutStock.app
-```
-
-**Windows:**
-```bat
-build_windows.bat   # Creates dist\CutStock\CutStock.exe
+git clone https://github.com/orohde/CutStock.git
+cd CutStock
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements-web.txt
+CUTSTOCK_DB=./data/cutstock.db uvicorn web.app:app --host 0.0.0.0 --port 8000
 ```
 
 ## Data Storage
 
-| File | macOS | Windows |
-|------|-------|---------|
-| Database | `iCloud Drive/CutStock/cutstock.db` | `%APPDATA%\CutStock\cutstock.db` |
-| Settings | `iCloud Drive/CutStock/settings.json` | `%APPDATA%\CutStock\settings.json` |
+| Variant | Database | Settings |
+|---------|----------|----------|
+| macOS | `iCloud Drive/CutStock/cutstock.db` | `iCloud Drive/CutStock/settings.json` |
+| Windows | `%APPDATA%\CutStock\cutstock.db` | `%APPDATA%\CutStock\settings.json` |
+| Docker | `/data/cutstock.db` (volume) | `/data/settings.json` (volume) |
 
-On macOS, the database and settings sync automatically via iCloud Drive between Macs. A heartbeat-based lock mechanism prevents concurrent access.
+On macOS, the desktop database and settings sync automatically via iCloud Drive between Macs. A heartbeat-based lock mechanism prevents concurrent access.
 
 ## Tech Stack
 
 - **Python 3.12+** -- application logic
-- **PySide6 (Qt 6)** -- cross-platform GUI
+- **PySide6 (Qt 6)** -- cross-platform desktop GUI
+- **FastAPI + Uvicorn** -- web backend
+- **SAP Fundamental Styles / Horizon theme** -- web UI design system (bundled, Apache-2.0)
 - **SQLite** -- local database (no server needed)
 - **reportlab** -- PDF generation
 - **PyInstaller** -- standalone app packaging
+- **Docker** -- container image for the web app
 
 ## Project Structure
 
 ```
 CutStock/
-  core/
-    db.py          -- SQLite schema + repository pattern
-    models.py      -- dataclasses (Material, Stock, Project, Part, ...)
-    optimize.py    -- 1D/2D optimization algorithms (Greedy + GA)
-    pdf.py         -- PDF export with cut plan drawings
-    lock.py        -- iCloud-safe file locking
-    settings.py    -- JSON-based settings
-  ui/
-    main_window.py -- main window with tabs
-    tab_material_lager.py -- material + stock management
-    tab_projekt.py -- project + parts management
-    tab_optimierung.py -- optimization + visualization
-    tab_einstellungen.py -- settings + saw blades + backup
-    i18n.py        -- translations (EN/DE/FR/IT)
-    units.py       -- mm/cm unit conversion
+  core/                    -- shared, GUI-independent
+    db.py                  -- SQLite schema + repository pattern
+    models.py              -- dataclasses (Material, Stock, Project, Part, ...)
+    optimize.py            -- 1D/2D optimization algorithms (Greedy + GA)
+    pdf.py                 -- PDF export with cut plan drawings
+    lock.py                -- iCloud-safe file locking
+    settings.py            -- JSON-based settings
+  ui/                      -- desktop app (PySide6)
+    main_window.py         -- main window with tabs
+    tab_material_lager.py  -- material + stock management
+    tab_projekt.py         -- project + parts management
+    tab_optimierung.py     -- optimization + visualization
+    tab_einstellungen.py   -- settings + saw blades + backup
+    theme_horizon.py       -- SAP Horizon theme (light/dark) as Qt stylesheet
+    i18n.py                -- translations (EN/DE/FR/IT)
+    units.py               -- mm/cm unit conversion
+  web/                     -- web app
+    app.py                 -- FastAPI backend (REST API + static files)
+    static/                -- frontend (vanilla JS/HTML/CSS)
+      vendor/              -- bundled Fundamental Styles + Horizon themes + fonts
   tests/
-    test_optimize.py -- algorithm tests
-  assets/
-    icon.jpg/icns/ico -- app icon
-  run.py           -- entry point
+    test_optimize.py       -- algorithm tests
+  Dockerfile               -- web app container image
+  compose.yml              -- Docker Compose example
+  run.py                   -- desktop entry point
 ```
 
 ## License
@@ -186,6 +257,8 @@ CutStock/
 **CC BY-NC-SA 4.0** -- free for personal use, no commercial use, attribution required.
 
 See [LICENSE](LICENSE) for details.
+
+The bundled SAP Fundamental Styles and Horizon theme assets (`web/static/vendor/`) are licensed under Apache-2.0 by SAP SE.
 
 ## Contributing
 

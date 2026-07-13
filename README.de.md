@@ -2,7 +2,12 @@
 
 **Verschnitt minimieren. Jedes Brett, jede Stange, jede Platte optimal nutzen.**
 
-CutStock ist eine Desktop-Anwendung zur Verschnittoptimierung, die Holzwerkern, Makern und kleinen Werkstaetten hilft, das Maximum aus ihrem Material herauszuholen. Ob Plattenteile fuer ein Regal oder Stangenprofile fuer einen Rahmen -- CutStock berechnet den optimalen Schnittplan, verwaltet den Lagerbestand und exportiert druckfertige Schnittplaene als PDF.
+CutStock ist ein Werkzeug zur Verschnittoptimierung, das Holzwerkern, Makern und kleinen Werkstaetten hilft, das Maximum aus ihrem Material herauszuholen. Ob Plattenteile fuer ein Regal oder Stangenprofile fuer einen Rahmen -- CutStock berechnet den optimalen Schnittplan, verwaltet den Lagerbestand und exportiert druckfertige Schnittplaene als PDF.
+
+CutStock gibt es in zwei Varianten, die denselben Optimierungskern teilen:
+
+- **Desktop-App** (macOS, Windows, Linux) -- Doppelklick, laeuft offline, Daten bleiben lokal
+- **Web-App** (Docker) -- selbst gehostet, erreichbar von jedem Browser oder Tablet im Netzwerk
 
 ![CutStock Plattenoptimierung](docs/screenshot_platten.png)
 
@@ -18,13 +23,74 @@ CutStock ist eine Desktop-Anwendung zur Verschnittoptimierung, die Holzwerkern, 
 - **Projektverwaltung** -- Teile nach Projekten organisieren, Import/Export als JSON
 - **Visuelle Schnittplaene** -- farbkodierte Zuschnittschemata mit Labels und Massen
 - **PDF-Export** -- kompaktes mehrseitiges Layout (2-spaltig fuer Stangen, proportional fuer Platten)
-- **Druckvorschau** -- oeffnet PDF im System-Viewer vor dem Speichern
 - **Statistik** -- detaillierte Verschnittanalyse pro Lagerstueck und Gesamtwerte
-- **Backup/Restore** -- komplette Datenbank + Einstellungen als ZIP
+- **Backup/Restore** -- komplette Datenbank + Einstellungen als ZIP (Desktop)
 - **Mehrsprachig** -- Deutsch, English, Francais, Italiano
-- **5 Farbschemata** -- Standard, Dunkel, Hell, Blaugrau, Warm
-- **Plattformuebergreifend** -- macOS (.app), Windows (.exe), Linux
-- **iCloud-Sync** -- Datenbank und Einstellungen synchronisieren automatisch zwischen Macs
+- **SAP Horizon Design** -- identischer Fiori-Look in Desktop und Web, helles und dunkles Farbschema
+- **Tastenkuerzel** -- komplett per Tastatur bedienbar, in der Web-App frei belegbar
+- **Plattformuebergreifend** -- macOS (.app), Windows (.exe), Linux, Docker
+- **iCloud-Sync** -- Desktop-Datenbank und Einstellungen synchronisieren automatisch zwischen Macs
+
+## Web-App (Docker)
+
+Die Web-App stellt denselben Optimierungskern ueber ein FastAPI-Backend mit
+SAP-Fiori-Oberflaeche (Horizon) bereit. Alle Assets sind gebuendelt -- zur
+Laufzeit ist keine Internetverbindung noetig.
+
+### Schnellstart mit Docker Compose
+
+```yaml
+services:
+  cutstock:
+    image: ghcr.io/orohde/cutstock:latest
+    container_name: cutstock
+    restart: unless-stopped
+    ports:
+      - "8420:8000"
+    volumes:
+      - ./data:/data
+    environment:
+      - CUTSTOCK_DB=/data/cutstock.db
+```
+
+```bash
+docker compose up -d
+```
+
+Danach `http://localhost:8420` im Browser oeffnen.
+
+### Schnellstart mit docker run
+
+```bash
+docker run -d --name cutstock \
+  -p 8420:8000 \
+  -v "$(pwd)/data:/data" \
+  ghcr.io/orohde/cutstock:latest
+```
+
+### Image selbst bauen
+
+```bash
+git clone https://github.com/orohde/CutStock.git
+cd CutStock
+docker build -t cutstock .
+docker run -d -p 8420:8000 -v "$(pwd)/data:/data" cutstock
+```
+
+### Hinweise
+
+| Thema | Detail |
+|-------|--------|
+| Port | Container lauscht auf `8000`; Host-Port frei waehlbar (`8420` in den Beispielen) |
+| Daten | SQLite-Datenbank + `settings.json` liegen im `/data`-Volume |
+| Unraid | Als Volume-Mapping `/mnt/user/appdata/cutstock:/data` verwenden |
+| Reverse Proxy | Reines HTTP-Backend, laeuft hinter nginx, Traefik, Zoraxy, Caddy, ... |
+| Benutzer | Bewusst Single-User -- keine eingebaute Anmeldung; bei Veroeffentlichung Reverse Proxy/SSO vorschalten |
+
+Die Web-Oberflaeche umfasst Materialien, Lager, Projekte, Teile, Optimierung
+mit visuellen Schnittplaenen, PDF-Export und Einstellungen. Die Tastenkuerzel
+stehen auf der Einstellungen-Seite und lassen sich dort umbelegen (Taste
+anklicken, neue Taste druecken).
 
 ## Screenshots
 
@@ -54,141 +120,149 @@ Projekt, Material, Saegeblatt und Algorithmus waehlen. Der Optimierer berechnet 
 
 ### Einstellungen
 
-Sprache, Farbschema, Masseinheit (mm/cm), Saegeblaetter, Backup/Restore konfigurieren.
+Sprache, Farbschema (Horizon hell/dunkel), Masseinheit (mm/cm), Saegeblaetter, Tastenkuerzel und Backup/Restore konfigurieren.
 
 ![Einstellungen](docs/screenshot_einstellungen.png)
 
 ## Algorithmen
 
-CutStock loest das klassische [Cutting-Stock-Problem](https://de.wikipedia.org/wiki/Cutting-Stock-Problem) mit drei Ansaetzen:
+CutStock loest das klassische [Cutting-Stock-Problem](https://de.wikipedia.org/wiki/Verschnittproblem) mit drei Ansaetzen:
 
 ### Warum Guillotine-Schnitte?
 
-Alle CutStock-Algorithmen verwenden **Guillotine-Schnitte** -- jeder Schnitt geht komplett von Kante zu Kante. Das ist eine bewusste Entscheidung:
+Alle CutStock-Algorithmen verwenden **Guillotine-Schnitte** -- jeder Schnitt geht vollstaendig von Kante zu Kante. Das ist eine bewusste Entscheidung:
 
-| Verfahren | Materialausnutzung | Reste | Benoetigtes Werkzeug |
-|-----------|-------------------|-------|---------------------|
+| Ansatz | Materialausnutzung | Reste | Benoetigte Werkzeuge |
+|--------|-------------------|-------|---------------------|
 | **Guillotine** (CutStock) | ~85-95% | Immer rechteckig | Tischkreissaege, Handkreissaege |
-| **Free-Cut** | ~93-98% | L-foermig, T-foermig | CNC-Fraese noetig |
+| **Freischnitt** | ~93-98% | L-foermig, T-foermig | CNC-Fraese noetig |
 
-Guillotine-Schnitte kann man mit jeder handelsüblichen Saege ausfuehren. Die Reste sind immer saubere Rechtecke die gelagert und wiederverwendet werden koennen. Die 5-10% bessere Ausnutzung von Free-Cut-Algorithmen erfordert eine CNC-Fraese und erzeugt unregelmaessige Reste -- fuer die meisten Werkstaetten nicht praktikabel.
+Guillotine-Schnitte lassen sich mit jeder normalen Saege ausfuehren. Die Reste sind immer saubere Rechtecke, die gelagert und wiederverwendet werden koennen. Die 5-10% bessere Ausnutzung von Freischnitt-Algorithmen erfordert eine CNC-Fraese und erzeugt unregelmaessige Reste, die kaum wiederverwendbar sind -- fuer die meisten Werkstaetten unpraktisch.
 
 ### 1D -- Stangen / Profile
 
-- **Schnell (Greedy FFD):** First-Fit-Decreasing -- sortiert Teile nach Laenge, platziert jedes auf der ersten passenden Stange. Sofortiges Ergebnis.
-- **Gruendlich (GA):** Genetischer Algorithmus -- entwickelt 80 Permutationen ueber 200 Generationen fuer bessere Kombinationen.
+- **Schnell (Greedy FFD):** First-Fit-Decreasing -- sortiert Teile nach Laenge, platziert jedes auf der ersten Stange, auf die es passt. Sofortiges Ergebnis.
+- **Gruendlich (GA):** Genetischer Algorithmus -- entwickelt 80 Permutationen ueber 200 Generationen, um bessere Kombinationen zu finden.
 
-### 2D -- Platten / Bretter
+### 2D -- Platten
 
-- **Schnell (Greedy):** Best-Area-Fit Guillotine-Packing. Spaltet immer erst horizontal (rechts + unten).
-- **Nested Guillotine:** Wie Greedy, testet aber **beide Split-Richtungen** (horizontal und vertikal) an jeder Schnittstelle und waehlt die, die den groessten nutzbaren Rest erzeugt. Bessere Ergebnisse bei asymmetrischen Teilen.
-- **Gruendlich (GA):** Genetischer Algorithmus -- optimiert Platzierungsreihenfolge und Drehungsentscheidungen ueber 200 Generationen. Beste Ergebnisse, dauert aber 2-5 Sekunden.
+- **Schnell (Greedy):** Best-Area-Fit Guillotine-Packing. Teilt immer zuerst horizontal (rechts + unterhalb).
+- **Nested Guillotine:** Wie Greedy, testet aber an jedem Schnitt **beide Teilungsrichtungen** (horizontal und vertikal) und waehlt die, die den groessten nutzbaren Rest erzeugt. Bessere Ergebnisse bei komplexen Layouts mit asymmetrischen Teilen.
+- **Gruendlich (GA):** Genetischer Algorithmus -- optimiert Platzierungsreihenfolge und Rotationsentscheidungen ueber 200 Generationen. Beste Ergebnisse, braucht aber 2-5 Sekunden.
 
 ### Alle Algorithmen beruecksichtigen:
 
-- **Schnittbreite (Kerf)** -- wird bei jedem Schnitt abgezogen
+- **Saegeblatt-Schnittbreite** -- wird bei jedem Schnitt abgezogen
 - **Besaeumung** -- beschaedigte Kanten werden vor dem Zuschnitt entfernt
-- **Maserungsrichtung** -- Teile werden nur in Orientierungen platziert die zur Holzmaserung passen
-- **Endlicher Vorrat** -- verwendet kleinste/Rest-Stuecke zuerst, meldet Teile die nicht passen
+- **Maserungsrichtung** -- Teile werden nur in Orientierungen platziert, die zur Holzmaserung passen
+- **Endlicher Bestand** -- verwendet kleinste/Rest-Stuecke zuerst, meldet Teile, die nicht passen
 
-## Download
+## Download (Desktop)
 
-Fertige Builds fuer macOS und Windows gibt es auf der [Releases-Seite](https://github.com/orohde/CutStock/releases).
+Fertige Binaries fuer macOS und Windows gibt es auf der [Releases-Seite](https://github.com/orohde/CutStock/releases).
 
 > **Wichtig: Unsignierte Builds**
 >
 > Die Releases sind **nicht code-signiert** (kein kostenpflichtiges Apple/Microsoft-Entwicklerzertifikat).
 > Das Betriebssystem zeigt beim ersten Start eine Sicherheitswarnung:
 >
-> - **macOS**: Rechtsklick auf die App, "Oeffnen" waehlen, dann nochmal "Oeffnen" klicken (umgeht Gatekeeper)
-> - **Windows**: Auf "Weitere Informationen" klicken, dann "Trotzdem ausfuehren" (umgeht SmartScreen)
+> - **macOS**: Rechtsklick auf die App, "Oeffnen" waehlen, dann nochmal "Oeffnen" klicken (Gatekeeper)
+> - **Windows**: "Weitere Informationen" klicken, dann "Trotzdem ausfuehren" (SmartScreen)
 >
-> Das ist normal fuer Open-Source-Software. Der Quellcode ist vollstaendig einsehbar.
+> Das ist bei Open-Source-Software normal. Der Quellcode ist vollstaendig einsehbar.
 
-## Installation (aus Quellcode)
+## Installation (aus dem Quellcode)
 
-### Voraussetzungen
+### Desktop
 
-- Python 3.12+
-- macOS, Windows oder Linux
-
-### Einrichtung
+Voraussetzungen: Python 3.12+, macOS/Windows/Linux
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/orohde/CutStock.git
 cd CutStock
 ./setup.sh        # Erstellt venv, installiert Abhaengigkeiten
+./run.sh          # Starten (Entwicklung)
 ```
 
-### Starten (Entwicklung)
+Standalone-App bauen:
 
 ```bash
-./run.sh
+./build.sh          # macOS: erstellt dist/CutStock.app
+build_windows.bat   # Windows: erstellt dist\CutStock\CutStock.exe
 ```
 
-### Standalone-App bauen
+### Web (ohne Docker)
 
-**macOS:**
 ```bash
-./build.sh         # Erstellt dist/CutStock.app
-```
-
-**Windows:**
-```bat
-build_windows.bat   # Erstellt dist\CutStock\CutStock.exe
+git clone https://github.com/orohde/CutStock.git
+cd CutStock
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements-web.txt
+CUTSTOCK_DB=./data/cutstock.db uvicorn web.app:app --host 0.0.0.0 --port 8000
 ```
 
 ## Datenspeicherung
 
-| Datei | macOS | Windows |
-|-------|-------|---------|
-| Datenbank | `iCloud Drive/CutStock/cutstock.db` | `%APPDATA%\CutStock\cutstock.db` |
-| Einstellungen | `iCloud Drive/CutStock/settings.json` | `%APPDATA%\CutStock\settings.json` |
+| Variante | Datenbank | Einstellungen |
+|----------|-----------|---------------|
+| macOS | `iCloud Drive/CutStock/cutstock.db` | `iCloud Drive/CutStock/settings.json` |
+| Windows | `%APPDATA%\CutStock\cutstock.db` | `%APPDATA%\CutStock\settings.json` |
+| Docker | `/data/cutstock.db` (Volume) | `/data/settings.json` (Volume) |
 
-Auf macOS synchronisieren Datenbank und Einstellungen automatisch ueber iCloud Drive zwischen Macs. Ein Heartbeat-basierter Lock-Mechanismus verhindert gleichzeitigen Zugriff.
+Auf macOS synchronisieren Desktop-Datenbank und Einstellungen automatisch ueber iCloud Drive zwischen Macs. Ein Heartbeat-basierter Lock-Mechanismus verhindert gleichzeitigen Zugriff.
 
-## Technologie
+## Tech-Stack
 
 - **Python 3.12+** -- Anwendungslogik
-- **PySide6 (Qt 6)** -- plattformuebergreifende GUI
+- **PySide6 (Qt 6)** -- plattformuebergreifende Desktop-GUI
+- **FastAPI + Uvicorn** -- Web-Backend
+- **SAP Fundamental Styles / Horizon Theme** -- Designsystem der Web-UI (gebuendelt, Apache-2.0)
 - **SQLite** -- lokale Datenbank (kein Server noetig)
 - **reportlab** -- PDF-Erzeugung
-- **PyInstaller** -- Standalone-App-Paketierung
+- **PyInstaller** -- Standalone-App-Packaging
+- **Docker** -- Container-Image fuer die Web-App
 
 ## Projektstruktur
 
 ```
 CutStock/
-  core/
-    db.py          -- SQLite-Schema + Repository-Pattern
-    models.py      -- Datenklassen (Material, Lagerstueck, Projekt, Teil, ...)
-    optimize.py    -- 1D/2D Optimierungsalgorithmen (Greedy + GA)
-    pdf.py         -- PDF-Export mit Schnittplan-Zeichnungen
-    lock.py        -- iCloud-sicheres Datei-Locking
-    settings.py    -- JSON-basierte Einstellungen
-  ui/
-    main_window.py -- Hauptfenster mit Tabs
-    tab_material_lager.py -- Material- und Lagerverwaltung
-    tab_projekt.py -- Projekt- und Teileverwaltung
-    tab_optimierung.py -- Optimierung und Visualisierung
-    tab_einstellungen.py -- Einstellungen, Saegeblaetter, Backup
-    i18n.py        -- Uebersetzungen (DE/EN/FR/IT)
-    units.py       -- mm/cm Einheitenumrechnung
+  core/                    -- gemeinsam, GUI-unabhaengig
+    db.py                  -- SQLite-Schema + Repository-Pattern
+    models.py              -- Dataclasses (Material, Lager, Projekt, Teil, ...)
+    optimize.py            -- 1D/2D-Optimierungsalgorithmen (Greedy + GA)
+    pdf.py                 -- PDF-Export mit Schnittplan-Zeichnungen
+    lock.py                -- iCloud-sicheres File-Locking
+    settings.py            -- JSON-basierte Einstellungen
+  ui/                      -- Desktop-App (PySide6)
+    main_window.py         -- Hauptfenster mit Tabs
+    tab_material_lager.py  -- Material- + Lagerverwaltung
+    tab_projekt.py         -- Projekt- + Teileverwaltung
+    tab_optimierung.py     -- Optimierung + Visualisierung
+    tab_einstellungen.py   -- Einstellungen + Saegeblaetter + Backup
+    theme_horizon.py       -- SAP Horizon Theme (hell/dunkel) als Qt-Stylesheet
+    i18n.py                -- Uebersetzungen (DE/EN/FR/IT)
+    units.py               -- mm/cm-Umrechnung
+  web/                     -- Web-App
+    app.py                 -- FastAPI-Backend (REST-API + statische Dateien)
+    static/                -- Frontend (Vanilla JS/HTML/CSS)
+      vendor/              -- gebuendelte Fundamental Styles + Horizon-Themes + Fonts
   tests/
-    test_optimize.py -- Algorithmen-Tests
-  assets/
-    icon.jpg/icns/ico -- App-Icon
-  run.py           -- Einstiegspunkt
+    test_optimize.py       -- Algorithmus-Tests
+  Dockerfile               -- Container-Image der Web-App
+  compose.yml              -- Docker-Compose-Beispiel
+  run.py                   -- Desktop-Einstiegspunkt
 ```
 
 ## Lizenz
 
-**CC BY-NC-SA 4.0** -- frei fuer private Nutzung, keine kommerzielle Nutzung, Namensnennung erforderlich.
+**CC BY-NC-SA 4.0** -- frei fuer den persoenlichen Gebrauch, keine kommerzielle Nutzung, Namensnennung erforderlich.
 
-Siehe [LICENSE](LICENSE) fuer Details.
+Details siehe [LICENSE](LICENSE).
+
+Die gebuendelten SAP Fundamental Styles und Horizon-Theme-Assets (`web/static/vendor/`) stehen unter Apache-2.0-Lizenz von SAP SE.
 
 ## Mitmachen
 
-Beitraege sind willkommen! Bitte zunaechst ein Issue oeffnen um die geplante Aenderung zu besprechen.
+Beitraege willkommen! Bitte zuerst ein Issue eroeffnen, um die geplante Aenderung zu besprechen.
 
-Zum Hinzufuegen einer neuen Sprache: siehe `ui/i18n.py` -- einfach den Sprachcode bei `LANGUAGES` ergaenzen und fuer jeden Key in `TRANSLATIONS` eine Uebersetzung hinzufuegen.
+Fuer eine neue Sprache siehe `ui/i18n.py` -- einfach den Sprachcode zu `LANGUAGES` hinzufuegen und jede Zeile in `TRANSLATIONS` uebersetzen.
