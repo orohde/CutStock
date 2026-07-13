@@ -475,6 +475,54 @@ TRANSLATIONS = {
     "part.cut_minus": {
         "de": "Gesägt -1", "en": "Cut -1", "fr": "Coupé -1", "it": "Tagliato -1",
     },
+    # ----- Tastenkürzel (Web) -----
+    "hotkey.title": {
+        "de": "Tastenkürzel", "en": "Keyboard Shortcuts",
+        "fr": "Raccourcis clavier", "it": "Scorciatoie da tastiera",
+    },
+    "hotkey.key": {
+        "de": "Taste", "en": "Key", "fr": "Touche", "it": "Tasto",
+    },
+    "hotkey.action": {
+        "de": "Aktion", "en": "Action", "fr": "Action", "it": "Azione",
+    },
+    "hotkey.tabs": {
+        "de": "Tab wechseln", "en": "Switch tab",
+        "fr": "Changer d'onglet", "it": "Cambiare scheda",
+    },
+    "hotkey.new": {
+        "de": "Neues Element (Material / Projekt / Bauteil / Sägeblatt)",
+        "en": "New item (material / project / part / saw blade)",
+        "fr": "Nouvel élément (matériau / projet / pièce / lame)",
+        "it": "Nuovo elemento (materiale / progetto / pezzo / lama)",
+    },
+    "hotkey.edit": {
+        "de": "Ausgewähltes Element bearbeiten", "en": "Edit selected item",
+        "fr": "Modifier l'élément sélectionné", "it": "Modifica elemento selezionato",
+    },
+    "hotkey.delete": {
+        "de": "Ausgewähltes Element löschen", "en": "Delete selected item",
+        "fr": "Supprimer l'élément sélectionné", "it": "Elimina elemento selezionato",
+    },
+    "hotkey.del_key": {
+        "de": "Entf", "en": "Del", "fr": "Suppr", "it": "Canc",
+    },
+    "hotkey.stock": {
+        "de": "Neuer Lagerbestand (Material-Tab)", "en": "New stock item (material tab)",
+        "fr": "Nouveau stock (onglet matériaux)", "it": "Nuova giacenza (scheda materiali)",
+    },
+    "hotkey.optimize": {
+        "de": "Optimierung starten", "en": "Run optimization",
+        "fr": "Lancer l'optimisation", "it": "Avvia ottimizzazione",
+    },
+    "hotkey.save": {
+        "de": "Dialog speichern", "en": "Save dialog",
+        "fr": "Enregistrer le dialogue", "it": "Salva finestra",
+    },
+    "hotkey.close": {
+        "de": "Dialog schließen", "en": "Close dialog",
+        "fr": "Fermer le dialogue", "it": "Chiudi finestra",
+    },
 }
 
 LANGUAGES = {"en": "English", "de": "Deutsch", "fr": "Français", "it": "Italiano"}

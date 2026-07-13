@@ -4,20 +4,45 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CutStock</title>
+  <link rel="stylesheet" href="vendor/theme_horizon.css" id="theme-light">
+  <link rel="stylesheet" href="vendor/theme_horizon_dark.css" id="theme-dark" disabled>
+  <link rel="stylesheet" href="vendor/fundamental.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-  <header class="app-header">
-    <h1 data-i18n="app.title">CutStock</h1>
-    <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle theme">&#9790;</button>
+  <header class="fd-shellbar">
+    <div class="fd-shellbar__group fd-shellbar__group--product">
+      <span class="fd-shellbar__title" data-i18n="app.title">CutStock</span>
+    </div>
+    <div class="fd-shellbar__group fd-shellbar__group--actions">
+      <button id="theme-toggle" class="fd-button fd-shellbar__button" type="button" aria-label="Toggle theme">&#9790;</button>
+    </div>
   </header>
 
-  <nav id="tab-bar">
-    <button class="tab-btn active" data-tab="material" data-i18n="tab.material_stock">Material &amp; Lager</button>
-    <button class="tab-btn" data-tab="projects" data-i18n="tab.projects">Projekte</button>
-    <button class="tab-btn" data-tab="optimization" data-i18n="tab.optimization">Optimierung</button>
-    <button class="tab-btn" data-tab="settings" data-i18n="tab.settings">Einstellungen</button>
+  <nav>
+    <ul class="fd-tabs fd-tabs--m app-tabs" role="tablist">
+      <li class="fd-tabs__item" role="presentation">
+        <a class="fd-tabs__link tab-btn active" role="tab" aria-selected="true" data-tab="material" href="#">
+          <span class="fd-tabs__tag" data-i18n="tab.material_stock">Material &amp; Lager</span>
+        </a>
+      </li>
+      <li class="fd-tabs__item" role="presentation">
+        <a class="fd-tabs__link tab-btn" role="tab" aria-selected="false" data-tab="projects" href="#">
+          <span class="fd-tabs__tag" data-i18n="tab.projects">Projekte</span>
+        </a>
+      </li>
+      <li class="fd-tabs__item" role="presentation">
+        <a class="fd-tabs__link tab-btn" role="tab" aria-selected="false" data-tab="optimization" href="#">
+          <span class="fd-tabs__tag" data-i18n="tab.optimization">Optimierung</span>
+        </a>
+      </li>
+      <li class="fd-tabs__item" role="presentation">
+        <a class="fd-tabs__link tab-btn" role="tab" aria-selected="false" data-tab="settings" href="#">
+          <span class="fd-tabs__tag" data-i18n="tab.settings">Einstellungen</span>
+        </a>
+      </li>
+    </ul>
   </nav>
 
   <main>
@@ -26,46 +51,46 @@
       <div class="split-panel">
         <div class="panel">
           <div class="panel-header">
-            <h2 data-i18n="mat.title">Materialien</h2>
+            <h2 class="fd-title fd-title--h5" data-i18n="mat.title">Materialien</h2>
             <div class="toolbar">
-              <button id="btn-mat-new" class="btn btn-sm" type="button" data-i18n="btn.new">Neu</button>
-              <button id="btn-mat-edit" class="btn btn-sm" type="button" data-i18n="btn.edit">Bearbeiten</button>
-              <button id="btn-mat-del" class="btn btn-sm btn-danger" type="button" data-i18n="btn.delete">Entfernen</button>
+              <button id="btn-mat-new" class="fd-button fd-button--emphasized" type="button" data-i18n="btn.new">Neu</button>
+              <button id="btn-mat-edit" class="fd-button" type="button" data-i18n="btn.edit">Bearbeiten</button>
+              <button id="btn-mat-del" class="fd-button fd-button--negative" type="button" data-i18n="btn.delete">Entfernen</button>
             </div>
           </div>
           <div class="panel-content">
-            <table id="material-table" class="data-table">
-              <thead>
-                <tr>
-                  <th data-i18n="mat.name">Name</th>
-                  <th data-i18n="mat.type">Typ</th>
-                  <th data-i18n="mat.dim">Dicke/Querschnitt</th>
-                  <th data-i18n="mat.grain">Maserung</th>
+            <table id="material-table" class="fd-table">
+              <thead class="fd-table__header">
+                <tr class="fd-table__row">
+                  <th class="fd-table__cell" data-i18n="mat.name">Name</th>
+                  <th class="fd-table__cell" data-i18n="mat.type">Typ</th>
+                  <th class="fd-table__cell" data-i18n="mat.dim">Dicke/Querschnitt</th>
+                  <th class="fd-table__cell" data-i18n="mat.grain">Maserung</th>
                 </tr>
               </thead>
-              <tbody></tbody>
+              <tbody class="fd-table__body"></tbody>
             </table>
           </div>
         </div>
         <div class="panel">
           <div class="panel-header">
-            <h2 data-i18n="stock.title">Lagerbestand</h2>
+            <h2 class="fd-title fd-title--h5" data-i18n="stock.title">Lagerbestand</h2>
             <div class="toolbar">
-              <button id="btn-stock-new" class="btn btn-sm" type="button" data-i18n="btn.new">Neu</button>
-              <button id="btn-stock-edit" class="btn btn-sm" type="button" data-i18n="btn.edit">Bearbeiten</button>
-              <button id="btn-stock-del" class="btn btn-sm btn-danger" type="button" data-i18n="btn.delete">Entfernen</button>
+              <button id="btn-stock-new" class="fd-button fd-button--emphasized" type="button" data-i18n="btn.new">Neu</button>
+              <button id="btn-stock-edit" class="fd-button" type="button" data-i18n="btn.edit">Bearbeiten</button>
+              <button id="btn-stock-del" class="fd-button fd-button--negative" type="button" data-i18n="btn.delete">Entfernen</button>
             </div>
           </div>
           <div class="panel-content">
-            <table id="stock-table" class="data-table">
-              <thead>
-                <tr>
-                  <th data-i18n="stock.length">Laenge</th>
-                  <th id="stock-col-width" data-i18n="stock.width">Breite</th>
-                  <th data-i18n="stock.qty">Stueckzahl</th>
+            <table id="stock-table" class="fd-table">
+              <thead class="fd-table__header">
+                <tr class="fd-table__row">
+                  <th class="fd-table__cell" data-i18n="stock.length">Laenge</th>
+                  <th class="fd-table__cell" id="stock-col-width" data-i18n="stock.width">Breite</th>
+                  <th class="fd-table__cell" data-i18n="stock.qty">Stueckzahl</th>
                 </tr>
               </thead>
-              <tbody></tbody>
+              <tbody class="fd-table__body"></tbody>
             </table>
           </div>
         </div>
@@ -76,47 +101,47 @@
       <div class="split-panel">
         <div class="panel">
           <div class="panel-header">
-            <h2 data-i18n="proj.title">Projekte</h2>
+            <h2 class="fd-title fd-title--h5" data-i18n="proj.title">Projekte</h2>
             <div class="toolbar">
-              <button id="btn-proj-new" class="btn btn-sm" type="button" data-i18n="btn.new">Neu</button>
-              <button id="btn-proj-edit" class="btn btn-sm" type="button" data-i18n="btn.edit">Bearbeiten</button>
-              <button id="btn-proj-del" class="btn btn-sm btn-danger" type="button" data-i18n="btn.delete">Entfernen</button>
+              <button id="btn-proj-new" class="fd-button fd-button--emphasized" type="button" data-i18n="btn.new">Neu</button>
+              <button id="btn-proj-edit" class="fd-button" type="button" data-i18n="btn.edit">Bearbeiten</button>
+              <button id="btn-proj-del" class="fd-button fd-button--negative" type="button" data-i18n="btn.delete">Entfernen</button>
             </div>
           </div>
           <div class="panel-content">
-            <table id="project-list" class="data-table">
-              <thead>
-                <tr>
-                  <th data-i18n="proj.name">Name</th>
+            <table id="project-list" class="fd-table">
+              <thead class="fd-table__header">
+                <tr class="fd-table__row">
+                  <th class="fd-table__cell" data-i18n="proj.name">Name</th>
                 </tr>
               </thead>
-              <tbody></tbody>
+              <tbody class="fd-table__body"></tbody>
             </table>
           </div>
         </div>
         <div class="panel">
           <div class="panel-header">
-            <h2 data-i18n="proj.parts">Teile</h2>
+            <h2 class="fd-title fd-title--h5" data-i18n="proj.parts">Teile</h2>
             <div class="toolbar">
-              <button id="btn-part-new" class="btn btn-sm" type="button" data-i18n="part.add">Neu</button>
-              <button id="btn-part-edit" class="btn btn-sm" type="button" data-i18n="btn.edit">Bearbeiten</button>
-              <button id="btn-part-del" class="btn btn-sm btn-danger" type="button" data-i18n="btn.delete">Entfernen</button>
+              <button id="btn-part-new" class="fd-button fd-button--emphasized" type="button" data-i18n="part.add">Neu</button>
+              <button id="btn-part-edit" class="fd-button" type="button" data-i18n="btn.edit">Bearbeiten</button>
+              <button id="btn-part-del" class="fd-button fd-button--negative" type="button" data-i18n="btn.delete">Entfernen</button>
             </div>
           </div>
           <div class="panel-content">
-            <table id="parts-table" class="data-table">
-              <thead>
-                <tr>
-                  <th data-i18n="part.label">Label</th>
-                  <th data-i18n="mat.type">Typ</th>
-                  <th data-i18n="opt.material">Material</th>
-                  <th data-i18n="stock.length">Laenge</th>
-                  <th data-i18n="stock.width">Breite</th>
-                  <th data-i18n="stock.qty">Stueckzahl</th>
-                  <th data-i18n="proj.progress">Status</th>
+            <table id="parts-table" class="fd-table">
+              <thead class="fd-table__header">
+                <tr class="fd-table__row">
+                  <th class="fd-table__cell" data-i18n="part.label">Label</th>
+                  <th class="fd-table__cell" data-i18n="mat.type">Typ</th>
+                  <th class="fd-table__cell" data-i18n="opt.material">Material</th>
+                  <th class="fd-table__cell" data-i18n="stock.length">Laenge</th>
+                  <th class="fd-table__cell" data-i18n="stock.width">Breite</th>
+                  <th class="fd-table__cell" data-i18n="stock.qty">Stueckzahl</th>
+                  <th class="fd-table__cell" data-i18n="proj.progress">Status</th>
                 </tr>
               </thead>
-              <tbody></tbody>
+              <tbody class="fd-table__body"></tbody>
             </table>
           </div>
         </div>
@@ -124,41 +149,43 @@
     </section>
 
     <section id="tab-optimization" class="tab-content">
-      <div class="opt-controls">
-        <div class="form-group">
-          <label for="opt-project" data-i18n="opt.project">Projekt:</label>
-          <select id="opt-project"></select>
+      <div class="panel opt-controls-panel">
+        <div class="opt-controls">
+          <div class="form-group">
+            <label class="fd-form-label" for="opt-project" data-i18n="opt.project">Projekt:</label>
+            <select id="opt-project" class="cs-select"></select>
+          </div>
+          <div class="form-group">
+            <label class="fd-form-label" for="opt-material" data-i18n="opt.material">Material:</label>
+            <select id="opt-material" class="cs-select"></select>
+          </div>
+          <div class="form-group">
+            <label class="fd-form-label" for="opt-blade" data-i18n="opt.blade">Saegeblatt:</label>
+            <select id="opt-blade" class="cs-select"></select>
+          </div>
+          <div class="form-group">
+            <label class="fd-form-label" for="opt-algorithm">Algorithmus</label>
+            <select id="opt-algorithm" class="cs-select"></select>
+          </div>
+          <button id="btn-optimize" class="fd-button fd-button--emphasized" type="button" data-i18n="opt.run">Optimieren</button>
         </div>
-        <div class="form-group">
-          <label for="opt-material" data-i18n="opt.material">Material:</label>
-          <select id="opt-material"></select>
-        </div>
-        <div class="form-group">
-          <label for="opt-blade" data-i18n="opt.blade">Saegeblatt:</label>
-          <select id="opt-blade"></select>
-        </div>
-        <div class="form-group">
-          <label for="opt-algorithm">Algorithmus</label>
-          <select id="opt-algorithm"></select>
-        </div>
-        <button id="btn-optimize" class="btn btn-primary" type="button" data-i18n="opt.run">Optimieren</button>
       </div>
       <div id="opt-results" class="hidden">
         <div id="opt-stats" class="opt-stats"></div>
         <div id="cut-plans" class="cut-plans"></div>
         <div class="opt-actions">
-          <button id="btn-confirm" class="btn btn-primary" type="button" data-i18n="opt.confirm">Bestaetigen (gesaegt)</button>
-          <button id="btn-pdf" class="btn" type="button" data-i18n="opt.pdf">PDF Export</button>
+          <button id="btn-confirm" class="fd-button fd-button--emphasized" type="button" data-i18n="opt.confirm">Bestaetigen (gesaegt)</button>
+          <button id="btn-pdf" class="fd-button" type="button" data-i18n="opt.pdf">PDF Export</button>
         </div>
       </div>
     </section>
 
     <section id="tab-settings" class="tab-content">
-      <div class="settings-section">
-        <h3 data-i18n="set.appearance">Aussehen</h3>
+      <div class="panel settings-section">
+        <h3 class="fd-title fd-title--h5" data-i18n="set.appearance">Aussehen</h3>
         <div class="form-group">
-          <label for="settings-lang" data-i18n="set.language">Sprache:</label>
-          <select id="settings-lang">
+          <label class="fd-form-label" for="settings-lang" data-i18n="set.language">Sprache:</label>
+          <select id="settings-lang" class="cs-select">
             <option value="de">Deutsch</option>
             <option value="en">English</option>
             <option value="fr">Francais</option>
@@ -166,15 +193,15 @@
           </select>
         </div>
         <div class="form-group">
-          <label for="settings-unit" data-i18n="set.unit">Masseinheit:</label>
-          <select id="settings-unit">
+          <label class="fd-form-label" for="settings-unit" data-i18n="set.unit">Masseinheit:</label>
+          <select id="settings-unit" class="cs-select">
             <option value="mm">Millimeter (mm)</option>
             <option value="cm">Zentimeter (cm)</option>
           </select>
         </div>
         <div class="form-group">
-          <label for="settings-theme" data-i18n="set.theme">Farbschema:</label>
-          <select id="settings-theme">
+          <label class="fd-form-label" for="settings-theme" data-i18n="set.theme">Farbschema:</label>
+          <select id="settings-theme" class="cs-select">
             <option value="auto">Auto (System)</option>
             <option value="light">Hell</option>
             <option value="dark">Dunkel</option>
@@ -182,49 +209,81 @@
         </div>
       </div>
 
-      <div class="settings-section">
-        <h3 data-i18n="set.storage">Speicherorte</h3>
+      <div class="panel settings-section">
+        <h3 class="fd-title fd-title--h5" data-i18n="set.storage">Speicherorte</h3>
         <div class="form-group">
-          <label data-i18n="set.db_path">Datenbank:</label>
+          <label class="fd-form-label" data-i18n="set.db_path">Datenbank:</label>
           <span id="storage-db" class="read-only">--</span>
         </div>
         <div class="form-group">
-          <label data-i18n="set.settings_path">Einstellungen:</label>
+          <label class="fd-form-label" data-i18n="set.settings_path">Einstellungen:</label>
           <span id="storage-settings" class="read-only">--</span>
         </div>
       </div>
 
-      <div class="settings-section">
-        <h3 data-i18n="blade.title">Saegeblaetter</h3>
+      <div class="panel settings-section">
+        <h3 class="fd-title fd-title--h5" data-i18n="blade.title">Saegeblaetter</h3>
         <div class="toolbar" style="margin-bottom: 8px;">
-          <button id="btn-blade-new" class="btn btn-sm" type="button" data-i18n="btn.new">Neu</button>
-          <button id="btn-blade-edit" class="btn btn-sm" type="button" data-i18n="btn.edit">Bearbeiten</button>
-          <button id="btn-blade-del" class="btn btn-sm btn-danger" type="button" data-i18n="btn.delete">Entfernen</button>
+          <button id="btn-blade-new" class="fd-button fd-button--emphasized" type="button" data-i18n="btn.new">Neu</button>
+          <button id="btn-blade-edit" class="fd-button" type="button" data-i18n="btn.edit">Bearbeiten</button>
+          <button id="btn-blade-del" class="fd-button fd-button--negative" type="button" data-i18n="btn.delete">Entfernen</button>
         </div>
-        <table id="blade-table" class="data-table">
-          <thead>
-            <tr>
-              <th data-i18n="blade.name">Name</th>
-              <th data-i18n="blade.kerf">Schnittbreite</th>
+        <table id="blade-table" class="fd-table">
+          <thead class="fd-table__header">
+            <tr class="fd-table__row">
+              <th class="fd-table__cell" data-i18n="blade.name">Name</th>
+              <th class="fd-table__cell" data-i18n="blade.kerf">Schnittbreite</th>
             </tr>
           </thead>
-          <tbody></tbody>
+          <tbody class="fd-table__body"></tbody>
+        </table>
+      </div>
+
+      <div class="panel settings-section">
+        <h3 class="fd-title fd-title--h5" data-i18n="hotkey.title">Tastenkuerzel</h3>
+        <table class="fd-table hotkey-table">
+          <thead class="fd-table__header">
+            <tr class="fd-table__row">
+              <th class="fd-table__cell" data-i18n="hotkey.key">Taste</th>
+              <th class="fd-table__cell" data-i18n="hotkey.action">Aktion</th>
+            </tr>
+          </thead>
+          <tbody class="fd-table__body">
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd>1</kbd> &ndash; <kbd>4</kbd></td><td class="fd-table__cell" data-i18n="hotkey.tabs">Tab wechseln</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd>N</kbd></td><td class="fd-table__cell" data-i18n="hotkey.new">Neues Element (Material / Projekt / Bauteil / Saegeblatt)</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd>E</kbd></td><td class="fd-table__cell" data-i18n="hotkey.edit">Ausgewaehltes Element bearbeiten</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd data-i18n="hotkey.del_key">Entf</kbd></td><td class="fd-table__cell" data-i18n="hotkey.delete">Ausgewaehltes Element loeschen</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd>S</kbd></td><td class="fd-table__cell" data-i18n="hotkey.stock">Neuer Lagerbestand (Material-Tab)</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd>R</kbd></td><td class="fd-table__cell" data-i18n="hotkey.optimize">Optimierung starten</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd>Enter</kbd></td><td class="fd-table__cell" data-i18n="hotkey.save">Dialog speichern</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd>Esc</kbd></td><td class="fd-table__cell" data-i18n="hotkey.close">Dialog schliessen</td></tr>
+          </tbody>
         </table>
       </div>
     </section>
 
   </main>
 
-  <div id="modal-overlay" class="modal-overlay">
-    <div class="modal">
-      <div class="modal-header">
-        <h3 id="modal-title"></h3>
-      </div>
-      <div id="modal-body" class="modal-body"></div>
-      <div class="modal-footer">
-        <button id="modal-cancel" class="btn" type="button" data-i18n="btn.cancel">Abbrechen</button>
-        <button id="modal-save" class="btn btn-primary" type="button" data-i18n="btn.save">Speichern</button>
-      </div>
+  <div id="modal-overlay" class="fd-dialog">
+    <div class="fd-dialog__content">
+      <header class="fd-dialog__header fd-bar fd-bar--header">
+        <div class="fd-bar__left">
+          <div class="fd-bar__element">
+            <h2 class="fd-title fd-title--h5" id="modal-title"></h2>
+          </div>
+        </div>
+      </header>
+      <div id="modal-body" class="fd-dialog__body"></div>
+      <footer class="fd-dialog__footer fd-bar fd-bar--footer">
+        <div class="fd-bar__right">
+          <div class="fd-bar__element">
+            <button id="modal-save" class="fd-button fd-button--emphasized fd-dialog__decisive-button" type="button" data-i18n="btn.save">Speichern</button>
+          </div>
+          <div class="fd-bar__element">
+            <button id="modal-cancel" class="fd-button fd-button--transparent fd-dialog__decisive-button" type="button" data-i18n="btn.cancel">Abbrechen</button>
+          </div>
+        </div>
+      </footer>
     </div>
   </div>
 

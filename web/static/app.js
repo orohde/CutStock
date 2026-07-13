@@ -54,7 +54,8 @@ const t = (key, params) => {
             text = text.replaceAll(`{${k}}`, v);
         }
     }
-    return text;
+    // Qt-Mnemonic-Escape aus der Desktop-i18n: "&&" = literales "&"
+    return text.replaceAll('&&', '&');
 };
 
 const applyTranslations = () => {
@@ -189,25 +190,24 @@ function showToast(message, type = 'info') {
         container = document.createElement('div');
         container.id = 'toast-container';
         Object.assign(container.style, {
-            position: 'fixed', bottom: '20px', right: '20px',
-            zIndex: '2000', display: 'flex', flexDirection: 'column', gap: '8px',
+            position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
+            zIndex: '2000', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px',
         });
         document.body.appendChild(container);
     }
     const toast = document.createElement('div');
+    toast.className = 'fd-message-toast';
     toast.textContent = message;
     Object.assign(toast.style, {
-        padding: '10px 18px',
-        borderRadius: '6px',
-        fontSize: '13px',
-        color: '#fff',
-        background: type === 'error' ? 'var(--danger, #dc2626)' : 'var(--accent, #2563eb)',
-        boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
         opacity: '0',
         transition: 'opacity 0.3s ease',
         maxWidth: '360px',
         wordWrap: 'break-word',
     });
+    if (type === 'error') {
+        toast.style.background = 'var(--sapErrorBackground, #ffeaf4)';
+        toast.style.color = 'var(--sapNegativeTextColor, #d20a0a)';
+    }
     container.appendChild(toast);
     requestAnimationFrame(() => { toast.style.opacity = '1'; });
     setTimeout(() => {
@@ -249,11 +249,11 @@ async function renderMaterials() {
             dims = `${formatDim(m.querschnitt_breite)} x ${formatDim(m.querschnitt_tiefe)}`;
         }
         const grain = m.typ === 'Platte' ? t(GRAIN_KEY[m.maserung] || m.maserung) : '';
-        return `<tr class="${selected}" data-id="${m.id}">
-            <td>${escHtml(m.name)}</td>
-            <td>${typLabel}</td>
-            <td class="num">${dims}</td>
-            <td>${grain}</td>
+        return `<tr class="fd-table__row ${selected}" data-id="${m.id}">
+            <td class="fd-table__cell">${escHtml(m.name)}</td>
+            <td class="fd-table__cell">${typLabel}</td>
+            <td class="fd-table__cell num">${dims}</td>
+            <td class="fd-table__cell">${grain}</td>
         </tr>`;
     }).join('');
 
@@ -311,10 +311,10 @@ async function renderStock() {
 
     tbody.innerHTML = State.stock.map(s => {
         const selected = s.id === State.selectedStockId ? ' selected' : '';
-        return `<tr class="${selected}" data-id="${s.id}">
-            <td class="num">${formatDim(s.laenge)}</td>
-            <td class="num" style="${isPlatte ? '' : 'display:none'}">${formatDim(s.breite)}</td>
-            <td class="num">${s.stueckzahl}</td>
+        return `<tr class="fd-table__row ${selected}" data-id="${s.id}">
+            <td class="fd-table__cell num">${formatDim(s.laenge)}</td>
+            <td class="fd-table__cell num" style="${isPlatte ? '' : 'display:none'}">${formatDim(s.breite)}</td>
+            <td class="fd-table__cell num">${s.stueckzahl}</td>
         </tr>`;
     }).join('');
 
@@ -355,7 +355,7 @@ async function renderProjects() {
 
     tbody.innerHTML = State.projects.map(p => {
         const selected = p.id === State.selectedProjectId ? ' selected' : '';
-        return `<tr class="${selected}" data-id="${p.id}"><td>${escHtml(p.name)}</td></tr>`;
+        return `<tr class="fd-table__row ${selected}" data-id="${p.id}"><td class="fd-table__cell">${escHtml(p.name)}</td></tr>`;
     }).join('');
 
     tbody.querySelectorAll('tr[data-id]').forEach(row => {
@@ -407,14 +407,14 @@ async function renderParts() {
         const pct = p.stueckzahl > 0 ? Math.round((p.gesaegt_anzahl / p.stueckzahl) * 100) : 0;
         const statusText = `${p.gesaegt_anzahl}/${p.stueckzahl}`;
         const statusClass = p.gesaegt_anzahl >= p.stueckzahl ? 'status-cut' : 'status-open';
-        return `<tr class="${selected}" data-id="${p.id}">
-            <td>${escHtml(p.label)}</td>
-            <td>${t(TYP_KEY[p.typ] || p.typ)}</td>
-            <td>${escHtml(matName)}</td>
-            <td class="num">${formatDim(p.laenge)}</td>
-            <td class="num">${isPlatte ? formatDim(p.breite) : ''}</td>
-            <td class="num">${p.stueckzahl}</td>
-            <td>
+        return `<tr class="fd-table__row ${selected}" data-id="${p.id}">
+            <td class="fd-table__cell">${escHtml(p.label)}</td>
+            <td class="fd-table__cell">${t(TYP_KEY[p.typ] || p.typ)}</td>
+            <td class="fd-table__cell">${escHtml(matName)}</td>
+            <td class="fd-table__cell num">${formatDim(p.laenge)}</td>
+            <td class="fd-table__cell num">${isPlatte ? formatDim(p.breite) : ''}</td>
+            <td class="fd-table__cell num">${p.stueckzahl}</td>
+            <td class="fd-table__cell">
                 <div style="display:flex;align-items:center;gap:8px">
                     <div class="progress-bar" style="flex:1;min-width:60px">
                         <div class="progress-fill" style="width:${pct}%"></div>
@@ -612,9 +612,9 @@ async function renderBlades() {
 
     tbody.innerHTML = State.blades.map(b => {
         const selected = b.id === State.selectedBladeId ? ' selected' : '';
-        return `<tr class="${selected}" data-id="${b.id}">
-            <td>${escHtml(b.name)}</td>
-            <td class="num">${formatDim(b.schnittbreite)}</td>
+        return `<tr class="fd-table__row ${selected}" data-id="${b.id}">
+            <td class="fd-table__cell">${escHtml(b.name)}</td>
+            <td class="fd-table__cell num">${formatDim(b.schnittbreite)}</td>
         </tr>`;
     }).join('');
 
@@ -681,10 +681,10 @@ function draw2D(ctx, canvasW, canvasH, plan, colorMap) {
 
     // Stock background
     ctx.fillStyle = getComputedStyle(document.documentElement)
-        .getPropertyValue('--bg-tertiary').trim() || '#e9ecef';
+        .getPropertyValue('--sapNeutralBackground').trim() || '#e9ecef';
     ctx.fillRect(offsetX, offsetY, stockW, stockH);
     ctx.strokeStyle = getComputedStyle(document.documentElement)
-        .getPropertyValue('--border-color').trim() || '#d1d5db';
+        .getPropertyValue('--sapList_BorderColor').trim() || '#d1d5db';
     ctx.lineWidth = 1;
     ctx.strokeRect(offsetX, offsetY, stockW, stockH);
 
@@ -729,7 +729,7 @@ function draw2D(ctx, canvasW, canvasH, plan, colorMap) {
 
     // Dimension annotations
     ctx.fillStyle = getComputedStyle(document.documentElement)
-        .getPropertyValue('--text-secondary').trim() || '#6b7280';
+        .getPropertyValue('--sapContent_LabelColor').trim() || '#6b7280';
     ctx.font = '11px -apple-system, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
@@ -753,10 +753,10 @@ function draw1D(ctx, canvasW, canvasH, plan, colorMap) {
 
     // Stock bar background
     ctx.fillStyle = getComputedStyle(document.documentElement)
-        .getPropertyValue('--bg-tertiary').trim() || '#e9ecef';
+        .getPropertyValue('--sapNeutralBackground').trim() || '#e9ecef';
     ctx.fillRect(padding.left, barY, drawW, barH);
     ctx.strokeStyle = getComputedStyle(document.documentElement)
-        .getPropertyValue('--border-color').trim() || '#d1d5db';
+        .getPropertyValue('--sapList_BorderColor').trim() || '#d1d5db';
     ctx.lineWidth = 1;
     ctx.strokeRect(padding.left, barY, drawW, barH);
 
@@ -803,7 +803,7 @@ function draw1D(ctx, canvasW, canvasH, plan, colorMap) {
 
     // Dimension label
     ctx.fillStyle = getComputedStyle(document.documentElement)
-        .getPropertyValue('--text-secondary').trim() || '#6b7280';
+        .getPropertyValue('--sapContent_LabelColor').trim() || '#6b7280';
     ctx.font = '11px -apple-system, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
@@ -848,7 +848,7 @@ function openModal(title, fields, data, onSave) {
             if (f.type === 'number') {
                 val = el.value === '' ? null : parseFloat(el.value);
                 if (f.required && (val === null || isNaN(val))) {
-                    el.style.borderColor = 'var(--danger)';
+                    el.style.borderColor = 'var(--sapNegativeColor, #d20a0a)';
                     valid = false;
                     return;
                 }
@@ -856,7 +856,7 @@ function openModal(title, fields, data, onSave) {
                     val = val !== null ? toMm(val) : 0;
                 }
                 if (val !== null && f.min != null && val < f.min) {
-                    el.style.borderColor = 'var(--danger)';
+                    el.style.borderColor = 'var(--sapNegativeColor, #d20a0a)';
                     valid = false;
                     return;
                 }
@@ -865,7 +865,7 @@ function openModal(title, fields, data, onSave) {
             } else {
                 val = el.value.trim();
                 if (f.required && !val) {
-                    el.style.borderColor = 'var(--danger)';
+                    el.style.borderColor = 'var(--sapNegativeColor, #d20a0a)';
                     valid = false;
                     return;
                 }
@@ -899,7 +899,7 @@ function fieldHtml(f, data) {
         const opts = (f.options || []).map(o =>
             `<option value="${o.value}"${String(o.value) === String(val) ? ' selected' : ''}>${escHtml(o.text)}</option>`
         ).join('');
-        input = `<select name="${f.key}">${opts}</select>`;
+        input = `<select name="${f.key}" class="cs-select">${opts}</select>`;
     } else if (f.type === 'number') {
         const step = f.step ?? (f.isDimension ? 'any' : 1);
         const min = f.min != null ? ` min="${f.min}"` : '';
@@ -910,7 +910,7 @@ function fieldHtml(f, data) {
         input = `<input type="text" name="${f.key}" value="${escAttr(displayVal)}"${req} placeholder="${ph}">`;
     }
 
-    return `<label>${escHtml(label)}${unitSuffix}</label>${input}`;
+    return `<label class="fd-form-label">${escHtml(label)}${unitSuffix}</label>${input}`;
 }
 
 function closeModal() {
@@ -1553,14 +1553,34 @@ function initEvents() {
 // ===========================================================================
 
 function applyTheme(theme) {
-    if (theme === 'system') {
+    if (theme === 'system' || theme === 'auto') {
         document.documentElement.removeAttribute('data-theme');
     } else {
         document.documentElement.setAttribute('data-theme', theme);
     }
+
+    // Horizon-Theme-Stylesheet (hell/dunkel) umschalten
+    const dark = theme === 'dark' ||
+        ((theme === 'system' || theme === 'auto') &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches);
+    const lightSheet = document.getElementById('theme-light');
+    const darkSheet = document.getElementById('theme-dark');
+    if (lightSheet && darkSheet) {
+        lightSheet.disabled = dark;
+        darkSheet.disabled = !dark;
+    }
+
     const themeBtn = document.getElementById('theme-toggle');
     if (themeBtn) themeBtn.textContent = THEME_ICONS[theme] || THEME_ICONS.system;
 }
+
+// Bei System-Theme auf Betriebssystem-Wechsel reagieren
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (State.settings.theme === 'system' || State.settings.theme === 'auto') {
+        applyTheme(State.settings.theme);
+        if (State.optimizationResult) renderOptResults();
+    }
+});
 
 // ===========================================================================
 // 11. UTILITY
