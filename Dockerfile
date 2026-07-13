@@ -7,6 +7,8 @@ RUN pip install --no-cache-dir -r requirements-web.txt
 
 COPY core/ core/
 COPY web/ web/
+COPY ui/__init__.py ui/
+COPY ui/i18n.py ui/
 
 ENV CUTSTOCK_DB=/data/cutstock.db
 
