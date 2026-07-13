@@ -251,7 +251,7 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .opt-actions {
   display: flex;
   gap: 0.5rem;
-  margin-top: 1rem;
+  margin-bottom: 1rem;
 }
 
 /* ----- Fortschritt / Status ----- */
