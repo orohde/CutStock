@@ -287,6 +287,15 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
   background: var(--sapNeutralBackground, #eaecee);
 }
 
+.status-badge.status-clickable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.status-badge.status-clickable:hover {
+  outline: 1px solid var(--sapButton_Hover_BorderColor, #0064d9);
+}
+
 /* ----- Einstellungen ----- */
 
 .settings-section { max-width: 640px; margin-bottom: 1rem; }

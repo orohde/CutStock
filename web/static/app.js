@@ -442,7 +442,7 @@ async function renderParts() {
                     <div class="progress-bar" style="flex:1;min-width:60px">
                         <div class="progress-fill" style="width:${pct}%"></div>
                     </div>
-                    <span class="status-badge ${statusClass}">${statusText}</span>
+                    <span class="status-badge status-clickable ${statusClass}" title="${escAttr(t('part.cut_plus'))}">${statusText}</span>
                 </div>
             </td>
         </tr>`;
@@ -455,6 +455,13 @@ async function renderParts() {
             const part = State.parts.find(p => p.id === State.selectedPartId);
             if (part) openPartDialog(part);
         });
+        // Klick auf die Status-Badge hakt ein Stück ab (Gesägt +1)
+        row.querySelector('.status-clickable')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const id = parseInt(row.dataset.id);
+            selectPartRow(id);
+            cutPart(State.parts.find(p => p.id === id), +1);
+        });
     });
 }
 
@@ -463,6 +470,26 @@ function selectPartRow(id) {
     document.querySelectorAll('#parts-table tbody tr').forEach(r => {
         r.classList.toggle('selected', parseInt(r.dataset.id) === id);
     });
+}
+
+// Gesägt-Zähler eines Teils um delta ändern (0 .. stueckzahl), speichern und neu rendern.
+async function cutPart(part, delta) {
+    if (!part) return;
+    const next = Math.max(0, Math.min(part.stueckzahl, part.gesaegt_anzahl + delta));
+    if (next === part.gesaegt_anzahl) return;
+    try {
+        await Api.updatePart(part.id, { ...part, gesaegt_anzahl: next });
+        await renderParts();
+        // Offene Mengen haben sich geändert → Material-Filter der Optimierung aktualisieren
+        State.projects = await Api.getProjects();
+        renderOptDropdowns();
+    } catch { /* handled */ }
+}
+
+function cutSelectedPart(delta) {
+    const part = State.parts.find(p => p.id === State.selectedPartId);
+    if (!part) { showToast(t('dlg.select_project'), 'error'); return; }
+    cutPart(part, delta);
 }
 
 // ---------------------------------------------------------------------------
@@ -475,18 +502,34 @@ function renderOptDropdowns() {
     const bladeSel = document.getElementById('opt-blade');
     const algoSel = document.getElementById('opt-algorithm');
 
+    // Bisherige Auswahl merken, damit sie beim Neuaufbau (z.B. Tab-Wechsel)
+    // erhalten bleibt und nicht auf das erste Projekt zurückspringt.
+    const prevProj = projSel?.value;
+    const prevMat = matSel?.value;
+    const prevBlade = bladeSel?.value;
+    const prevAlgo = algoSel?.value;
+
     if (projSel) {
         projSel.innerHTML = State.projects.map(p =>
             `<option value="${p.id}">${escHtml(p.name)}</option>`
         ).join('');
+        if (prevProj && projSel.querySelector(`option[value="${prevProj}"]`)) {
+            projSel.value = prevProj;
+        }
     }
 
     updateOptMaterialDropdown();
+    if (prevMat && matSel?.querySelector(`option[value="${prevMat}"]`)) {
+        matSel.value = prevMat;
+    }
 
     if (bladeSel) {
         bladeSel.innerHTML = State.blades.map(b =>
             `<option value="${b.id}">${escHtml(b.name)} (${formatDim(b.schnittbreite)})</option>`
         ).join('');
+        if (prevBlade && bladeSel.querySelector(`option[value="${prevBlade}"]`)) {
+            bladeSel.value = prevBlade;
+        }
     }
 
     if (algoSel) {
@@ -495,7 +538,22 @@ function renderOptDropdowns() {
             { value: 'nested', key: 'opt.algo_nested' },
             { value: 'ga', key: 'opt.algo_ga' },
         ].map(a => `<option value="${a.value}">${t(a.key)}</option>`).join('');
+        if (prevAlgo) algoSel.value = prevAlgo;
     }
+
+    // Passt der angezeigte Schnittplan nicht mehr zur (wieder­hergestellten)
+    // Auswahl – etwa weil das Projekt gelöscht wurde – verwerfen.
+    if (State.optimizationResult &&
+        (!projSel?.value || projSel.value !== String(State.optimizationResult._projId))) {
+        clearOptResult();
+    }
+}
+
+// Angezeigten Schnittplan verwerfen (Auswahl passt nicht mehr dazu).
+function clearOptResult() {
+    if (!State.optimizationResult) return;
+    State.optimizationResult = null;
+    renderOptResults();
 }
 
 function updateOptMaterialDropdown() {
@@ -1332,6 +1390,10 @@ function initEvents() {
         });
     });
 
+    // ----- Gesägt +1 / -1 (einzelne Teile abhaken) -----
+    document.getElementById('btn-part-cut-plus')?.addEventListener('click', () => cutSelectedPart(+1));
+    document.getElementById('btn-part-cut-minus')?.addEventListener('click', () => cutSelectedPart(-1));
+
     // ----- Blade CRUD -----
     document.getElementById('btn-blade-new')?.addEventListener('click', () => openBladeDialog());
     document.getElementById('btn-blade-edit')?.addEventListener('click', () => {
@@ -1375,6 +1437,8 @@ function initEvents() {
                 blade_id: bladeId,
                 algorithm: algo,
             });
+            // Ergebnis mit seiner Auswahl markieren, um veraltete Anzeige zu erkennen
+            State.optimizationResult._projId = String(projId);
             renderOptResults();
         } catch {
             State.optimizationResult = null;
@@ -1427,6 +1491,12 @@ function initEvents() {
     // ----- Optimization project dropdown changes material filter -----
     document.getElementById('opt-project')?.addEventListener('change', () => {
         updateOptMaterialDropdown();
+        clearOptResult();
+    });
+
+    // Auswahländerung macht den angezeigten Schnittplan ungültig
+    ['opt-material', 'opt-blade', 'opt-algorithm'].forEach(id => {
+        document.getElementById(id)?.addEventListener('change', () => clearOptResult());
     });
 
     // ----- Settings -----
