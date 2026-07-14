@@ -633,7 +633,8 @@ function renderOptResults() {
         const mat = State.materials.find(m => m.id === matId);
         const is1D = mat?.typ === 'Stange';
 
-        plansEl.innerHTML = plans.map((plan, i) => {
+        const hint = `<p class="saw-hint">${t('opt.saw_hint')}</p>`;
+        plansEl.innerHTML = hint + plans.map((plan, i) => {
             const canvasHeight = is1D ? 100 : 400;
             return `<div class="cut-plan-card">
                 <div class="plan-header">
@@ -739,14 +740,97 @@ function drawCutPlan(canvas, plan, material) {
         colorMap[label] = PART_COLORS[i % PART_COLORS.length];
     });
 
+    // Trefferflächen der einzelnen Stücke für Klick-zum-Abhaken sammeln
+    const hits = [];
     if (is1D) {
-        draw1D(ctx, canvasW, canvasH, plan, colorMap);
+        draw1D(ctx, canvasW, canvasH, plan, colorMap, hits);
     } else {
-        draw2D(ctx, canvasW, canvasH, plan, colorMap);
+        draw2D(ctx, canvasW, canvasH, plan, colorMap, hits);
+    }
+    canvas._hits = hits;
+
+    if (!canvas._cutHandler) {
+        canvas._cutHandler = (e) => {
+            const r = canvas.getBoundingClientRect();
+            const mx = e.clientX - r.left;
+            const my = e.clientY - r.top;
+            const hit = (canvas._hits || []).find(h =>
+                mx >= h.x && mx <= h.x + h.w && my >= h.y && my <= h.y + h.h);
+            if (hit) togglePieceSawn(canvas, hit.p);
+        };
+        canvas.addEventListener('click', canvas._cutHandler);
+        canvas.style.cursor = 'pointer';
     }
 }
 
-function draw2D(ctx, canvasW, canvasH, plan, colorMap) {
+// Ein Stück im Schnittplan als gesägt markieren/zurücknehmen und den
+// Fortschritt des zugehörigen Teils entsprechend anpassen.
+async function togglePieceSawn(canvas, placement) {
+    const result = State.optimizationResult;
+    if (!result) return;
+    const proj = State.projects.find(p => String(p.id) === result._projId);
+    const teil = proj?.teile?.find(t => t.label === placement.teil_label);
+    if (!teil) return;
+
+    const willBeDone = !placement._done;
+    const delta = willBeDone ? +1 : -1;
+    const next = Math.max(0, Math.min(teil.stueckzahl, teil.gesaegt_anzahl + delta));
+    if (next === teil.gesaegt_anzahl && willBeDone) {
+        // Teil ist bereits vollständig gesägt – trotzdem optisch markieren
+        placement._done = true;
+        redrawPlanForCanvas(canvas);
+        return;
+    }
+
+    placement._done = willBeDone;
+    redrawPlanForCanvas(canvas);
+
+    try {
+        await Api.updatePart(teil.id, { ...teil, gesaegt_anzahl: next });
+        teil.gesaegt_anzahl = next;  // lokalen Stand mitführen
+        // Teile-Tabelle aktualisieren, falls dieses Projekt gerade offen ist
+        if (State.selectedProjectId === proj.id) renderParts();
+    } catch {
+        // bei Fehler Markierung zurücknehmen
+        placement._done = !willBeDone;
+        redrawPlanForCanvas(canvas);
+    }
+}
+
+function redrawPlanForCanvas(canvas) {
+    const idx = parseInt(canvas.dataset.planIndex);
+    const plan = State.optimizationResult?.schnittplaene?.[idx];
+    if (!plan) return;
+    const matId = parseInt(document.getElementById('opt-material')?.value);
+    const mat = State.materials.find(m => m.id === matId);
+    drawCutPlan(canvas, plan, mat);
+}
+
+// Halbtransparente Abdeckung + grüner Haken auf einem gesägten Stück
+function drawDoneOverlay(ctx, x, y, w, h) {
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillRect(x, y, w, h);
+    const s = Math.min(w, h);
+    if (s < 12) return;
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    const r = Math.min(s * 0.32, 16);
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = '#256f3a';
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = Math.max(1.5, r * 0.18);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx - r * 0.42, cy + r * 0.02);
+    ctx.lineTo(cx - r * 0.10, cy + r * 0.34);
+    ctx.lineTo(cx + r * 0.46, cy - r * 0.34);
+    ctx.stroke();
+}
+
+function draw2D(ctx, canvasW, canvasH, plan, colorMap, hits) {
     const padding = 40;
     const drawW = canvasW - padding * 2;
     const drawH = canvasH - padding * 2;
@@ -806,6 +890,9 @@ function draw2D(ctx, canvasW, canvasH, plan, colorMap) {
             ctx.textBaseline = 'top';
             ctx.fillText('R', px + pw - 3, py + 2);
         }
+
+        if (hits) hits.push({ x: px, y: py, w: pw, h: ph, p });
+        if (p._done) drawDoneOverlay(ctx, px, py, pw, ph);
     });
 
     // Dimension annotations
@@ -825,7 +912,7 @@ function draw2D(ctx, canvasW, canvasH, plan, colorMap) {
     ctx.restore();
 }
 
-function draw1D(ctx, canvasW, canvasH, plan, colorMap) {
+function draw1D(ctx, canvasW, canvasH, plan, colorMap, hits) {
     const padding = { left: 20, right: 20, top: 15, bottom: 30 };
     const barH = 50;
     const barY = padding.top;
@@ -865,6 +952,9 @@ function draw1D(ctx, canvasW, canvasH, plan, colorMap) {
             ctx.fillStyle = '#fff';
             ctx.fillText(p.teil_label, px + pw / 2, barY + barH / 2);
         }
+
+        if (hits) hits.push({ x: px, y: barY, w: pw, h: barH, p });
+        if (p._done) drawDoneOverlay(ctx, px, barY, pw, barH);
     });
 
     // Rest areas (unused at the end)

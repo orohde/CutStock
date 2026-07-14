@@ -539,6 +539,12 @@ TRANSLATIONS = {
         "fr": "La touche {key} est déjà utilisée.",
         "it": "Il tasto {key} è già in uso.",
     },
+    "opt.saw_hint": {
+        "de": "Tipp: Auf ein Stück im Schnittplan klicken, um es als gesägt zu markieren.",
+        "en": "Tip: click a piece in the cut plan to mark it as sawn.",
+        "fr": "Astuce : cliquez sur une pièce du plan de coupe pour la marquer comme sciée.",
+        "it": "Suggerimento: clicca su un pezzo nel piano di taglio per segnarlo come tagliato.",
+    },
 }
 
 LANGUAGES = {"en": "English", "de": "Deutsch", "fr": "Français", "it": "Italiano"}

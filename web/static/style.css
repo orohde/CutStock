@@ -220,6 +220,12 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
   gap: 1rem;
 }
 
+.saw-hint {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--sapContent_LabelColor, #556b82);
+}
+
 .cut-plan-card {
   background: var(--sapTile_Background, #fff);
   border-radius: 0.75rem;
