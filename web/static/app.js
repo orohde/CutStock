@@ -1020,8 +1020,10 @@ function draw2D(ctx, canvasW, canvasH, plan, colorMap, hits) {
 
     // Parts
     plan.platzierungen.forEach(p => {
-        const pw = (p.gedreht ? p.breite : p.laenge) * scale;
-        const ph = (p.gedreht ? p.laenge : p.breite) * scale;
+        // laenge/breite sind bereits die tatsächliche x-/y-Ausdehnung (inkl.
+        // Drehung) – hier NICHT erneut tauschen, sonst überlappen gedrehte Teile.
+        const pw = p.laenge * scale;
+        const ph = p.breite * scale;
         const px = offsetX + p.x * scale;
         const py = offsetY + p.y * scale;
 
