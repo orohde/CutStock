@@ -995,6 +995,40 @@ function drawDoneOverlay(ctx, x, y, w, h) {
     ctx.stroke();
 }
 
+// Guillotine-Schnitte aus den platzierten Rechtecken rekonstruieren:
+// rekursiv einen vollen vertikalen oder horizontalen Schnitt suchen, der die
+// Teile im Bereich trennt, ohne ein Teil zu durchschneiden.
+function computeGuillotineCuts(pieces, x0, y0, x1, y1, out, depth) {
+    if (pieces.length <= 1 || depth > 60) return;
+    const eps = 0.5;
+
+    const xs = [...new Set(pieces.map(p => p.x + p.laenge))].sort((a, b) => a - b);
+    for (const cx of xs) {
+        if (cx <= x0 + eps || cx >= x1 - eps) continue;
+        const left = pieces.filter(p => p.x + p.laenge <= cx + eps);
+        const right = pieces.filter(p => p.x >= cx - eps);
+        if (left.length && right.length && left.length + right.length === pieces.length) {
+            out.push({ v: true, pos: cx, a: y0, b: y1 });
+            computeGuillotineCuts(left, x0, y0, cx, y1, out, depth + 1);
+            computeGuillotineCuts(right, cx, y0, x1, y1, out, depth + 1);
+            return;
+        }
+    }
+
+    const ys = [...new Set(pieces.map(p => p.y + p.breite))].sort((a, b) => a - b);
+    for (const cy of ys) {
+        if (cy <= y0 + eps || cy >= y1 - eps) continue;
+        const top = pieces.filter(p => p.y + p.breite <= cy + eps);
+        const bot = pieces.filter(p => p.y >= cy - eps);
+        if (top.length && bot.length && top.length + bot.length === pieces.length) {
+            out.push({ v: false, pos: cy, a: x0, b: x1 });
+            computeGuillotineCuts(top, x0, y0, x1, cy, out, depth + 1);
+            computeGuillotineCuts(bot, x0, cy, x1, y1, out, depth + 1);
+            return;
+        }
+    }
+}
+
 function draw2D(ctx, canvasW, canvasH, plan, colorMap, hits) {
     const padding = 40;
     const drawW = canvasW - padding * 2;
@@ -1061,6 +1095,32 @@ function draw2D(ctx, canvasW, canvasH, plan, colorMap, hits) {
         if (hits) hits.push({ x: px, y: py, w: pw, h: ph, p });
         if (p._done) drawDoneOverlay(ctx, px, py, pw, ph);
     });
+
+    // Guillotine-Schnittlinien (dünn gestrichelt) als Zersäge-Reihenfolge
+    const cuts = [];
+    computeGuillotineCuts(
+        plan.platzierungen.map(p => ({ x: p.x, y: p.y, laenge: p.laenge, breite: p.breite })),
+        0, 0, plan.lager_laenge, plan.lager_breite, cuts, 0);
+    if (cuts.length) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+        ctx.lineWidth = 0.75;
+        ctx.setLineDash([5, 3]);
+        cuts.forEach(c => {
+            ctx.beginPath();
+            if (c.v) {
+                const xp = offsetX + c.pos * scale;
+                ctx.moveTo(xp, offsetY + c.a * scale);
+                ctx.lineTo(xp, offsetY + c.b * scale);
+            } else {
+                const yp = offsetY + c.pos * scale;
+                ctx.moveTo(offsetX + c.a * scale, yp);
+                ctx.lineTo(offsetX + c.b * scale, yp);
+            }
+            ctx.stroke();
+        });
+        ctx.restore();
+    }
 
     // Dimension annotations
     ctx.fillStyle = getComputedStyle(document.documentElement)
