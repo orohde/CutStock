@@ -35,6 +35,7 @@ jobs:
 
   build-windows:
     runs-on: windows-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
 
@@ -60,6 +61,8 @@ jobs:
 
   release:
     needs: [build-macos, build-windows]
+    # Release auch dann erstellen, wenn nur der macOS-Build erfolgreich war
+    if: always() && needs.build-macos.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -90,6 +93,10 @@ jobs:
             - **Windows**: Click "More info" → "Run anyway" to bypass SmartScreen
 
             This is normal for open-source software without a paid developer certificate.
+
+            **Windows** additionally needs the WebView2 runtime (preinstalled on
+            Windows 11; on Windows 10 usually present via Edge, otherwise install
+            Microsoft's free Evergreen runtime).
           files: |
             artifacts/macos-build/*
             artifacts/windows-build/*
