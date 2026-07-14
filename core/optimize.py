@@ -591,7 +591,7 @@ def optimize_2d_ga(
 
     def evaluate(perm, rots):
         plates = make_plates()
-        genutzt = 0.0
+        placed = 0
         for pos, idx in enumerate(perm):
             label, tl, tb = einzelteile[idx]
             normal_ok, gedreht_ok = get_orient(label)
@@ -616,9 +616,14 @@ def optimize_2d_ga(
                     if ro > 0:
                         plate["freiraeume"].append(
                             _Freiraum(fr.x, fr.y + tb + kerf, fr.laenge, ro))
-                    genutzt += tl * tb
+                    plate["_used"] = True
+                    placed += 1
                     break
-        return genutzt
+        # Primär möglichst viele Teile platzieren, sekundär möglichst wenig
+        # Brettfläche verbrauchen (weniger Bretter/Verschnitt, begünstigt Drehung).
+        used_area = sum(p["laenge"] * p["breite"]
+                        for p in plates if p.get("_used"))
+        return placed * 1e12 - used_area
 
     def crossover(p1, p2):
         a, b = sorted(rng.sample(range(n), 2))
@@ -710,7 +715,17 @@ def optimize_2d_ga(
         else:
             fehlend.append(label)
 
-    return _build_2d_result(platten, fehlend)
+    ga_result = _build_2d_result(platten, fehlend)
+
+    # "Gründlich" soll nie schlechter sein als Nested Guillotine – beide
+    # rechnen und das bessere (weniger fehlende Teile, dann weniger Verschnitt)
+    # zurückgeben.
+    nested_result = optimize_2d_nested(
+        teile, vorrat, kerf, drehung_erlaubt, teil_drehung)
+    return min(
+        (ga_result, nested_result),
+        key=lambda r: (len(r.fehlende_teile), r.gesamt_verschnitt_prozent),
+    )
 
 
 # =====================================================================

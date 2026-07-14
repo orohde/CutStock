@@ -9,6 +9,7 @@ COPY core/ core/
 COPY web/ web/
 COPY ui/__init__.py ui/
 COPY ui/i18n.py ui/
+COPY VERSION .
 
 ENV CUTSTOCK_DB=/data/cutstock.db
 
