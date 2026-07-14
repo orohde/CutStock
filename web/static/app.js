@@ -1624,7 +1624,58 @@ function openConfirmDialog(message, onConfirm) {
 // 9. EVENT HANDLERS
 // ===========================================================================
 
+// Zwischen den beiden Panels (Material, Projekte) einen ziehbaren Splitter
+// einsetzen; das Breitenverhältnis wird pro Tab in localStorage gemerkt.
+function setupSplitters() {
+    document.querySelectorAll('.split-panel').forEach(sp => {
+        if (sp._resizable) return;
+        const panels = sp.querySelectorAll(':scope > .panel');
+        if (panels.length !== 2) return;
+        sp._resizable = true;
+        sp.classList.add('resizable');
+
+        const splitter = document.createElement('div');
+        splitter.className = 'panel-splitter';
+        sp.insertBefore(splitter, panels[1]);
+
+        const key = 'cutstock.split.' + (sp.closest('.tab-content')?.id || 'x');
+        let leftFr = parseFloat(localStorage.getItem(key));
+        if (!(leftFr > 0.2 && leftFr < 0.8)) leftFr = 0.5;
+        const apply = () => {
+            sp.style.setProperty('--split-cols', `${leftFr}fr 16px ${1 - leftFr}fr`);
+        };
+        apply();
+
+        let dragging = false;
+        splitter.addEventListener('pointerdown', (e) => {
+            dragging = true;
+            splitter.classList.add('dragging');
+            splitter.setPointerCapture(e.pointerId);
+            document.body.style.userSelect = 'none';
+            e.preventDefault();
+        });
+        splitter.addEventListener('pointermove', (e) => {
+            if (!dragging) return;
+            const rect = sp.getBoundingClientRect();
+            let frac = (e.clientX - rect.left) / rect.width;
+            leftFr = Math.max(0.2, Math.min(0.8, frac));
+            apply();
+        });
+        const end = () => {
+            if (!dragging) return;
+            dragging = false;
+            splitter.classList.remove('dragging');
+            document.body.style.userSelect = '';
+            localStorage.setItem(key, String(leftFr));
+        };
+        splitter.addEventListener('pointerup', end);
+        splitter.addEventListener('pointercancel', end);
+    });
+}
+
 function initEvents() {
+    setupSplitters();
+
     // ----- Tab switching -----
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.addEventListener('click', () => {

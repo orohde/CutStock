@@ -64,6 +64,35 @@ main { padding: 1rem; }
   align-items: start;
 }
 
+/* Mit Splitter: Spaltenbreiten über CSS-Variable, per Ziehen verstellbar */
+.split-panel.resizable {
+  gap: 0;
+  grid-template-columns: var(--split-cols, 1fr 16px 1fr);
+}
+
+.panel-splitter {
+  align-self: stretch;
+  cursor: col-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+}
+
+.panel-splitter::before {
+  content: "";
+  width: 3px;
+  height: 44px;
+  border-radius: 2px;
+  background: var(--sapList_BorderColor, #d9d9d9);
+  transition: background 0.15s;
+}
+
+.panel-splitter:hover::before,
+.panel-splitter.dragging::before {
+  background: var(--sapButton_Hover_BorderColor, #0064d9);
+}
+
 .panel {
   background: var(--sapTile_Background, #fff);
   border-radius: 0.75rem;
@@ -392,6 +421,8 @@ kbd.hotkey-edit.capturing {
 
 @media (max-width: 900px) {
   .split-panel { grid-template-columns: 1fr; }
+  .split-panel.resizable { grid-template-columns: 1fr !important; }
+  .panel-splitter { display: none; }
 
   .opt-controls { flex-direction: column; align-items: stretch; }
 
