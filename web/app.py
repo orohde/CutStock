@@ -10,7 +10,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -53,13 +53,26 @@ DB_PATH = Path(os.environ.get("CUTSTOCK_DB", "/data/cutstock.db"))
 import threading
 
 _db_local = threading.local()
+# Wird bei einem Restore hochgezählt, damit alle Threads ihre veralteten
+# SQLite-Verbindungen schließen und die neue Datei öffnen.
+_db_generation = 0
+
+SETTINGS_PATH = DB_PATH.parent / "settings.json"
 
 
 def get_db() -> Database:
     """Thread-local Database instance — SQLite connections can't cross threads."""
-    if not hasattr(_db_local, "db"):
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _db_local.db = Database(DB_PATH)
+    db = getattr(_db_local, "db", None)
+    if db is not None and getattr(_db_local, "gen", None) == _db_generation:
+        return db
+    if db is not None:
+        try:
+            db.close()
+        except Exception:
+            pass
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _db_local.db = Database(DB_PATH)
+    _db_local.gen = _db_generation
     return _db_local.db
 
 
@@ -777,6 +790,79 @@ def get_settings():
 def update_settings(data: SettingsIn):
     _update_settings(data)
     return _get_settings_dict()
+
+
+# ---------------------------------------------------------------------------
+# Backup / Restore
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/backup")
+def create_backup():
+    """Datenbank + Einstellungen als ZIP herunterladen (wie Desktop-App)."""
+    import io
+    import zipfile
+
+    get_db().conn.commit()  # sicherstellen, dass alles in der .db-Datei liegt
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        if DB_PATH.exists():
+            zf.write(DB_PATH, DB_PATH.name)
+        if SETTINGS_PATH.exists():
+            zf.write(SETTINGS_PATH, SETTINGS_PATH.name)
+    buf.seek(0)
+
+    from datetime import date, datetime, timezone
+    try:
+        today = date.today().isoformat()
+    except Exception:
+        today = datetime.now(timezone.utc).date().isoformat()
+
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="cutstock_backup_{today}.zip"'},
+    )
+
+
+@app.post("/api/restore")
+async def restore_backup(file: UploadFile = File(...)):
+    """Backup-ZIP hochladen und Datenbank (+ Einstellungen) ersetzen."""
+    global _db_generation
+    import io
+    import zipfile
+
+    raw = await file.read()
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(raw))
+        names = zf.namelist()
+    except zipfile.BadZipFile:
+        raise HTTPException(400, "invalid_backup")
+
+    if DB_PATH.name not in names:
+        raise HTTPException(400, "invalid_backup")
+
+    db_bytes = zf.read(DB_PATH.name)
+    settings_bytes = zf.read(SETTINGS_PATH.name) if SETTINGS_PATH.name in names else None
+
+    # Aktuelle Verbindung dieses Threads schließen, Datei atomar ersetzen
+    try:
+        get_db().close()
+    except Exception:
+        pass
+
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = DB_PATH.with_suffix(DB_PATH.suffix + ".restore")
+    tmp.write_bytes(db_bytes)
+    os.replace(tmp, DB_PATH)
+    if settings_bytes is not None:
+        SETTINGS_PATH.write_bytes(settings_bytes)
+
+    # Alle Threads zwingen, neu zu verbinden
+    _db_generation += 1
+    get_db()  # aktuelle Verbindung neu aufbauen
+    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------

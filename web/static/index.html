@@ -213,6 +213,15 @@
       </div>
 
       <div class="panel settings-section">
+        <h3 class="fd-title fd-title--h5" data-i18n="set.backup">Backup</h3>
+        <div class="toolbar">
+          <button id="btn-backup-create" class="fd-button fd-button--emphasized" type="button" data-i18n="set.backup_create">Backup erstellen</button>
+          <button id="btn-backup-restore" class="fd-button" type="button" data-i18n="set.backup_restore">Backup wiederherstellen</button>
+          <input id="backup-restore-file" type="file" accept="application/zip,.zip" style="display:none">
+        </div>
+      </div>
+
+      <div class="panel settings-section">
         <h3 class="fd-title fd-title--h5" data-i18n="set.storage">Speicherorte</h3>
         <div class="form-group">
           <label class="fd-form-label" data-i18n="set.db_path">Datenbank:</label>

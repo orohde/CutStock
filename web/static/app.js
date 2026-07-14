@@ -201,6 +201,35 @@ const Api = {
     getSettings: () => fetchJSON('/api/settings'),
     updateSettings: (data) => fetchJSON('/api/settings', 'PUT', data),
     getTranslations: (lang) => fetchJSON(`/api/i18n/${lang}`),
+
+    async downloadBackup() {
+        const resp = await fetch(API_BASE + '/api/backup');
+        if (!resp.ok) { showToast('HTTP ' + resp.status, 'error'); return; }
+        const blob = await resp.blob();
+        const cd = resp.headers.get('Content-Disposition') || '';
+        const m = cd.match(/filename="?([^"]+)"?/);
+        const name = m ? m[1] : 'cutstock_backup.zip';
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    },
+
+    async restoreBackup(file) {
+        const fd = new FormData();
+        fd.append('file', file);
+        const resp = await fetch(API_BASE + '/api/restore', { method: 'POST', body: fd });
+        if (!resp.ok) {
+            let detail = 'HTTP ' + resp.status;
+            try { detail = (await resp.json()).detail || detail; } catch { /* ignore */ }
+            throw new Error(detail);
+        }
+        return resp.json();
+    },
 };
 
 // ===========================================================================
@@ -1715,6 +1744,28 @@ function initEvents() {
         const themeBtn = document.getElementById('theme-toggle');
         if (themeBtn) themeBtn.textContent = THEME_ICONS[e.target.value] || THEME_ICONS.system;
         try { await Api.updateSettings({ theme: e.target.value }); } catch { /* non-critical */ }
+    });
+
+    // ----- Backup / Restore -----
+    document.getElementById('btn-backup-create')?.addEventListener('click', () => Api.downloadBackup());
+    document.getElementById('btn-backup-restore')?.addEventListener('click', () => {
+        document.getElementById('backup-restore-file')?.click();
+    });
+    document.getElementById('backup-restore-file')?.addEventListener('change', (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file) return;
+        openConfirmDialog(t('set.backup_confirm'), async () => {
+            try {
+                await Api.restoreBackup(file);
+                showToast(t('set.backup_restored'), 'info');
+                setTimeout(() => location.reload(), 800);
+            } catch (err) {
+                const msg = String(err.message) === 'invalid_backup'
+                    ? t('set.backup_invalid') : String(err.message);
+                showToast(msg, 'error');
+            }
+        });
     });
 
     // ----- Modal overlay click to close -----
