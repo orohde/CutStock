@@ -214,6 +214,16 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
   color: var(--sapTile_TextColor, #556b82);
 }
 
+.stat-sub {
+  font-size: 0.75rem;
+  color: var(--sapContent_LabelColor, #556b82);
+  margin-top: 0.125rem;
+}
+
+.stat-danger {
+  color: var(--sapNegativeColor, #aa0808);
+}
+
 .cut-plans {
   display: flex;
   flex-direction: column;

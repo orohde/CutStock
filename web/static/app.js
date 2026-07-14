@@ -574,8 +574,28 @@ function renderOptResults() {
     const missing = result.fehlende_teile || [];
     const totalParts = plans.reduce((sum, p) => sum + p.platzierungen.length, 0);
     const waste = result.gesamt_verschnitt_prozent ?? 0;
+    const wasteAbs = plans.reduce((sum, p) => sum + (p.verschnitt_mm || 0), 0);
+    const utilization = 100 - waste;
+
+    const optMat = State.materials.find(
+        m => m.id === parseInt(document.getElementById('opt-material')?.value));
+    const is1D = optMat?.typ === 'Stange';
+    const wasteUnit = is1D ? 'mm' : 'mm²';
 
     if (statsEl) {
+        const missingCard = missing.length > 0
+            ? `<div class="stat-card">
+                <div class="stat-icon">&#9888;</div>
+                <div><div class="stat-value stat-danger">${missing.length}</div>
+                <div class="stat-label">${t('stat.parts_missing')}</div>
+                <div class="stat-sub stat-danger">${escHtml(missing.join(', '))}</div></div>
+            </div>`
+            : `<div class="stat-card">
+                <div class="stat-icon">&#9888;</div>
+                <div><div class="stat-value">0</div>
+                <div class="stat-label">${t('stat.parts_missing')}</div></div>
+            </div>`;
+
         statsEl.innerHTML = `
             <div class="stat-card">
                 <div class="stat-icon">&#128196;</div>
@@ -587,15 +607,17 @@ function renderOptResults() {
                 <div><div class="stat-value">${totalParts}</div>
                 <div class="stat-label">${t('stat.parts_placed')}</div></div>
             </div>
+            ${missingCard}
             <div class="stat-card">
-                <div class="stat-icon">&#9888;</div>
-                <div><div class="stat-value">${missing.length}</div>
-                <div class="stat-label">${t('stat.parts_missing')}</div></div>
+                <div class="stat-icon">&#9989;</div>
+                <div><div class="stat-value">${utilization.toFixed(1)}%</div>
+                <div class="stat-label">${t('stat.utilization')}</div></div>
             </div>
             <div class="stat-card">
                 <div class="stat-icon">&#9851;</div>
                 <div><div class="stat-value">${waste.toFixed(1)}%</div>
-                <div class="stat-label">${t('stat.total_waste')}</div></div>
+                <div class="stat-label">${t('stat.total_waste')}</div>
+                <div class="stat-sub">${Math.round(wasteAbs).toLocaleString('de-DE')} ${wasteUnit}</div></div>
             </div>
         `;
         statsEl.className = 'opt-stats';
@@ -604,7 +626,6 @@ function renderOptResults() {
     if (plansEl) {
         const matId = parseInt(document.getElementById('opt-material')?.value);
         const mat = State.materials.find(m => m.id === matId);
-        const is1D = mat?.typ === 'Stange';
 
         const hint = `<p class="saw-hint">${t('opt.saw_hint')}</p>`;
         plansEl.innerHTML = hint + plans.map((plan, i) => {
@@ -614,6 +635,7 @@ function renderOptResults() {
                     <strong>${t('opt.preview')} ${i + 1}</strong>
                     <span>${formatDim(plan.lager_laenge)}${plan.lager_breite ? ' x ' + formatDim(plan.lager_breite) : ''}</span>
                     <span>${plan.platzierungen.length} ${t('proj.parts')}</span>
+                    <span>${t('stat.utilization')}: ${(100 - plan.verschnitt_prozent).toFixed(1)}%</span>
                     <span class="waste">${t('stat.total_waste')}: ${plan.verschnitt_prozent.toFixed(1)}%</span>
                 </div>
                 <canvas class="cut-plan-canvas" data-plan-index="${i}"
