@@ -621,6 +621,25 @@ function renderOptResults() {
     const is1D = optMat?.typ === 'Stange';
     const wasteUnit = is1D ? 'mm' : 'mm²';
 
+    // Nutzbares Restmaterial: Reste, die die Mindest-Restmaße erreichen, sind
+    // kein echter Verschnitt. Anteil an der gesamten Brettfläche berechnen.
+    const minL = optMat?.rest_min_laenge ?? 0;
+    const minB = optMat?.rest_min_breite ?? 0;
+    let usableRemnant = 0, totalBoard = 0;
+    plans.forEach(sp => {
+        if (is1D) {
+            totalBoard += sp.lager_laenge;
+            (sp.reste || []).forEach(r => { if (r[0] >= minL) usableRemnant += r[0]; });
+        } else {
+            totalBoard += sp.lager_laenge * (sp.lager_breite || 0);
+            (sp.reste || []).forEach(r => {
+                if (r.length >= 2 && r[0] >= minL && r[1] >= minB) usableRemnant += r[0] * r[1];
+            });
+        }
+    });
+    const usablePct = totalBoard > 0 ? (usableRemnant / totalBoard * 100) : 0;
+    const realWaste = Math.max(0, waste - usablePct);
+
     if (statsEl) {
         const missingCard = missing.length > 0
             ? `<div class="stat-card">
@@ -653,10 +672,15 @@ function renderOptResults() {
                 <div class="stat-label">${t('stat.utilization')}</div></div>
             </div>
             <div class="stat-card">
+                <div class="stat-icon">&#128230;</div>
+                <div><div class="stat-value">${usablePct.toFixed(1)}%</div>
+                <div class="stat-label">${t('stat.usable_remnant')}</div></div>
+            </div>
+            <div class="stat-card">
                 <div class="stat-icon">&#9851;</div>
                 <div><div class="stat-value">${waste.toFixed(1)}%</div>
                 <div class="stat-label">${t('stat.total_waste')}</div>
-                <div class="stat-sub">${Math.round(wasteAbs).toLocaleString('de-DE')} ${wasteUnit}</div></div>
+                <div class="stat-sub">${t('stat.real_waste')}: ${realWaste.toFixed(1)}%</div></div>
             </div>
         `;
         statsEl.className = 'opt-stats';
@@ -801,6 +825,18 @@ async function renderBlades() {
 // 7. CUT PLAN VISUALIZATION (Canvas)
 // ===========================================================================
 
+// Konsistente Label→Farbe-Zuordnung über alle Schnittpläne des Ergebnisses.
+function buildColorMap() {
+    const map = {};
+    const labels = new Set();
+    (State.optimizationResult?.schnittplaene || []).forEach(sp =>
+        sp.platzierungen.forEach(p => labels.add(p.teil_label)));
+    [...labels].sort().forEach((label, i) => {
+        map[label] = PART_COLORS[i % PART_COLORS.length];
+    });
+    return map;
+}
+
 function drawCutPlan(canvas, plan, material) {
     const dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
@@ -815,12 +851,9 @@ function drawCutPlan(canvas, plan, material) {
 
     const is1D = material?.typ === 'Stange';
 
-    // Build label-to-color map
-    const labels = [...new Set(plan.platzierungen.map(p => p.teil_label))];
-    const colorMap = {};
-    labels.forEach((label, i) => {
-        colorMap[label] = PART_COLORS[i % PART_COLORS.length];
-    });
+    // Farbzuordnung global über ALLE Pläne, damit dasselbe Teil überall die
+    // gleiche Farbe hat (auch wenn es über mehrere Platten verteilt ist).
+    const colorMap = buildColorMap();
 
     // Trefferflächen der einzelnen Stücke für Klick-zum-Abhaken sammeln
     const hits = [];

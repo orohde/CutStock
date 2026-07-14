@@ -580,6 +580,14 @@ TRANSLATIONS = {
         "fr": "Échec de la vérification (pas de connexion ?).",
         "it": "Controllo aggiornamenti fallito (nessuna connessione?).",
     },
+    "stat.usable_remnant": {
+        "de": "Nutzbares Restmaterial", "en": "Usable remnant",
+        "fr": "Chutes réutilisables", "it": "Sfrido riutilizzabile",
+    },
+    "stat.real_waste": {
+        "de": "echter Verschnitt", "en": "real waste",
+        "fr": "chute réelle", "it": "scarto reale",
+    },
     "opt.zoom": {
         "de": "Vergrößern", "en": "Zoom", "fr": "Agrandir", "it": "Ingrandisci",
     },
