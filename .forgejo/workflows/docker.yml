@@ -1,0 +1,19 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  build:
+    runs-on: docker
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Forgejo Registry
+        run: echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login git.rohde.one -u Oliver --password-stdin
+
+      - name: Build and push
+        run: |
+          docker build -t git.rohde.one/oliver/cutstock:latest .
+          docker push git.rohde.one/oliver/cutstock:latest

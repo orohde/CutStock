@@ -1,0 +1,669 @@
+/* ==========================================================================
+   CutStock — Layout & Fiori-Bridge
+   Komponenten-Styling kommt aus vendor/fundamental.css (SAP Fundamental
+   Styles), Farben aus den Horizon-Themes (vendor/theme_horizon*.css).
+   Diese Datei enthaelt nur App-Layout und kleine Ergaenzungen.
+   ========================================================================== */
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+body {
+  font-family: "72", "72full", -apple-system, "Segoe UI", sans-serif;
+  font-size: var(--sapFontSize, 0.875rem);
+  color: var(--sapTextColor, #1d2d3e);
+  background: var(--sapBackgroundColor, #f5f6f7);
+}
+
+/* ----- Shellbar ----- */
+
+.fd-shellbar { padding: 0 1rem; }
+
+/* ----- Tabs ----- */
+
+.app-tabs {
+  padding: 0 1rem;
+  background: var(--sapObjectHeader_Background, #fff);
+  box-shadow: var(--sapContent_HeaderShadow, inset 0 -0.0625rem #d9dce4);
+}
+
+.tab-btn { text-decoration: none; }
+
+/* JS toggelt .active — auf die fd-Selected-Optik mappen */
+.fd-tabs__link.active .fd-tabs__tag {
+  color: var(--sapSelectedColor, #0064d9);
+}
+.fd-tabs__link.active:after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0.5rem;
+  right: 0.5rem;
+  height: 0.1875rem;
+  border-radius: 0.125rem 0.125rem 0 0;
+  background: var(--sapSelectedColor, #0064d9);
+}
+.fd-tabs__link { position: relative; }
+
+/* ----- Haupt-Layout ----- */
+
+main { padding: 1rem; }
+
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+.split-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+/* Mit Splitter: Spaltenbreiten über CSS-Variable, per Ziehen verstellbar */
+.split-panel.resizable {
+  gap: 0;
+  grid-template-columns: var(--split-cols, 1fr 16px 1fr);
+}
+
+.panel-splitter {
+  align-self: stretch;
+  cursor: col-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+}
+
+.panel-splitter::before {
+  content: "";
+  width: 3px;
+  height: 44px;
+  border-radius: 2px;
+  background: var(--sapList_BorderColor, #d9d9d9);
+  transition: background 0.15s;
+}
+
+.panel-splitter:hover::before,
+.panel-splitter.dragging::before {
+  background: var(--sapButton_Hover_BorderColor, #0064d9);
+}
+
+.panel {
+  background: var(--sapTile_Background, #fff);
+  border-radius: 0.75rem;
+  box-shadow: var(--sapContent_Shadow0, 0 0 0.125rem 0 rgba(34,54,73,0.16), 0 0.125rem 0.25rem 0 rgba(34,54,73,0.16));
+  padding: 0.75rem 1rem 1rem;
+  overflow: hidden;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.panel-header .fd-title { margin: 0; }
+
+.toolbar {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.panel-content { overflow-x: auto; }
+
+/* ----- Tabellen ----- */
+
+.fd-table { width: 100%; }
+
+/* Dezente alternierende Zeilen (Zellen erben den Zeilenhintergrund) */
+.fd-table__body .fd-table__row:nth-child(even) {
+  background-color: var(--sapList_AlternatingBackground, #f5f6f7);
+}
+
+.fd-table__row.selected .fd-table__cell,
+.fd-table__row.selected td {
+  background: var(--sapList_SelectionBackgroundColor, #d5e8ff);
+}
+
+.fd-table__body .fd-table__row { cursor: pointer; }
+
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.empty-state {
+  text-align: center;
+  color: var(--sapContent_LabelColor, #556b82);
+  padding: 1.25rem 0.5rem !important;
+  cursor: default;
+}
+
+/* ----- Formulare (Dialog + Einstellungen) ----- */
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.form-group input[type="text"],
+.form-group input[type="number"] {
+  height: 2.25rem;
+  padding: 0 0.625rem;
+  font: inherit;
+  color: var(--sapField_TextColor, #131e29);
+  background: var(--sapField_Background, #fff);
+  border: var(--sapField_BorderWidth, 0.0625rem) solid var(--sapField_BorderColor, #556b82);
+  border-radius: var(--sapField_BorderCornerRadius, 0.375rem);
+  outline: none;
+}
+
+.form-group input:hover { border-color: var(--sapField_Hover_BorderColor, #0064d9); }
+
+.form-group input:focus {
+  border-color: var(--sapField_Active_BorderColor, #0064d9);
+  box-shadow: 0 0 0 0.0625rem var(--sapField_Active_BorderColor, #0064d9) inset;
+}
+
+.cs-select {
+  height: 2.25rem;
+  padding: 0 2rem 0 0.625rem;
+  font: inherit;
+  color: var(--sapField_TextColor, #131e29);
+  background: var(--sapField_Background, #fff);
+  border: var(--sapField_BorderWidth, 0.0625rem) solid var(--sapField_BorderColor, #556b82);
+  border-radius: var(--sapField_BorderCornerRadius, 0.375rem);
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23556b82'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.625rem center;
+  cursor: pointer;
+}
+
+.cs-select:hover { border-color: var(--sapField_Hover_BorderColor, #0064d9); }
+
+.cs-select:focus {
+  border-color: var(--sapField_Active_BorderColor, #0064d9);
+  box-shadow: 0 0 0 0.0625rem var(--sapField_Active_BorderColor, #0064d9) inset;
+}
+
+.read-only {
+  color: var(--sapContent_LabelColor, #556b82);
+  font-size: 0.8125rem;
+  word-break: break-all;
+}
+
+/* ----- Optimierung ----- */
+
+.opt-controls {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.opt-controls .form-group { margin-bottom: 0; min-width: 160px; }
+
+.opt-controls-panel { margin-bottom: 1rem; }
+
+.hidden { display: none !important; }
+
+.opt-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.stat-card {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: var(--sapTile_Background, #fff);
+  border-radius: 0.75rem;
+  box-shadow: var(--sapContent_Shadow0, 0 0 0.125rem 0 rgba(34,54,73,0.16), 0 0.125rem 0.25rem 0 rgba(34,54,73,0.16));
+  padding: 0.75rem 1rem;
+}
+
+.stat-icon { font-size: 1.5rem; }
+
+.stat-value {
+  font-size: 1.375rem;
+  font-weight: 300;
+  color: var(--sapTile_TitleTextColor, #1d2d3e);
+}
+
+.stat-label {
+  font-size: 0.75rem;
+  color: var(--sapTile_TextColor, #556b82);
+}
+
+.stat-sub {
+  font-size: 0.75rem;
+  color: var(--sapContent_LabelColor, #556b82);
+  margin-top: 0.125rem;
+}
+
+.stat-danger {
+  color: var(--sapNegativeColor, #aa0808);
+}
+
+.cut-plans {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.saw-hint {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--sapContent_LabelColor, #556b82);
+}
+
+.plan-header .btn-zoom {
+  margin-left: auto;
+  padding: 2px 8px;
+}
+
+/* Zoom-Popup für einen Schnittplan */
+.zoom-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 1500;
+  align-items: center;
+  justify-content: center;
+  padding: 2vmin;
+}
+
+.zoom-overlay.active { display: flex; }
+
+.zoom-content {
+  position: relative;
+  background: var(--sapTile_Background, #fff);
+  border-radius: 12px;
+  box-shadow: var(--sapContent_Shadow3, 0 8px 24px rgba(0,0,0,0.25));
+  padding: 1.25rem;
+  max-width: 96vw;
+  max-height: 94vh;
+}
+
+#zoom-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 1;
+}
+
+#zoom-canvas { display: block; }
+
+.cut-plan-card {
+  background: var(--sapTile_Background, #fff);
+  border-radius: 0.75rem;
+  box-shadow: var(--sapContent_Shadow0, 0 0 0.125rem 0 rgba(34,54,73,0.16), 0 0.125rem 0.25rem 0 rgba(34,54,73,0.16));
+  padding: 0.75rem 1rem;
+}
+
+.plan-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+.plan-header .waste {
+  font-weight: 400;
+  font-size: 0.8125rem;
+  color: var(--sapContent_LabelColor, #556b82);
+}
+
+.cut-plan-canvas {
+  width: 100%;
+  display: block;
+}
+
+.opt-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+/* ----- Schnittfolge (Schrittliste unter dem Plan) ----- */
+
+.cut-seq { margin-top: 0.25rem; }
+
+.cut-seq summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--sapContent_LabelColor, #556b82);
+  user-select: none;
+}
+
+.cut-seq summary:hover { color: var(--sapSelectedColor, #0064d9); }
+
+.cut-seq-list {
+  margin: 0.375rem 0 0.25rem;
+  padding-left: 1.75rem;
+  columns: 2;
+  column-gap: 2rem;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.cut-seq-list li {
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  break-inside: avoid;
+}
+
+.cut-seq-list li:hover {
+  background: var(--sapList_Hover_Background, #eaecee);
+  cursor: default;
+}
+
+.cut-seq-list .seq-piece { font-weight: 600; }
+
+.cut-seq-list .seq-arrow,
+.cut-seq-list .seq-plus {
+  color: var(--sapContent_LabelColor, #556b82);
+}
+
+@media (max-width: 900px) {
+  .cut-seq-list { columns: 1; }
+}
+
+/* ----- Werkstatt-Modus (Tablet an der Säge) ----- */
+
+.saw-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1600;
+  flex-direction: column;
+  background: var(--sapBackgroundColor, #f5f6f7);
+}
+
+.saw-overlay.active { display: flex; }
+
+.saw-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem 0.5rem;
+}
+
+.saw-nav {
+  min-width: 64px;
+  min-height: 56px;
+  font-size: 1.375rem;
+}
+
+.saw-nav:disabled { opacity: 0.35; }
+
+.saw-title {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.125rem;
+}
+
+.saw-title strong { font-size: 1.25rem; }
+
+#saw-progress-text {
+  font-size: 1rem;
+  color: var(--sapContent_LabelColor, #556b82);
+  font-variant-numeric: tabular-nums;
+}
+
+.saw-progress {
+  height: 0.5rem;
+  margin: 0 1rem 0.5rem;
+  background: var(--sapField_Background, #eaecee);
+  border: 1px solid var(--sapField_BorderColor, #d9dce4);
+  border-radius: 0.25rem;
+  overflow: hidden;
+}
+
+#saw-progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--sapPositiveColor, #256f3a);
+  transition: width 0.2s ease;
+}
+
+.saw-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 1rem 1.25rem;
+  -webkit-overflow-scrolling: touch;
+}
+
+#saw-canvas {
+  display: block;
+  width: 100%;
+  background: var(--sapTile_Background, #fff);
+  border-radius: 0.75rem;
+  box-shadow: var(--sapContent_Shadow0, 0 0 0.125rem 0 rgba(34,54,73,0.16), 0 0.125rem 0.25rem 0 rgba(34,54,73,0.16));
+}
+
+#saw-piece-list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.saw-piece {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 60px;
+  padding: 0.5rem 1rem;
+  border-radius: 0.75rem;
+  font-size: 1.0625rem;
+  background: var(--sapTile_Background, #fff);
+  box-shadow: var(--sapContent_Shadow0, 0 0 0.125rem 0 rgba(34,54,73,0.16), 0 0.125rem 0.25rem 0 rgba(34,54,73,0.16));
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.saw-piece.done { opacity: 0.55; }
+
+.saw-piece.saw-next {
+  outline: 2px solid var(--sapSelectedColor, #0064d9);
+  outline-offset: -2px;
+}
+
+.saw-next-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--sapSelectedColor, #0064d9);
+  border: 1px solid var(--sapSelectedColor, #0064d9);
+  border-radius: 0.375rem;
+  padding: 0.125rem 0.5rem;
+  white-space: nowrap;
+}
+
+.saw-dot {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.saw-piece-label { font-weight: 600; }
+
+.saw-piece-dims {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--sapContent_LabelColor, #556b82);
+}
+
+.saw-check {
+  width: 2rem;
+  text-align: center;
+  font-size: 1.5rem;
+  color: var(--sapPositiveColor, #256f3a);
+}
+
+/* ----- Fortschritt / Status ----- */
+
+.progress-bar {
+  height: 0.375rem;
+  background: var(--sapField_Background, #eaecee);
+  border: 1px solid var(--sapField_BorderColor, #d9dce4);
+  border-radius: 0.25rem;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--sapPositiveColor, #256f3a);
+  border-radius: 0.25rem;
+}
+
+.status-badge {
+  font-size: 0.75rem;
+  white-space: nowrap;
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.375rem;
+}
+
+.status-badge.status-cut {
+  color: var(--sapPositiveTextColor, #256f3a);
+  background: var(--sapSuccessBackground, #f5fae5);
+}
+
+.status-badge.status-open {
+  color: var(--sapNeutralTextColor, #556b82);
+  background: var(--sapNeutralBackground, #eaecee);
+}
+
+/* ----- Einstellungen ----- */
+
+/* Einstellungen zweispaltig (Sektionen als Karten im Raster) */
+#tab-settings.active {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+.settings-section { margin: 0; }
+
+.settings-section .fd-title { margin: 0 0 0.75rem; }
+
+.settings-section .form-group { max-width: 320px; }
+
+@media (max-width: 900px) {
+  #tab-settings.active { grid-template-columns: 1fr; }
+}
+
+.about-actions {
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.about-actions a.fd-button {
+  text-decoration: none;
+}
+
+.about-actions .ext-arrow {
+  opacity: 0.7;
+  font-size: 0.9em;
+}
+
+/* ----- Dialog ----- */
+
+.fd-dialog.active { display: flex; }
+
+.fd-dialog__content { min-width: 380px; max-width: 92vw; }
+
+/* Mehr Luft im Dialog – Text klebt sonst am Rahmen */
+.fd-dialog__body {
+  padding: 1.25rem 1.5rem !important;
+}
+
+.fd-dialog__header.fd-bar,
+.fd-dialog__footer.fd-bar {
+  padding: 0.75rem 1.5rem;
+  min-height: auto;
+}
+
+.fd-dialog__header .fd-title { margin: 0; }
+
+.fd-dialog__footer { gap: 0.5rem; }
+
+/* ----- Tastenkuerzel ----- */
+
+kbd {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.8125rem;
+  font-family: inherit;
+  color: var(--sapTextColor, #1d2d3e);
+  background: var(--sapNeutralBackground, #eaecee);
+  border: 1px solid var(--sapNeutralBorderColor, #758ca4);
+  border-radius: 0.375rem;
+  min-width: 1.5rem;
+  text-align: center;
+}
+
+.hotkey-table td:first-child {
+  white-space: nowrap;
+  width: 140px;
+}
+
+.hotkey-table .fd-table__row { cursor: default; }
+
+.hotkey-hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--sapContent_LabelColor, #556b82);
+}
+
+kbd.hotkey-edit { cursor: pointer; }
+
+kbd.hotkey-edit:hover {
+  border-color: var(--sapField_Hover_BorderColor, #0064d9);
+  color: var(--sapSelectedColor, #0064d9);
+}
+
+kbd.hotkey-edit.capturing {
+  border-color: var(--sapField_Focus_BorderColor, #0032a5);
+  color: var(--sapContent_LabelColor, #556b82);
+  font-style: italic;
+}
+
+/* ----- Responsive ----- */
+
+@media (max-width: 900px) {
+  .split-panel { grid-template-columns: 1fr; }
+  .split-panel.resizable { grid-template-columns: 1fr !important; }
+  .panel-splitter { display: none; }
+
+  .opt-controls { flex-direction: column; align-items: stretch; }
+
+  .plan-header { flex-direction: column; align-items: flex-start; gap: 4px; }
+}

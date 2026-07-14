@@ -1,0 +1,16 @@
+services:
+  cutstock:
+    # Fertiges Image von GitHub Container Registry
+    # (alternativ lokal bauen: "build: ." statt "image: ...")
+    image: ghcr.io/orohde/cutstock:latest
+    container_name: cutstock
+    restart: unless-stopped
+    ports:
+      # Host-Port anpassen nach Bedarf (Standard: 8420)
+      - "${PORT:-8420}:8000"
+    volumes:
+      # Persistente Daten (SQLite-Datenbank + Einstellungen)
+      # Unraid z. B.: /mnt/user/appdata/cutstock:/data
+      - ./data:/data
+    environment:
+      - CUTSTOCK_DB=/data/cutstock.db
