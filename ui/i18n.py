@@ -539,6 +539,10 @@ TRANSLATIONS = {
         "fr": "La touche {key} est déjà utilisée.",
         "it": "Il tasto {key} è già in uso.",
     },
+    "part.sawn_count": {
+        "de": "Gesägt (Stück):", "en": "Sawn (pieces):",
+        "fr": "Scié (pièces) :", "it": "Tagliato (pezzi):",
+    },
     "opt.saw_hint": {
         "de": "Tipp: Auf ein Stück im Schnittplan klicken, um es als gesägt zu markieren.",
         "en": "Tip: click a piece in the cut plan to mark it as sawn.",

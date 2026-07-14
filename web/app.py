@@ -638,8 +638,16 @@ def run_optimization(req: OptimizeRequest):
     is_1d = material.typ == MaterialTyp.STANGE
 
     if is_1d:
+        # Apply trim (Besaeumung): subtract 2*trim from bar length, drop too-short pieces
+        besaeumung = material.besaeumung
         teil_tuples = [(t.label, t.laenge, t.offen_anzahl) for t in teile]
-        stock = [StangenVorrat(ls.id, ls.laenge, ls.stueckzahl) for ls in vorrat]
+        stock = [
+            StangenVorrat(ls.id, ls.laenge - 2 * besaeumung, ls.stueckzahl)
+            for ls in vorrat
+            if ls.laenge - 2 * besaeumung > 0
+        ]
+        if not stock:
+            raise HTTPException(400, "No stock available for this material")
 
         if req.algorithm == "ga":
             ergebnis = optimize_1d_ga(teil_tuples, stock, kerf)

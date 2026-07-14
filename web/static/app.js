@@ -1190,6 +1190,93 @@ function openProjectDialog(project = null) {
     });
 }
 
+// Projekt als JSON exportieren – Format kompatibel mit der Desktop-App
+async function exportProject() {
+    const proj = State.projects.find(p => p.id === State.selectedProjectId);
+    if (!proj) { showToast(t('dlg.select_project'), 'error'); return; }
+
+    let teile = proj.teile;
+    if (!teile) {
+        try { teile = await Api.getParts(proj.id); } catch { return; }
+    }
+
+    const parts = teile.map(teil => {
+        const mat = State.materials.find(m => m.id === teil.material_id);
+        const entry = {
+            label: teil.label,
+            type: teil.typ,
+            material: mat ? mat.name : '',
+            length: teil.laenge,
+            quantity: teil.stueckzahl,
+            grain: teil.maserung,
+        };
+        if (teil.typ === 'Platte') entry.width = teil.breite;
+        return entry;
+    });
+
+    const data = { project: proj.name, parts };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${proj.name}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showToast(t('proj.export_done'), 'info');
+}
+
+// Projekt aus JSON importieren – Material per Name→ID, fehlende melden
+async function importProject(file) {
+    let data;
+    try {
+        data = JSON.parse(await file.text());
+    } catch {
+        showToast(t('error.pdf_failed'), 'error');
+        return;
+    }
+
+    const matByName = new Map(State.materials.map(m => [m.name, m]));
+
+    let project;
+    try {
+        project = await Api.createProject({ name: data.project || 'Import' });
+    } catch { return; }
+
+    let imported = 0;
+    const missing = new Set();
+    for (const p of (data.parts || [])) {
+        const mat = matByName.get(p.material || '');
+        if (!mat) { missing.add(p.material || '?'); continue; }
+        const typ = p.type === 'Stange' ? 'Stange' : 'Platte';
+        try {
+            await Api.createPart(project.id, {
+                label: p.label || '',
+                typ,
+                material_id: mat.id,
+                laenge: p.length || 0,
+                breite: typ === 'Platte' ? (p.width || 0) : 0,
+                stueckzahl: p.quantity || 1,
+                gesaegt_anzahl: 0,
+                maserung: p.grain || 'egal',
+            });
+            imported++;
+        } catch { /* skip */ }
+    }
+
+    State.selectedProjectId = project.id;
+    await renderProjects();
+    State.projects = await Api.getProjects();
+    renderOptDropdowns();
+
+    if (missing.size > 0) {
+        showToast(t('proj.import_missing', { materials: [...missing].sort().join(', ') }), 'error');
+    } else {
+        showToast(t('proj.import_done', { n: imported }), 'info');
+    }
+}
+
 function openPartDialog(part = null) {
     const isEdit = !!part;
     if (!State.selectedProjectId) {
@@ -1231,11 +1318,19 @@ function openPartDialog(part = null) {
         { key: 'stueckzahl', label: t('stock.qty'), type: 'number', required: true, min: 1, step: 1 },
     ];
 
+    // Beim Bearbeiten den Gesägt-Fortschritt editierbar machen
+    if (isEdit) {
+        fields.push({ key: 'gesaegt_anzahl', label: t('part.sawn_count'), type: 'number', min: 0, step: 1 });
+    }
+
     openModal(title, fields, data, async (formData) => {
         if (formData.typ === 'Stange') {
             formData.breite = 0;
         }
-        formData.gesaegt_anzahl = data.gesaegt_anzahl || 0;
+        const stk = parseInt(formData.stueckzahl) || 0;
+        formData.gesaegt_anzahl = isEdit
+            ? Math.max(0, Math.min(stk, parseInt(formData.gesaegt_anzahl) || 0))
+            : (data.gesaegt_anzahl || 0);
         formData.material_id = parseInt(formData.material_id);
         try {
             if (isEdit) {
@@ -1427,6 +1522,17 @@ function initEvents() {
                 renderOptDropdowns();
             } catch { /* handled */ }
         });
+    });
+
+    // ----- Projekt Export / Import (JSON, kompatibel mit Desktop-App) -----
+    document.getElementById('btn-proj-export')?.addEventListener('click', () => exportProject());
+    document.getElementById('btn-proj-import')?.addEventListener('click', () => {
+        document.getElementById('proj-import-file')?.click();
+    });
+    document.getElementById('proj-import-file')?.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';  // gleiche Datei erneut wählbar machen
+        if (file) await importProject(file);
     });
 
     // ----- Part CRUD -----
