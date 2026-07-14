@@ -124,6 +124,11 @@ main { padding: 1rem; }
 
 .fd-table { width: 100%; }
 
+/* Dezente alternierende Zeilen (Zellen erben den Zeilenhintergrund) */
+.fd-table__body .fd-table__row:nth-child(even) {
+  background-color: var(--sapList_AlternatingBackground, #f5f6f7);
+}
+
 .fd-table__row.selected .fd-table__cell,
 .fd-table__row.selected td {
   background: var(--sapList_SelectionBackgroundColor, #d5e8ff);
@@ -334,11 +339,23 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* ----- Einstellungen ----- */
 
-.settings-section { max-width: 640px; margin-bottom: 1rem; }
+/* Einstellungen zweispaltig (Sektionen als Karten im Raster) */
+#tab-settings.active {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+.settings-section { margin: 0; }
 
 .settings-section .fd-title { margin: 0 0 0.75rem; }
 
 .settings-section .form-group { max-width: 320px; }
+
+@media (max-width: 900px) {
+  #tab-settings.active { grid-template-columns: 1fr; }
+}
 
 .about-links {
   display: flex;
