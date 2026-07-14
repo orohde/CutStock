@@ -435,7 +435,7 @@ def optimize_2d_nested(
         if not platziert:
             fehlend.append(label)
 
-    return _build_2d_result(platten, fehlend)
+    return _build_2d_result(platten, fehlend, kerf)
 
 
 # =====================================================================
@@ -715,7 +715,7 @@ def optimize_2d_ga(
         else:
             fehlend.append(label)
 
-    ga_result = _build_2d_result(platten, fehlend)
+    ga_result = _build_2d_result(platten, fehlend, kerf)
 
     # "Gründlich" soll nie schlechter sein als Nested Guillotine – beide
     # rechnen und das bessere (weniger fehlende Teile, dann weniger Verschnitt)
@@ -756,7 +756,45 @@ def _build_1d_result(verfuegbar, fehlend, kerf):
     return ergebnis
 
 
-def _build_2d_result(platten, fehlend):
+def _merge_reste(freiraeume, kerf=3.0):
+    """Benachbarte Rest-Rechtecke zu größeren zusammenfassen, damit möglichst
+    große zusammenhängende Reststücke übrig bleiben (statt vieler kleiner).
+    """
+    rects = [[fr.x, fr.y, fr.laenge, fr.breite] for fr in freiraeume
+             if fr.laenge > 0 and fr.breite > 0]
+    tol = 1.0
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(rects)):
+            for j in range(i + 1, len(rects)):
+                a, b = rects[i], rects[j]
+                # Horizontal zusammenfassen: gleiche y-Lage und Höhe, nebeneinander
+                if abs(a[1] - b[1]) < tol and abs(a[3] - b[3]) < tol:
+                    left, right = (a, b) if a[0] <= b[0] else (b, a)
+                    gap = right[0] - (left[0] + left[2])
+                    if -tol <= gap <= kerf + tol:
+                        rects[i] = [left[0], a[1],
+                                    (right[0] + right[2]) - left[0], a[3]]
+                        del rects[j]
+                        changed = True
+                        break
+                # Vertikal zusammenfassen: gleiche x-Lage und Breite, übereinander
+                if abs(a[0] - b[0]) < tol and abs(a[2] - b[2]) < tol:
+                    top, bot = (a, b) if a[1] <= b[1] else (b, a)
+                    gap = bot[1] - (top[1] + top[3])
+                    if -tol <= gap <= kerf + tol:
+                        rects[i] = [a[0], top[1], a[2],
+                                    (bot[1] + bot[3]) - top[1]]
+                        del rects[j]
+                        changed = True
+                        break
+            if changed:
+                break
+    return [(r[2], r[3]) for r in rects]
+
+
+def _build_2d_result(platten, fehlend, kerf=3.0):
     ergebnis = OptimierungsErgebnis(fehlende_teile=fehlend)
     gesamt_flaeche = gesamt_genutzt = 0.0
     for pl in platten:
@@ -764,8 +802,7 @@ def _build_2d_result(platten, fehlend):
             continue
         fl = pl["laenge"] * pl["breite"]
         gen = sum(p.laenge * p.breite for p in pl["platzierungen"])
-        reste = [(fr.laenge, fr.breite) for fr in pl["freiraeume"]
-                 if fr.laenge > 0 and fr.breite > 0]
+        reste = _merge_reste(pl["freiraeume"], kerf)
         ergebnis.schnittplaene.append(Schnittplan(
             lagerstueck_id=pl["id"], lager_laenge=pl["laenge"],
             lager_breite=pl["breite"], platzierungen=pl["platzierungen"],

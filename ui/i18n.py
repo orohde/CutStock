@@ -580,6 +580,9 @@ TRANSLATIONS = {
         "fr": "Échec de la vérification (pas de connexion ?).",
         "it": "Controllo aggiornamenti fallito (nessuna connessione?).",
     },
+    "opt.zoom": {
+        "de": "Vergrößern", "en": "Zoom", "fr": "Agrandir", "it": "Ingrandisci",
+    },
     "opt.saw_hint": {
         "de": "Tipp: Auf ein Stück im Schnittplan klicken, um es als gesägt zu markieren.",
         "en": "Tip: click a piece in the cut plan to mark it as sawn.",

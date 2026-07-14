@@ -270,6 +270,44 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
   color: var(--sapContent_LabelColor, #556b82);
 }
 
+.plan-header .btn-zoom {
+  margin-left: auto;
+  padding: 2px 8px;
+}
+
+/* Zoom-Popup für einen Schnittplan */
+.zoom-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 1500;
+  align-items: center;
+  justify-content: center;
+  padding: 2vmin;
+}
+
+.zoom-overlay.active { display: flex; }
+
+.zoom-content {
+  position: relative;
+  background: var(--sapTile_Background, #fff);
+  border-radius: 12px;
+  box-shadow: var(--sapContent_Shadow3, 0 8px 24px rgba(0,0,0,0.25));
+  padding: 1.25rem;
+  max-width: 96vw;
+  max-height: 94vh;
+}
+
+#zoom-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 1;
+}
+
+#zoom-canvas { display: block; }
+
 .cut-plan-card {
   background: var(--sapTile_Background, #fff);
   border-radius: 0.75rem;

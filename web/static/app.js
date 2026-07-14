@@ -676,6 +676,7 @@ function renderOptResults() {
                     <span>${plan.platzierungen.length} ${t('proj.parts')}</span>
                     <span>${t('stat.utilization')}: ${(100 - plan.verschnitt_prozent).toFixed(1)}%</span>
                     <span class="waste">${t('stat.total_waste')}: ${plan.verschnitt_prozent.toFixed(1)}%</span>
+                    <button class="fd-button btn-zoom" data-plan-index="${i}" type="button" title="${escAttr(t('opt.zoom'))}" aria-label="${escAttr(t('opt.zoom'))}">&#128269;</button>
                 </div>
                 <canvas class="cut-plan-canvas" data-plan-index="${i}"
                     style="width:100%;height:${canvasHeight}px"></canvas>
@@ -971,6 +972,42 @@ function redrawPlanForCanvas(canvas) {
     drawCutPlan(canvas, plan, mat);
 }
 
+// Einen Schnittplan groß in einem Popup anzeigen
+function openPlanZoom(idx) {
+    const plan = State.optimizationResult?.schnittplaene?.[idx];
+    if (!plan) return;
+    const mat = State.materials.find(
+        m => m.id === parseInt(document.getElementById('opt-material')?.value));
+    const is1D = mat?.typ === 'Stange';
+
+    const maxW = window.innerWidth * 0.9;
+    const maxH = window.innerHeight * 0.8;
+    let cw, ch;
+    if (is1D) {
+        cw = maxW;
+        ch = Math.min(maxH, 220);
+    } else {
+        const ar = plan.lager_laenge / (plan.lager_breite || 1);
+        cw = maxW;
+        ch = cw / ar;
+        if (ch > maxH) { ch = maxH; cw = ch * ar; }
+    }
+
+    const canvas = document.getElementById('zoom-canvas');
+    canvas.dataset.planIndex = idx;
+    canvas.style.width = Math.round(cw) + 'px';
+    canvas.style.height = Math.round(ch) + 'px';
+
+    document.getElementById('zoom-overlay').classList.add('active');
+    requestAnimationFrame(() => drawCutPlan(canvas, plan, mat));
+}
+
+function closePlanZoom() {
+    document.getElementById('zoom-overlay').classList.remove('active');
+    // Inline-Pläne auffrischen, falls im Zoom etwas markiert wurde
+    document.querySelectorAll('.cut-plan-canvas').forEach(c => redrawPlanForCanvas(c));
+}
+
 // Halbtransparente Abdeckung + grüner Haken auf einem gesägten Stück
 function drawDoneOverlay(ctx, x, y, w, h) {
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
@@ -995,12 +1032,20 @@ function drawDoneOverlay(ctx, x, y, w, h) {
     ctx.stroke();
 }
 
-// Guillotine-Schnitte aus den platzierten Rechtecken rekonstruieren:
-// rekursiv einen vollen vertikalen oder horizontalen Schnitt suchen, der die
-// Teile im Bereich trennt, ohne ein Teil zu durchschneiden.
+// Vollständige Guillotine-Zerlegung des Bretts in Teile + Reste. Rekursiv wird
+// pro Bereich ein voller Schnitt gesetzt: erst Teile voneinander trennen, dann
+// einzelne Teile freischneiden (größtes Reststück zuerst → große Reste bleiben).
+// Ergebnis: geordnete Schnittliste (Reihenfolge = Zersäge-Reihenfolge).
 function computeGuillotineCuts(pieces, x0, y0, x1, y1, out, depth) {
-    if (pieces.length <= 1 || depth > 60) return;
     const eps = 0.5;
+    if (depth > 120) return;
+
+    if (pieces.length === 0) return;  // Rest-Bereich, kein Schnitt nötig
+
+    if (pieces.length === 1) {
+        trimSinglePiece(pieces[0], x0, y0, x1, y1, out);
+        return;
+    }
 
     const xs = [...new Set(pieces.map(p => p.x + p.laenge))].sort((a, b) => a - b);
     for (const cx of xs) {
@@ -1026,6 +1071,29 @@ function computeGuillotineCuts(pieces, x0, y0, x1, y1, out, depth) {
             computeGuillotineCuts(bot, x0, cy, x1, y1, out, depth + 1);
             return;
         }
+    }
+}
+
+// Ein einzelnes Teil aus seinem Bereich freischneiden – jeweils den größten
+// Reststreifen zuerst abtrennen, damit große zusammenhängende Reste entstehen.
+function trimSinglePiece(p, x0, y0, x1, y1, out) {
+    const eps = 0.5;
+    const px1 = p.x + p.laenge;
+    const py1 = p.y + p.breite;
+    let rx0 = x0, ry0 = y0, rx1 = x1, ry1 = y1;
+    for (let guard = 0; guard < 6; guard++) {
+        const cand = [
+            { k: 'l', v: (p.x - rx0) > eps ? (p.x - rx0) * (ry1 - ry0) : 0 },
+            { k: 'r', v: (rx1 - px1) > eps ? (rx1 - px1) * (ry1 - ry0) : 0 },
+            { k: 't', v: (p.y - ry0) > eps ? (p.y - ry0) * (rx1 - rx0) : 0 },
+            { k: 'b', v: (ry1 - py1) > eps ? (ry1 - py1) * (rx1 - rx0) : 0 },
+        ];
+        const best = cand.reduce((a, b) => (b.v > a.v ? b : a));
+        if (best.v <= eps) break;
+        if (best.k === 'l') { out.push({ v: true, pos: p.x, a: ry0, b: ry1 }); rx0 = p.x; }
+        else if (best.k === 'r') { out.push({ v: true, pos: px1, a: ry0, b: ry1 }); rx1 = px1; }
+        else if (best.k === 't') { out.push({ v: false, pos: p.y, a: rx0, b: rx1 }); ry0 = p.y; }
+        else { out.push({ v: false, pos: py1, a: rx0, b: rx1 }); ry1 = py1; }
     }
 }
 
@@ -1103,8 +1171,9 @@ function draw2D(ctx, canvasW, canvasH, plan, colorMap, hits) {
         0, 0, plan.lager_laenge, plan.lager_breite, cuts, 0);
     if (cuts.length) {
         ctx.save();
-        ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-        ctx.lineWidth = 0.75;
+        // Linien
+        ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+        ctx.lineWidth = 0.9;
         ctx.setLineDash([5, 3]);
         cuts.forEach(c => {
             ctx.beginPath();
@@ -1118,6 +1187,29 @@ function draw2D(ctx, canvasW, canvasH, plan, colorMap, hits) {
                 ctx.lineTo(offsetX + c.b * scale, yp);
             }
             ctx.stroke();
+        });
+        // Nummern nur in der großen (Zoom-)Ansicht – inline wäre es zu voll
+        ctx.setLineDash([]);
+        const r = Math.max(6, Math.min(12, stockW / 45));
+        const fs = Math.round(r * 1.25);
+        if (stockW > 560) cuts.forEach((c, i) => {
+            let bx, by;
+            if (c.v) {
+                bx = offsetX + c.pos * scale;
+                by = offsetY + c.a * scale + r + 2;
+            } else {
+                bx = offsetX + c.a * scale + r + 2;
+                by = offsetY + c.pos * scale;
+            }
+            ctx.beginPath();
+            ctx.arc(bx, by, r, 0, Math.PI * 2);
+            ctx.fillStyle = '#aa0808';
+            ctx.fill();
+            ctx.fillStyle = '#fff';
+            ctx.font = `bold ${fs}px -apple-system, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(String(i + 1), bx, by + 0.5);
         });
         ctx.restore();
     }
@@ -2005,6 +2097,16 @@ function initEvents() {
         });
     });
 
+    // ----- Schnittplan-Zoom -----
+    document.addEventListener('click', (e) => {
+        const zb = e.target.closest('.btn-zoom');
+        if (zb) { e.preventDefault(); openPlanZoom(parseInt(zb.dataset.planIndex)); }
+    });
+    document.getElementById('zoom-close')?.addEventListener('click', () => closePlanZoom());
+    document.getElementById('zoom-overlay')?.addEventListener('click', (e) => {
+        if (e.target.id === 'zoom-overlay') closePlanZoom();
+    });
+
     // ----- Update-Prüfung -----
     document.getElementById('btn-check-update')?.addEventListener('click', () => checkForUpdate());
 
@@ -2022,9 +2124,13 @@ function initEvents() {
     // ----- Modal cancel button -----
     document.getElementById('modal-cancel')?.addEventListener('click', () => closeModal());
 
-    // ----- Escape key closes modal -----
+    // ----- Escape key closes modal / zoom -----
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
+            if (document.getElementById('zoom-overlay')?.classList.contains('active')) {
+                closePlanZoom();
+                return;
+            }
             const overlay = document.getElementById('modal-overlay');
             if (overlay?.classList.contains('active')) closeModal();
         }
