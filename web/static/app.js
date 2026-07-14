@@ -202,6 +202,7 @@ const Api = {
     getSettings: () => fetchJSON('/api/settings'),
     updateSettings: (data) => fetchJSON('/api/settings', 'PUT', data),
     getTranslations: (lang) => fetchJSON(`/api/i18n/${lang}`),
+    getVersion: () => fetchJSON('/api/version'),
 
     async downloadBackup() {
         const resp = await fetch(API_BASE + '/api/backup');
@@ -290,6 +291,11 @@ async function renderMaterials() {
         State.selectedMaterialId = null;
         renderStock();
         return;
+    }
+
+    // Automatisch das erste Material auswählen, falls noch keins gewählt ist
+    if (!State.materials.some(m => m.id === State.selectedMaterialId)) {
+        State.selectedMaterialId = State.materials[0].id;
     }
 
     tbody.innerHTML = State.materials.map(m => {
@@ -436,7 +442,7 @@ async function renderParts() {
     if (!tbody) return;
 
     if (!State.selectedProjectId) {
-        tbody.innerHTML = `<tr><td colspan="7" class="empty-state">${t('dlg.select_project')}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="empty-state">${t('dlg.select_project')}</td></tr>`;
         State.parts = [];
         State.selectedPartId = null;
         return;
@@ -447,7 +453,7 @@ async function renderParts() {
     } catch { return; }
 
     if (State.parts.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" class="empty-state">${t('parts.empty')}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="empty-state">${t('parts.empty')}</td></tr>`;
         State.selectedPartId = null;
         return;
     }
@@ -457,6 +463,7 @@ async function renderParts() {
         const mat = State.materials.find(m => m.id === p.material_id);
         const matName = mat ? mat.name : `#${p.material_id}`;
         const isPlatte = p.typ === 'Platte';
+        const grain = isPlatte ? t(GRAIN_KEY[p.maserung] || p.maserung) : '';
         const pct = p.stueckzahl > 0 ? Math.round((p.gesaegt_anzahl / p.stueckzahl) * 100) : 0;
         const statusText = `${p.gesaegt_anzahl}/${p.stueckzahl}`;
         const statusClass = p.gesaegt_anzahl >= p.stueckzahl ? 'status-cut' : 'status-open';
@@ -464,6 +471,7 @@ async function renderParts() {
             <td class="fd-table__cell">${escHtml(p.label)}</td>
             <td class="fd-table__cell">${t(TYP_KEY[p.typ] || p.typ)}</td>
             <td class="fd-table__cell">${escHtml(matName)}</td>
+            <td class="fd-table__cell">${grain}</td>
             <td class="fd-table__cell num">${formatDim(p.laenge)}</td>
             <td class="fd-table__cell num">${isPlatte ? formatDim(p.breite) : ''}</td>
             <td class="fd-table__cell num">${p.stueckzahl}</td>
@@ -541,7 +549,8 @@ function renderOptDropdowns() {
             { value: 'nested', key: 'opt.algo_nested' },
             { value: 'ga', key: 'opt.algo_ga' },
         ].map(a => `<option value="${a.value}">${t(a.key)}</option>`).join('');
-        if (prevAlgo) algoSel.value = prevAlgo;
+        // Standard: Nested Guillotine (dreht Teile, packt dichter als Greedy)
+        algoSel.value = prevAlgo || 'nested';
     }
 
     // Passt der angezeigte Schnittplan nicht mehr zur (wieder­hergestellten)
@@ -701,6 +710,53 @@ function renderSettings() {
     if (langSel) langSel.value = State.settings.language;
     if (unitSel) unitSel.value = State.settings.unit;
     if (themeSel) themeSel.value = State.settings.theme;
+
+    const vEl = document.getElementById('app-version');
+    if (vEl) {
+        Api.getVersion()
+            .then(v => { vEl.textContent = v.version; State.versionInfo = v; })
+            .catch(() => { vEl.textContent = '—'; });
+    }
+}
+
+// Versionsstrings JJJJ.MM.NN numerisch vergleichen (-1/0/1)
+function compareVersions(a, b) {
+    const pa = String(a).split('.').map(n => parseInt(n) || 0);
+    const pb = String(b).split('.').map(n => parseInt(n) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const d = (pa[i] || 0) - (pb[i] || 0);
+        if (d !== 0) return d < 0 ? -1 : 1;
+    }
+    return 0;
+}
+
+// Externe URL im System-Browser öffnen (Desktop) bzw. neuem Tab (Web)
+function openExternal(url) {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_external) {
+        window.pywebview.api.open_external(url);
+    } else {
+        window.open(url, '_blank', 'noopener');
+    }
+}
+
+async function checkForUpdate() {
+    showToast(t('set.checking_update'), 'info');
+    try {
+        const info = State.versionInfo || await Api.getVersion();
+        const resp = await fetch(info.releases_api, {
+            headers: { 'Accept': 'application/vnd.github+json' },
+        });
+        if (!resp.ok) throw new Error('github');
+        const rel = await resp.json();
+        const latest = (rel.tag_name || '').trim();
+        if (latest && compareVersions(latest, info.version) > 0) {
+            showToast(t('set.update_available', { version: latest }), 'info');
+        } else {
+            showToast(t('set.up_to_date', { version: info.version }), 'info');
+        }
+    } catch {
+        showToast(t('set.update_failed'), 'error');
+    }
 }
 
 async function renderBlades() {
@@ -1834,6 +1890,15 @@ function initEvents() {
                 showToast(msg, 'error');
             }
         });
+    });
+
+    // ----- Update-Prüfung -----
+    document.getElementById('btn-check-update')?.addEventListener('click', () => checkForUpdate());
+
+    // ----- Externe Links im System-Browser öffnen (statt im App-Fenster) -----
+    document.addEventListener('click', (e) => {
+        const a = e.target.closest('a[target="_blank"]');
+        if (a && a.href) { e.preventDefault(); openExternal(a.href); }
     });
 
     // ----- Modal overlay click to close -----

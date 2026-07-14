@@ -543,6 +543,43 @@ TRANSLATIONS = {
         "de": "Gesägt (Stück):", "en": "Sawn (pieces):",
         "fr": "Scié (pièces) :", "it": "Tagliato (pezzi):",
     },
+    "set.about": {
+        "de": "Über / Links", "en": "About / Links",
+        "fr": "À propos / Liens", "it": "Info / Link",
+    },
+    "set.version": {
+        "de": "Version:", "en": "Version:", "fr": "Version :", "it": "Versione:",
+    },
+    "set.website": {
+        "de": "Projektseite (WorldGate)", "en": "Project page (WorldGate)",
+        "fr": "Page du projet (WorldGate)", "it": "Pagina del progetto (WorldGate)",
+    },
+    "set.github": {
+        "de": "Quellcode auf GitHub", "en": "Source code on GitHub",
+        "fr": "Code source sur GitHub", "it": "Codice sorgente su GitHub",
+    },
+    "set.check_update": {
+        "de": "Nach Updates suchen", "en": "Check for updates",
+        "fr": "Rechercher des mises à jour", "it": "Controlla aggiornamenti",
+    },
+    "set.checking_update": {
+        "de": "Suche nach Updates …", "en": "Checking for updates …",
+        "fr": "Recherche de mises à jour …", "it": "Ricerca aggiornamenti …",
+    },
+    "set.update_available": {
+        "de": "Update verfügbar: {version}", "en": "Update available: {version}",
+        "fr": "Mise à jour disponible : {version}", "it": "Aggiornamento disponibile: {version}",
+    },
+    "set.up_to_date": {
+        "de": "CutStock ist aktuell ({version}).", "en": "CutStock is up to date ({version}).",
+        "fr": "CutStock est à jour ({version}).", "it": "CutStock è aggiornato ({version}).",
+    },
+    "set.update_failed": {
+        "de": "Update-Prüfung fehlgeschlagen (keine Verbindung?).",
+        "en": "Update check failed (no connection?).",
+        "fr": "Échec de la vérification (pas de connexion ?).",
+        "it": "Controllo aggiornamenti fallito (nessuna connessione?).",
+    },
     "opt.saw_hint": {
         "de": "Tipp: Auf ein Stück im Schnittplan klicken, um es als gesägt zu markieren.",
         "en": "Tip: click a piece in the cut plan to mark it as sawn.",

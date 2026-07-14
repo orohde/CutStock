@@ -790,13 +790,14 @@ def mark_plan(req: MarkPlanRequest):
                 if r:
                     rest_ids.append(r.id)
         else:
-            # 2D: Reste erst einbuchen, wenn der Plan komplett gesägt ist
-            if req.total_pieces and n_marked >= req.total_pieces:
-                for rest in req.reste:
-                    if len(rest) >= 2 and rest[0] > 0 and rest[1] > 0:
-                        r = db.rest_einbuchen(req.material_id, rest[0], rest[1])
-                        if r:
-                            rest_ids.append(r.id)
+            # 2D: Sobald das Brett angesägt wird, die Reststücke des Plans
+            # einbuchen (durchgängige Schnitte). Beim Zurücknehmen aller
+            # Markierungen werden sie über prev_rest_ids wieder entfernt.
+            for rest in req.reste:
+                if len(rest) >= 2 and rest[0] > 0 and rest[1] > 0:
+                    r = db.rest_einbuchen(req.material_id, rest[0], rest[1])
+                    if r:
+                        rest_ids.append(r.id)
     elif consumed:
         # Alle Markierungen entfernt → Original-Lagerstück zurückbuchen
         db.rest_einbuchen(req.material_id, req.lager_laenge, req.lager_breite)
@@ -851,6 +852,37 @@ def get_settings():
 def update_settings(data: SettingsIn):
     _update_settings(data)
     return _get_settings_dict()
+
+
+# ---------------------------------------------------------------------------
+# Version
+# ---------------------------------------------------------------------------
+
+
+def _read_version() -> str:
+    try:
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            vf = Path(sys._MEIPASS) / "VERSION"
+        else:
+            vf = PROJECT_ROOT / "VERSION"
+        return vf.read_text().strip()
+    except Exception:
+        return "0.0.0"
+
+
+APP_VERSION = _read_version()
+GITHUB_REPO = "orohde/CutStock"
+
+
+@app.get("/api/version")
+def get_version():
+    return {
+        "version": APP_VERSION,
+        "repo": GITHUB_REPO,
+        "github_url": f"https://github.com/{GITHUB_REPO}",
+        "website_url": "https://worldgate.de/cutstock/",
+        "releases_api": f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+    }
 
 
 # ---------------------------------------------------------------------------

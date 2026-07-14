@@ -138,6 +138,7 @@
                   <th class="fd-table__cell" data-i18n="part.label">Label</th>
                   <th class="fd-table__cell" data-i18n="mat.type">Typ</th>
                   <th class="fd-table__cell" data-i18n="opt.material">Material</th>
+                  <th class="fd-table__cell" data-i18n="mat.grain">Maserung</th>
                   <th class="fd-table__cell" data-i18n="stock.length">Laenge</th>
                   <th class="fd-table__cell" data-i18n="stock.width">Breite</th>
                   <th class="fd-table__cell" data-i18n="stock.qty">Stueckzahl</th>
@@ -222,14 +223,17 @@
       </div>
 
       <div class="panel settings-section">
-        <h3 class="fd-title fd-title--h5" data-i18n="set.storage">Speicherorte</h3>
+        <h3 class="fd-title fd-title--h5" data-i18n="set.about">Über / Links</h3>
         <div class="form-group">
-          <label class="fd-form-label" data-i18n="set.db_path">Datenbank:</label>
-          <span id="storage-db" class="read-only">--</span>
+          <label class="fd-form-label" data-i18n="set.version">Version:</label>
+          <span id="app-version" class="read-only">--</span>
         </div>
-        <div class="form-group">
-          <label class="fd-form-label" data-i18n="set.settings_path">Einstellungen:</label>
-          <span id="storage-settings" class="read-only">--</span>
+        <div class="about-links">
+          <a id="link-website" href="https://worldgate.de/cutstock/" target="_blank" rel="noopener" data-i18n="set.website">Projektseite (WorldGate)</a>
+          <a id="link-github" href="https://github.com/orohde/CutStock" target="_blank" rel="noopener" data-i18n="set.github">Quellcode auf GitHub</a>
+        </div>
+        <div class="toolbar" style="margin-top: 0.75rem;">
+          <button id="btn-check-update" class="fd-button" type="button" data-i18n="set.check_update">Nach Updates suchen</button>
         </div>
       </div>
 

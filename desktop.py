@@ -105,7 +105,18 @@ def main() -> None:
         print("CutStock: Server konnte nicht gestartet werden.", file=sys.stderr)
         sys.exit(1)
 
+    import webbrowser
+
     import webview
+
+    class JsApi:
+        """Wird der Web-Oberfläche als window.pywebview.api bereitgestellt."""
+
+        def open_external(self, url: str) -> bool:
+            # Externe Links im System-Browser öffnen, nicht im App-Fenster
+            if isinstance(url, str) and url.startswith(("http://", "https://")):
+                webbrowser.open(url)
+            return True
 
     window = webview.create_window(
         "CutStock",
@@ -113,6 +124,7 @@ def main() -> None:
         width=1200,
         height=820,
         min_size=(900, 600),
+        js_api=JsApi(),
     )
 
     stop_event = threading.Event()
