@@ -21,7 +21,7 @@ jobs:
           pip install -r requirements.txt pyinstaller
 
       - name: Build macOS app
-        run: pyinstaller cutmaster.spec --noconfirm
+        run: pyinstaller desktop.spec --noconfirm
 
       - name: Create ZIP
         run: |
@@ -48,7 +48,7 @@ jobs:
           pip install -r requirements.txt pyinstaller
 
       - name: Build Windows exe
-        run: pyinstaller cutstock_win.spec --noconfirm
+        run: pyinstaller desktop_win.spec --noconfirm
 
       - name: Create ZIP
         run: Compress-Archive -Path dist\CutStock -DestinationPath CutStock-Windows-${{ github.ref_name }}.zip

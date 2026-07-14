@@ -6,7 +6,7 @@ CutStock is a cut optimization tool (Verschnittoptimierung) that helps woodworke
 
 CutStock comes in two flavors that share the same optimization core:
 
-- **Desktop app** (macOS, Windows, Linux) -- double-click, works offline, data stays local
+- **Desktop app** (macOS, Windows, Linux) -- double-click, works offline, data stays local (native window around the web UI via pywebview)
 - **Web app** (Docker) -- self-hosted, reachable from any browser or tablet in your network
 
 ![CutStock Optimization](docs/screenshot_platten.png)
@@ -210,12 +210,25 @@ CUTSTOCK_DB=./data/cutstock.db uvicorn web.app:app --host 0.0.0.0 --port 8000
 
 On macOS, the desktop database and settings sync automatically via iCloud Drive between Macs. A heartbeat-based lock mechanism prevents concurrent access.
 
+The desktop app and the web app share the exact same interface: the desktop
+build runs the same FastAPI backend locally and shows it in a native window
+via [pywebview](https://pywebview.flowrl.com/) (WKWebView on macOS, WebView2 on
+Windows, WebKitGTK on Linux). One UI codebase, two ways to run it.
+
+> **Desktop prerequisites**
+> - **macOS**: nothing extra -- WKWebView is built in.
+> - **Windows**: needs the WebView2 runtime (preinstalled on Windows 11; on
+>   Windows 10 usually present via Edge, otherwise install Microsoft's free
+>   Evergreen runtime).
+> - **Linux**: needs WebKitGTK (`webkit2gtk`, package name varies by distro).
+>   On servers/NAS the Docker web app is usually the better choice.
+
 ## Tech Stack
 
 - **Python 3.12+** -- application logic
-- **PySide6 (Qt 6)** -- cross-platform desktop GUI
-- **FastAPI + Uvicorn** -- web backend
-- **SAP Fundamental Styles / Horizon theme** -- web UI design system (bundled, Apache-2.0)
+- **FastAPI + Uvicorn** -- backend (desktop runs it locally, Docker serves it)
+- **pywebview** -- native desktop window around the web UI
+- **SAP Fundamental Styles / Horizon theme** -- UI design system (bundled, Apache-2.0)
 - **SQLite** -- local database (no server needed)
 - **reportlab** -- PDF generation
 - **PyInstaller** -- standalone app packaging
@@ -230,26 +243,21 @@ CutStock/
     models.py              -- dataclasses (Material, Stock, Project, Part, ...)
     optimize.py            -- 1D/2D optimization algorithms (Greedy + GA)
     pdf.py                 -- PDF export with cut plan drawings
-    lock.py                -- iCloud-safe file locking
+    lock.py                -- iCloud-safe heartbeat lock
     settings.py            -- JSON-based settings
-  ui/                      -- desktop app (PySide6)
-    main_window.py         -- main window with tabs
-    tab_material_lager.py  -- material + stock management
-    tab_projekt.py         -- project + parts management
-    tab_optimierung.py     -- optimization + visualization
-    tab_einstellungen.py   -- settings + saw blades + backup
-    theme_horizon.py       -- SAP Horizon theme (light/dark) as Qt stylesheet
-    i18n.py                -- translations (EN/DE/FR/IT)
-    units.py               -- mm/cm unit conversion
-  web/                     -- web app
+  web/                     -- application (backend + UI)
     app.py                 -- FastAPI backend (REST API + static files)
     static/                -- frontend (vanilla JS/HTML/CSS)
       vendor/              -- bundled Fundamental Styles + Horizon themes + fonts
+  ui/
+    i18n.py                -- translations (EN/DE/FR/IT), shared by backend
   tests/
     test_optimize.py       -- algorithm tests
+  desktop.py               -- desktop entry point (pywebview + local FastAPI)
+  desktop.spec             -- PyInstaller spec (macOS)
+  desktop_win.spec         -- PyInstaller spec (Windows)
   Dockerfile               -- web app container image
   compose.yml              -- Docker Compose example
-  run.py                   -- desktop entry point
 ```
 
 ## License
