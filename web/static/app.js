@@ -1164,14 +1164,14 @@ function draw2D(ctx, canvasW, canvasH, plan, colorMap, hits) {
         if (p._done) drawDoneOverlay(ctx, px, py, pw, ph);
     });
 
-    // Guillotine-Schnittlinien (dünn gestrichelt) als Zersäge-Reihenfolge
+    // Guillotine-Schnittlinien (dünn gestrichelt) – zeigen, wie das Brett
+    // edge-to-edge zerlegt wird. Reihenfolge überlässt man dem Auge.
     const cuts = [];
     computeGuillotineCuts(
         plan.platzierungen.map(p => ({ x: p.x, y: p.y, laenge: p.laenge, breite: p.breite })),
         0, 0, plan.lager_laenge, plan.lager_breite, cuts, 0);
     if (cuts.length) {
         ctx.save();
-        // Linien
         ctx.strokeStyle = 'rgba(0,0,0,0.55)';
         ctx.lineWidth = 0.9;
         ctx.setLineDash([5, 3]);
@@ -1187,29 +1187,6 @@ function draw2D(ctx, canvasW, canvasH, plan, colorMap, hits) {
                 ctx.lineTo(offsetX + c.b * scale, yp);
             }
             ctx.stroke();
-        });
-        // Nummern nur in der großen (Zoom-)Ansicht – inline wäre es zu voll
-        ctx.setLineDash([]);
-        const r = Math.max(6, Math.min(12, stockW / 45));
-        const fs = Math.round(r * 1.25);
-        if (stockW > 560) cuts.forEach((c, i) => {
-            let bx, by;
-            if (c.v) {
-                bx = offsetX + c.pos * scale;
-                by = offsetY + c.a * scale + r + 2;
-            } else {
-                bx = offsetX + c.a * scale + r + 2;
-                by = offsetY + c.pos * scale;
-            }
-            ctx.beginPath();
-            ctx.arc(bx, by, r, 0, Math.PI * 2);
-            ctx.fillStyle = '#aa0808';
-            ctx.fill();
-            ctx.fillStyle = '#fff';
-            ctx.font = `bold ${fs}px -apple-system, sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(String(i + 1), bx, by + 0.5);
         });
         ctx.restore();
     }
