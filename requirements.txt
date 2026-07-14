@@ -1,3 +1,7 @@
-PySide6>=6.7
+# CutStock Desktop-App (pywebview) + lokaler FastAPI-Server
+pywebview>=5.0
+fastapi>=0.111
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
 reportlab>=4.1
 pytest>=8.0

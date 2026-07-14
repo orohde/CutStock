@@ -85,7 +85,11 @@ _init_db = get_db()
 
 app = FastAPI(title="CutStock API", version="1.0.0")
 
-STATIC_DIR = Path(__file__).resolve().parent / "static"
+# Im PyInstaller-Bundle liegen die statischen Dateien unter _MEIPASS/web/static.
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    STATIC_DIR = Path(sys._MEIPASS) / "web" / "static"
+else:
+    STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 # ---------------------------------------------------------------------------
 # Pydantic schemas

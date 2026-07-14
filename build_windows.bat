@@ -12,7 +12,7 @@ if not exist venv (
 call venv\Scripts\activate.bat
 pip install -r requirements.txt pyinstaller
 
-pyinstaller cutstock_win.spec --noconfirm
+pyinstaller desktop_win.spec --noconfirm
 
 echo.
 echo ==> dist\CutStock\CutStock.exe ist bereit
