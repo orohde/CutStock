@@ -18,6 +18,7 @@ hiddenimports = (
 datas = [
     ("web/static", "web/static"),
     ("assets/icon.jpg", "assets"),
+    ("VERSION", "."),
 ]
 datas += collect_data_files("webview")
 

@@ -1,7 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller-Spec für die CutStock Desktop-App (macOS, pywebview)."""
 
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+
+VERSION = (Path(SPECPATH) / "VERSION").read_text().strip()
 
 hiddenimports = (
     collect_submodules("uvicorn")
@@ -18,6 +22,7 @@ hiddenimports = (
 datas = [
     ("web/static", "web/static"),
     ("assets/icon.jpg", "assets"),
+    ("VERSION", "."),
 ]
 datas += collect_data_files("webview")
 
@@ -65,7 +70,7 @@ app = BUNDLE(
     icon="assets/icon.icns",
     bundle_identifier="one.rohde.cutstock",
     info_plist={
-        "CFBundleShortVersionString": "2026.07.01",
+        "CFBundleShortVersionString": VERSION,
         "CFBundleName": "CutStock",
         "NSHighResolutionCapable": True,
     },
