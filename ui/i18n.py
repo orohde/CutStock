@@ -588,6 +588,10 @@ TRANSLATIONS = {
         "de": "echter Verschnitt", "en": "real waste",
         "fr": "chute réelle", "it": "scarto reale",
     },
+    "opt.algorithm": {
+        "de": "Algorithmus", "en": "Algorithm",
+        "fr": "Algorithme", "it": "Algoritmo",
+    },
     "opt.zoom": {
         "de": "Vergrößern", "en": "Zoom", "fr": "Agrandir", "it": "Ingrandisci",
     },

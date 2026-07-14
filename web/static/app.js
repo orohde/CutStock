@@ -2061,8 +2061,11 @@ function initEvents() {
             await Api.updateSettings({ language: e.target.value });
             State.translations = await Api.getTranslations(e.target.value);
             applyTranslations();
-            // Re-render active tab to apply translations in dynamic content
+            // Dynamisch erzeugte Inhalte in der neuen Sprache neu aufbauen
             renderOptDropdowns();
+            if (State.optimizationResult) renderOptResults();
+            renderMaterials();
+            renderProjects();
         } catch { /* non-critical */ }
     });
 
