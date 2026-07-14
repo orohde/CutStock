@@ -442,7 +442,7 @@ async function renderParts() {
                     <div class="progress-bar" style="flex:1;min-width:60px">
                         <div class="progress-fill" style="width:${pct}%"></div>
                     </div>
-                    <span class="status-badge status-clickable ${statusClass}" title="${escAttr(t('part.cut_plus'))}">${statusText}</span>
+                    <span class="status-badge ${statusClass}">${statusText}</span>
                 </div>
             </td>
         </tr>`;
@@ -455,13 +455,6 @@ async function renderParts() {
             const part = State.parts.find(p => p.id === State.selectedPartId);
             if (part) openPartDialog(part);
         });
-        // Klick auf die Status-Badge hakt ein Stück ab (Gesägt +1)
-        row.querySelector('.status-clickable')?.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const id = parseInt(row.dataset.id);
-            selectPartRow(id);
-            cutPart(State.parts.find(p => p.id === id), +1);
-        });
     });
 }
 
@@ -470,26 +463,6 @@ function selectPartRow(id) {
     document.querySelectorAll('#parts-table tbody tr').forEach(r => {
         r.classList.toggle('selected', parseInt(r.dataset.id) === id);
     });
-}
-
-// Gesägt-Zähler eines Teils um delta ändern (0 .. stueckzahl), speichern und neu rendern.
-async function cutPart(part, delta) {
-    if (!part) return;
-    const next = Math.max(0, Math.min(part.stueckzahl, part.gesaegt_anzahl + delta));
-    if (next === part.gesaegt_anzahl) return;
-    try {
-        await Api.updatePart(part.id, { ...part, gesaegt_anzahl: next });
-        await renderParts();
-        // Offene Mengen haben sich geändert → Material-Filter der Optimierung aktualisieren
-        State.projects = await Api.getProjects();
-        renderOptDropdowns();
-    } catch { /* handled */ }
-}
-
-function cutSelectedPart(delta) {
-    const part = State.parts.find(p => p.id === State.selectedPartId);
-    if (!part) { showToast(t('dlg.select_project'), 'error'); return; }
-    cutPart(part, delta);
 }
 
 // ---------------------------------------------------------------------------
@@ -1479,10 +1452,6 @@ function initEvents() {
             } catch { /* handled */ }
         });
     });
-
-    // ----- Gesägt +1 / -1 (einzelne Teile abhaken) -----
-    document.getElementById('btn-part-cut-plus')?.addEventListener('click', () => cutSelectedPart(+1));
-    document.getElementById('btn-part-cut-minus')?.addEventListener('click', () => cutSelectedPart(-1));
 
     // ----- Blade CRUD -----
     document.getElementById('btn-blade-new')?.addEventListener('click', () => openBladeDialog());
