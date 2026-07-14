@@ -176,6 +176,7 @@ const Api = {
 
     optimize: (data) => fetchJSON('/api/optimize', 'POST', data),
     confirmOptimization: (data) => fetchJSON('/api/optimize/confirm', 'POST', data),
+    markPlan: (data) => fetchJSON('/api/optimize/mark-plan', 'POST', data),
 
     async downloadPdf(data) {
         const resp = await fetch(API_BASE + '/api/pdf', {
@@ -787,38 +788,122 @@ function drawCutPlan(canvas, plan, material) {
     }
 }
 
-// Ein Stück im Schnittplan als gesägt markieren/zurücknehmen und den
-// Fortschritt des zugehörigen Teils entsprechend anpassen.
+// Ein Stück im Schnittplan als gesägt markieren/zurücknehmen: Fortschritt des
+// Teils anpassen UND den Lagerbestand live führen (wie Desktop _on_teil_cut).
 async function togglePieceSawn(canvas, placement) {
     const result = State.optimizationResult;
     if (!result) return;
+    const idx = parseInt(canvas.dataset.planIndex);
+    const plan = result.schnittplaene[idx];
     const proj = State.projects.find(p => String(p.id) === result._projId);
     const teil = proj?.teile?.find(t => t.label === placement.teil_label);
-    if (!teil) return;
 
     const willBeDone = !placement._done;
-    const delta = willBeDone ? +1 : -1;
-    const next = Math.max(0, Math.min(teil.stueckzahl, teil.gesaegt_anzahl + delta));
-    if (next === teil.gesaegt_anzahl && willBeDone) {
-        // Teil ist bereits vollständig gesägt – trotzdem optisch markieren
-        placement._done = true;
-        redrawPlanForCanvas(canvas);
-        return;
-    }
-
     placement._done = willBeDone;
     redrawPlanForCanvas(canvas);
 
-    try {
-        await Api.updatePart(teil.id, { ...teil, gesaegt_anzahl: next });
-        teil.gesaegt_anzahl = next;  // lokalen Stand mitführen
-        // Teile-Tabelle aktualisieren, falls dieses Projekt gerade offen ist
-        if (State.selectedProjectId === proj.id) renderParts();
-    } catch {
-        // bei Fehler Markierung zurücknehmen
-        placement._done = !willBeDone;
-        redrawPlanForCanvas(canvas);
+    // 1) Fortschritt des Teils
+    if (teil) {
+        const delta = willBeDone ? +1 : -1;
+        const next = Math.max(0, Math.min(teil.stueckzahl, teil.gesaegt_anzahl + delta));
+        if (next !== teil.gesaegt_anzahl) {
+            try {
+                await Api.updatePart(teil.id, { ...teil, gesaegt_anzahl: next });
+                teil.gesaegt_anzahl = next;
+                if (State.selectedProjectId === proj.id) renderParts();
+            } catch {
+                placement._done = !willBeDone;
+                redrawPlanForCanvas(canvas);
+                return;
+            }
+        }
     }
+
+    // 2) Lagerbestand live anpassen
+    await reconcilePlanStock(plan);
+    await refreshStockAfterMark();
+}
+
+// Lagerbestand für einen Schnittplan mit dem Backend abgleichen und den
+// Verbrauchszustand am Plan-Objekt mitführen.
+async function reconcilePlanStock(plan) {
+    const optMat = State.materials.find(
+        m => m.id === parseInt(document.getElementById('opt-material')?.value));
+    if (!optMat) return;
+    const is1D = optMat.typ === 'Stange';
+    const blade = State.blades.find(
+        b => b.id === parseInt(document.getElementById('opt-blade')?.value));
+    const kerf = blade?.schnittbreite || 0;
+    const markedLaengen = plan.platzierungen.filter(p => p._done).map(p => p.laenge);
+
+    try {
+        const res = await Api.markPlan({
+            material_id: optMat.id,
+            lagerstueck_id: plan.lagerstueck_id,
+            is_1d: is1D,
+            lager_laenge: plan.lager_laenge,
+            lager_breite: plan.lager_breite || 0,
+            kerf,
+            marked_laengen: markedLaengen,
+            total_pieces: plan.platzierungen.length,
+            reste: plan.reste || [],
+            prev_consumed: plan._consumed || false,
+            prev_rest_ids: plan._restIds || [],
+        });
+        plan._consumed = res.consumed;
+        plan._restIds = res.rest_ids || [];
+    } catch { /* nicht kritisch */ }
+}
+
+// Lagerbestand-Tabelle auffrischen, falls das betroffene Material dort offen ist.
+async function refreshStockAfterMark() {
+    const matId = parseInt(document.getElementById('opt-material')?.value);
+    if (State.selectedMaterialId === matId) {
+        try { State.stock = await Api.getStock(matId); renderStock(); } catch { /* ignore */ }
+    }
+}
+
+// „Bestätigen": alle noch nicht markierten Stücke auf einmal als gesägt
+// markieren – nutzt denselben Pfad wie das Einzel-Abhaken (kein Doppelzählen).
+async function confirmAllPieces() {
+    const result = State.optimizationResult;
+    if (!result) return;
+    const proj = State.projects.find(p => String(p.id) === result._projId);
+
+    // Pro Label die noch nicht markierten Platzierungen zählen und markieren
+    const addByLabel = {};
+    (result.schnittplaene || []).forEach(plan => {
+        plan.platzierungen.forEach(p => {
+            if (!p._done) {
+                addByLabel[p.teil_label] = (addByLabel[p.teil_label] || 0) + 1;
+                p._done = true;
+            }
+        });
+    });
+
+    // Fortschritt je Teil setzen
+    for (const [label, add] of Object.entries(addByLabel)) {
+        const teil = proj?.teile?.find(t => t.label === label);
+        if (!teil) continue;
+        const next = Math.min(teil.stueckzahl, teil.gesaegt_anzahl + add);
+        if (next !== teil.gesaegt_anzahl) {
+            try {
+                await Api.updatePart(teil.id, { ...teil, gesaegt_anzahl: next });
+                teil.gesaegt_anzahl = next;
+            } catch { /* handled */ }
+        }
+    }
+
+    // Lager pro Plan abgleichen (jetzt sind alle Stücke markiert)
+    for (const plan of (result.schnittplaene || [])) {
+        await reconcilePlanStock(plan);
+    }
+
+    document.querySelectorAll('.cut-plan-canvas').forEach(c => redrawPlanForCanvas(c));
+    State.projects = await Api.getProjects();
+    if (proj && State.selectedProjectId === proj.id) renderParts();
+    await refreshStockAfterMark();
+    showToast(t('opt.done'), 'info');
 }
 
 function redrawPlanForCanvas(canvas) {
@@ -1667,24 +1752,7 @@ function initEvents() {
 
     document.getElementById('btn-confirm')?.addEventListener('click', () => {
         if (!State.optimizationResult) return;
-        const projId = parseInt(document.getElementById('opt-project')?.value);
-        const matId = parseInt(document.getElementById('opt-material')?.value);
-
-        openConfirmDialog(t('opt.confirm_msg'), async () => {
-            try {
-                await Api.confirmOptimization({
-                    project_id: projId,
-                    material_id: matId,
-                    schnittplaene: State.optimizationResult.schnittplaene,
-                });
-                showToast(t('opt.done'), 'info');
-                State.optimizationResult = null;
-                renderOptResults();
-                // Refresh data since stock & parts changed
-                State.projects = await Api.getProjects();
-                State.materials = await Api.getMaterials();
-            } catch { /* handled */ }
-        });
+        openConfirmDialog(t('opt.confirm_msg'), () => confirmAllPieces());
     });
 
     document.getElementById('btn-pdf')?.addEventListener('click', () => {

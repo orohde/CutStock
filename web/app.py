@@ -218,6 +218,20 @@ class ConfirmRequest(BaseModel):
     schnittplaene: list[SchnittplanOut]
 
 
+class MarkPlanRequest(BaseModel):
+    material_id: int
+    lagerstueck_id: int
+    is_1d: bool
+    lager_laenge: float
+    lager_breite: float = 0.0
+    kerf: float = 0.0
+    marked_laengen: list[float] = []
+    total_pieces: int = 0
+    reste: list[list[float]] = []
+    prev_consumed: bool = False
+    prev_rest_ids: list[int] = []
+
+
 class PdfRequest(BaseModel):
     ergebnis: OptimizeResult
     projekt_name: str = ""
@@ -742,6 +756,49 @@ def confirm_optimization(req: ConfirmRequest):
             get_db().save_teil(teil)
 
     return {"status": "ok", "message": "Cutting plan confirmed. Stock updated."}
+
+
+@app.post("/api/optimize/mark-plan")
+def mark_plan(req: MarkPlanRequest):
+    """Lagerbestand für EINEN Schnittplan live anpassen (wie Desktop _on_teil_cut).
+
+    Beim ersten markierten Stück wird das Lagerstück verbraucht; der tatsächliche
+    Rest (1D: Länge − Σ markiert − Kerf·Anzahl; 2D: plan.reste nur wenn komplett)
+    wird eingebucht. Vorher gebuchte Reste werden zuerst entfernt (idempotent).
+    Ohne Markierungen wird der Verbrauch rückgängig gemacht.
+    """
+    db = get_db()
+    consumed = req.prev_consumed
+    # Zuvor gebuchte Reste immer entfernen und ggf. neu buchen
+    for rid in req.prev_rest_ids:
+        db.lager_verbrauchen(rid)
+    rest_ids: list[int] = []
+
+    n_marked = len(req.marked_laengen)
+    if n_marked > 0:
+        if not consumed:
+            db.lager_verbrauchen(req.lagerstueck_id)
+            consumed = True
+        if req.is_1d:
+            rest_val = req.lager_laenge - sum(req.marked_laengen) - req.kerf * n_marked
+            if rest_val > 0:
+                r = db.rest_einbuchen(req.material_id, rest_val)
+                if r:
+                    rest_ids.append(r.id)
+        else:
+            # 2D: Reste erst einbuchen, wenn der Plan komplett gesägt ist
+            if req.total_pieces and n_marked >= req.total_pieces:
+                for rest in req.reste:
+                    if len(rest) >= 2 and rest[0] > 0 and rest[1] > 0:
+                        r = db.rest_einbuchen(req.material_id, rest[0], rest[1])
+                        if r:
+                            rest_ids.append(r.id)
+    elif consumed:
+        # Alle Markierungen entfernt → Original-Lagerstück zurückbuchen
+        db.rest_einbuchen(req.material_id, req.lager_laenge, req.lager_breite)
+        consumed = False
+
+    return {"consumed": consumed, "rest_ids": rest_ids}
 
 
 # ---------------------------------------------------------------------------
