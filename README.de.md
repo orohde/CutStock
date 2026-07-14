@@ -20,8 +20,11 @@ CutStock gibt es in zwei Varianten, die denselben Optimierungskern teilen:
 - **Maserungsrichtung** -- beruecksichtigt Holzmaserung pro Material und Teil (laengs, quer oder egal)
 - **Besaeumung** -- konfigurierbarer Rand fuer beschaedigte Plattenkanten
 - **Lagerverwaltung** -- Bestand verfolgen, verbrauchte Stuecke automatisch austragen, verwertbare Reste automatisch einbuchen
-- **Projektverwaltung** -- Teile nach Projekten organisieren, Import/Export als JSON
+- **Projektverwaltung** -- Teile nach Projekten organisieren, Import/Export als JSON, Teilelisten-Import aus CSV
 - **Visuelle Schnittplaene** -- farbkodierte Zuschnittschemata mit Labels und Massen
+- **Schnittfolge** -- nummerierte, massgenaue Schrittliste pro Schnittplan (Kerf eingerechnet, auch im PDF)
+- **Werkstatt-Modus** -- Vollbild-Touch-Ansicht fuers Tablet an der Saege: grosse Ziele, Fortschritt, Teile beim Saegen abhaken
+- **Etiketten** -- druckbare Etiketten fuer Teile und Reste (A4-Boegen wie Avery 3475/L7160 oder Dymo/Brother-Etikettendrucker, freie Masse)
 - **PDF-Export** -- kompaktes mehrseitiges Layout (2-spaltig fuer Stangen, proportional fuer Platten)
 - **Statistik** -- detaillierte Verschnittanalyse pro Lagerstueck und Gesamtwerte
 - **Backup/Restore** -- komplette Datenbank + Einstellungen als ZIP (Desktop)
@@ -114,13 +117,19 @@ Projekt, Material, Saegeblatt und Algorithmus waehlen. Der Optimierer berechnet 
 
 ### Optimierung -- Platten
 
-2D Guillotine-Packing fuer Plattenwerkstoffe. Alle Schnitte gehen von Kante zu Kante, so dass alle Reste Rechtecke bleiben und wiederverwendbar sind.
+2D Guillotine-Packing fuer Plattenwerkstoffe. Alle Schnitte gehen von Kante zu Kante, so dass alle Reste Rechtecke bleiben und wiederverwendbar sind. Die nummerierte Schnittfolge unter jedem Plan sagt exakt, wo gesaegt wird -- die Saegeblattbreite ist bereits eingerechnet.
 
 ![Optimierung Platten](docs/screenshot_platten.png)
 
+### Werkstatt-Modus
+
+Vollbild-Ansicht fuers Tablet neben der Saege: eine Platte pro Seite, grosse Touch-Ziele, Gesamtfortschritt und "Als Naechstes"-Markierung. Abhaken aktualisiert Teile-Fortschritt und Lager live.
+
+![Werkstatt-Modus](docs/screenshot_werkstatt.png)
+
 ### Einstellungen
 
-Sprache, Farbschema (Horizon hell/dunkel), Masseinheit (mm/cm), Saegeblaetter, Tastenkuerzel und Backup/Restore konfigurieren.
+Sprache, Farbschema (Horizon hell/dunkel), Masseinheit (mm/cm), Etiketten-Papierformat (A4-Boegen oder Etikettendrucker), Saegeblaetter, Tastenkuerzel und Backup/Restore konfigurieren.
 
 ![Einstellungen](docs/screenshot_einstellungen.png)
 

@@ -20,8 +20,11 @@ CutStock comes in two flavors that share the same optimization core:
 - **Grain Direction** -- respects wood grain per material and part (lengthwise, crosswise, or any)
 - **Edge Trimming** -- configurable trim margin for damaged board edges
 - **Stock Management** -- track inventory, auto-deduct used pieces, auto-add usable remnants
-- **Project Management** -- organize parts by project, import/export as JSON
+- **Project Management** -- organize parts by project, import/export as JSON, import part lists from CSV
 - **Visual Cut Plans** -- color-coded cutting diagrams with labels and dimensions
+- **Cutting Sequence** -- numbered, kerf-accurate step-by-step sawing order per cut plan (on screen and in the PDF)
+- **Workshop Mode** -- full-screen touch view for a tablet at the saw: big targets, progress bar, tap pieces as you cut
+- **Labels** -- printable labels for sawn parts and remnants (A4 sheets like Avery 3475/L7160 or Dymo/Brother label printers, custom sizes)
 - **PDF Export** -- compact multi-page layout (2-column for bars, proportional for panels)
 - **Statistics** -- detailed waste analysis per stock piece and totals
 - **Backup/Restore** -- full database + settings as ZIP (desktop)
@@ -113,13 +116,19 @@ Select a project, material, saw blade, and algorithm. The optimizer calculates t
 
 ### Optimization -- Panels
 
-2D guillotine packing for panels. All cuts go edge-to-edge, keeping every remnant rectangular and reusable.
+2D guillotine packing for panels. All cuts go edge-to-edge, keeping every remnant rectangular and reusable. The numbered cutting sequence below each plan tells you exactly where to cut, with the saw kerf already accounted for.
 
 ![Optimization Panels](docs/screenshot_platten.png)
 
+### Workshop Mode
+
+Full-screen view for a tablet next to the saw: one panel per page, large touch targets, overall progress, and an "up next" marker. Marking a piece updates part progress and stock live.
+
+![Workshop Mode](docs/screenshot_werkstatt.png)
+
 ### Settings
 
-Configure language, color theme (Horizon light/dark), unit (mm/cm), saw blades, keyboard shortcuts, and backup/restore.
+Configure language, color theme (Horizon light/dark), unit (mm/cm), label paper format (A4 sheets or label printers), saw blades, keyboard shortcuts, and backup/restore.
 
 ![Settings](docs/screenshot_einstellungen.png)
 
