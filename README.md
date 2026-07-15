@@ -271,7 +271,9 @@ CutStock/
 
 ## License
 
-**CC BY-NC-SA 4.0** -- free for personal use, no commercial use, attribution required.
+**CC BY-NC-SA 4.0** -- free for personal, non-commercial use; attribution required.
+
+**Commercial use:** If you would like to use CutStock in your business -- for example in a joinery, cabinet shop, or any other commercial workshop -- a separate commercial license is available. Please get in touch via [worldgate.de/cutstock](https://worldgate.de/en/cutstock-en/).
 
 See [LICENSE](LICENSE) for details.
 

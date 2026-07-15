@@ -272,7 +272,9 @@ CutStock/
 
 ## Lizenz
 
-**CC BY-NC-SA 4.0** -- frei fuer den persoenlichen Gebrauch, keine kommerzielle Nutzung, Namensnennung erforderlich.
+**CC BY-NC-SA 4.0** -- frei fuer den persoenlichen, nicht-kommerziellen Gebrauch; Namensnennung erforderlich.
+
+**Kommerzielle Nutzung:** Wer CutStock im Betrieb einsetzen moechte -- etwa in einer Schreinerei, Tischlerei oder einem anderen Gewerbe -- kann eine separate kommerzielle Lizenz erwerben. Anfragen gern ueber [worldgate.de/cutstock](https://worldgate.de/cutstock/).
 
 Details siehe [LICENSE](LICENSE).
 
