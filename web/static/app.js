@@ -2242,6 +2242,140 @@ function setupPartTypToggle(typ) {
     });
 }
 
+function openTrapezoidHelper() {
+    if (!State.selectedProjectId) {
+        showToast(t('dlg.select_project'), 'error');
+        return;
+    }
+    const platteMats = State.materials.filter(m => m.typ === 'Platte');
+    if (!platteMats.length) {
+        showToast(t('mat.empty'), 'error');
+        return;
+    }
+
+    const title = t('trap.title');
+    const data = {
+        prefix: 'Stufe',
+        material_id: platteMats[0]?.id,
+        edge: '',
+        depth_left: '',
+        depth_right: '',
+        offset: 0,
+        count: 1,
+        maserung: 'egal',
+    };
+
+    const fields = [
+        { key: 'prefix', label: t('trap.prefix'), type: 'text', required: true },
+        {
+            key: 'material_id', label: t('opt.material'), type: 'select',
+            options: platteMats.map(m => ({ value: m.id, text: m.name })),
+        },
+        {
+            key: 'maserung', label: t('mat.grain'), type: 'select',
+            options: [
+                { value: 'egal', text: t('part.grain.any') },
+                { value: 'längs', text: t('part.grain.long') },
+                { value: 'quer', text: t('part.grain.cross') },
+            ]
+        },
+        { key: 'edge', label: t('trap.edge'), type: 'number', required: true, isDimension: true, min: 1 },
+        { key: 'depth_left', label: t('trap.depth_left'), type: 'number', required: true, isDimension: true, min: 1 },
+        { key: 'depth_right', label: t('trap.depth_right'), type: 'number', required: true, isDimension: true, min: 1 },
+        { key: 'offset', label: t('trap.offset'), type: 'number', isDimension: true, min: 0, default: 0 },
+        { key: 'count', label: t('stock.qty'), type: 'number', required: true, min: 1, step: 1 },
+    ];
+
+    openModal(title, fields, data, async (formData) => {
+        const edgeMm = formData.edge;
+        const dL = formData.depth_left;
+        const dR = formData.depth_right;
+        const offMm = formData.offset || 0;
+
+        const rectW = edgeMm;
+        const rectH = Math.max(dL, dR) + offMm;
+        const count = parseInt(formData.count) || 1;
+
+        for (let i = 1; i <= count; i++) {
+            const partData = {
+                label: count === 1 ? formData.prefix : `${formData.prefix} ${i}`,
+                typ: 'Platte',
+                material_id: parseInt(formData.material_id),
+                laenge: rectW,
+                breite: rectH,
+                stueckzahl: 1,
+                gesaegt_anzahl: 0,
+                maserung: formData.maserung,
+            };
+            try {
+                await Api.createPart(State.selectedProjectId, partData);
+            } catch { /* handled */ }
+        }
+        showToast(t('trap.created', { n: count }));
+        await renderParts();
+        State.projects = await Api.getProjects();
+        renderOptDropdowns();
+    });
+
+    // Live preview of calculated rectangle
+    const body = document.getElementById('modal-body');
+    const previewDiv = document.createElement('div');
+    previewDiv.id = 'trap-preview';
+    previewDiv.style.cssText = 'margin-top:1rem;padding:0.75rem;border-radius:8px;background:var(--sapBackgroundColor,#f5f6f7);text-align:center;';
+    body.appendChild(previewDiv);
+
+    const updatePreview = () => {
+        const edgeEl = body.querySelector('[name="edge"]');
+        const dLEl = body.querySelector('[name="depth_left"]');
+        const dREl = body.querySelector('[name="depth_right"]');
+        const offEl = body.querySelector('[name="offset"]');
+        const edge = parseFloat(edgeEl?.value) || 0;
+        const dL = parseFloat(dLEl?.value) || 0;
+        const dR = parseFloat(dREl?.value) || 0;
+        const off = parseFloat(offEl?.value) || 0;
+
+        if (!edge || (!dL && !dR)) {
+            previewDiv.innerHTML = '';
+            return;
+        }
+
+        const maxD = Math.max(dL, dR);
+        const rectW = edge;
+        const rectH = maxD + off;
+
+        // SVG preview
+        const svgW = 240, svgH = 140, pad = 20;
+        const drawW = svgW - 2 * pad, drawH = svgH - 2 * pad;
+        const scale = Math.min(drawW / rectW, drawH / rectH);
+        const w = rectW * scale, h = rectH * scale;
+        const ox = (svgW - w) / 2, oy = (svgH - h) / 2;
+
+        // Trapezoid corners inside bounding rect
+        const tL = dL / rectH * h;
+        const tR = dR / rectH * h;
+
+        const dimText = t('trap.result_dim', { w: toDisplay(rectW * (toMm(1) || 1)), h: toDisplay(rectH * (toMm(1) || 1)), unit: unitLabel() });
+        // We work in display units already since edge/dL/dR are in display units from the input
+        const dimTextSimple = `${t('trap.result_dim', { w: edge, h: +(maxD + off).toFixed(1), unit: unitLabel() })}`;
+
+        previewDiv.innerHTML = `
+            <svg width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">
+                <rect x="${ox}" y="${oy}" width="${w}" height="${h}"
+                      fill="none" stroke="var(--sapNeutralBorderColor,#89919a)" stroke-width="1.5" stroke-dasharray="6 3"/>
+                <polygon points="${ox},${oy + h - tL} ${ox + w},${oy + h - tR} ${ox + w},${oy + h} ${ox},${oy + h}"
+                         fill="var(--sapAccentColor6,#ed884a)" fill-opacity="0.3"
+                         stroke="var(--sapAccentColor6,#ed884a)" stroke-width="2"/>
+            </svg>
+            <div style="font-weight:600;margin-top:0.25rem;">${escHtml(dimTextSimple)}</div>`;
+    };
+
+    ['edge', 'depth_left', 'depth_right', 'offset'].forEach(name => {
+        const el = body.querySelector(`[name="${name}"]`);
+        if (el) el.addEventListener('input', updatePreview);
+    });
+    updatePreview();
+}
+
 function openBladeDialog(blade = null) {
     const isEdit = !!blade;
     const title = isEdit ? t('blade.edit') : t('blade.new');
@@ -2451,6 +2585,9 @@ function initEvents() {
         e.target.value = '';  // allow picking the same file again
         if (file) await importProject(file);
     });
+
+    // ----- Trapez-Helfer -----
+    document.getElementById('btn-part-trapez')?.addEventListener('click', () => openTrapezoidHelper());
 
     // ----- Teile-CSV-Import -----
     document.getElementById('btn-part-csv')?.addEventListener('click', () => {

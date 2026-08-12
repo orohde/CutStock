@@ -611,6 +611,8 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 /* Mehr Luft im Dialog – Text klebt sonst am Rahmen */
 .fd-dialog__body {
   padding: 1.25rem 1.5rem !important;
+  max-height: 70vh;
+  overflow-y: auto;
 }
 
 .fd-dialog__header.fd-bar,

@@ -707,6 +707,39 @@ TRANSLATIONS = {
         "de": "CSV konnte nicht gelesen werden.", "en": "Could not read the CSV file.",
         "fr": "Impossible de lire le fichier CSV.", "it": "Impossibile leggere il file CSV.",
     },
+    # ---- Trapez-Helfer ----
+    "trap.title": {
+        "de": "Trapez-Helfer", "en": "Trapezoid Helper",
+        "fr": "Aide trapèze", "it": "Aiuto trapezio",
+    },
+    "trap.edge": {
+        "de": "Gerade Kante", "en": "Straight Edge",
+        "fr": "Bord droit", "it": "Bordo dritto",
+    },
+    "trap.depth_left": {
+        "de": "Tiefe links", "en": "Depth Left",
+        "fr": "Profondeur gauche", "it": "Profondità sinistra",
+    },
+    "trap.depth_right": {
+        "de": "Tiefe rechts", "en": "Depth Right",
+        "fr": "Profondeur droite", "it": "Profondità destra",
+    },
+    "trap.offset": {
+        "de": "Versatz", "en": "Offset",
+        "fr": "Décalage", "it": "Offset",
+    },
+    "trap.prefix": {
+        "de": "Label-Prefix", "en": "Label Prefix",
+        "fr": "Préfixe étiquette", "it": "Prefisso etichetta",
+    },
+    "trap.result_dim": {
+        "de": "Rechteck: {w} × {h} {unit}", "en": "Rectangle: {w} × {h} {unit}",
+        "fr": "Rectangle : {w} × {h} {unit}", "it": "Rettangolo: {w} × {h} {unit}",
+    },
+    "trap.created": {
+        "de": "{n} Trapez-Teile angelegt.", "en": "{n} trapezoid parts created.",
+        "fr": "{n} pièces trapézoïdales créées.", "it": "{n} parti trapezoidali create.",
+    },
 }
 
 LANGUAGES = {"en": "English", "de": "Deutsch", "fr": "Français", "it": "Italiano"}
