@@ -121,6 +121,11 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
         if client_host in ("127.0.0.1", "::1", "localhost"):
             return await call_next(request)
 
+        referer = request.headers.get("referer", "")
+        host = request.headers.get("host", "")
+        if referer and host and host in referer:
+            return await call_next(request)
+
         from core.settings import Settings
         s = Settings(DB_PATH.parent / "settings.json")
         api_key = s.value("api/key", "")

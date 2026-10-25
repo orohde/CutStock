@@ -33,7 +33,7 @@ jobs:
       - name: Verify
         run: |
           sleep 3
-          curl -sf http://localhost:8420/api/version || exit 1
+          docker exec cutstock curl -sf http://localhost:8000/api/version || exit 1
 
       - name: Cleanup old images
         run: docker image prune -f --filter "label!=cutstock" 2>/dev/null || true
