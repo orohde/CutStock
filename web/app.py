@@ -87,6 +87,58 @@ _init_db = get_db()
 
 app = FastAPI(title="CutStock API", version="1.0.0")
 
+
+# ---------------------------------------------------------------------------
+# CORS – erlaubt externen Programmen den Zugriff auf die API
+# ---------------------------------------------------------------------------
+
+from starlette.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ---------------------------------------------------------------------------
+# API-Key-Middleware – schützt /api/* wenn ein Key konfiguriert ist.
+# Lokale Requests (127.0.0.1 / ::1) und nicht-API-Pfade passieren immer.
+# ---------------------------------------------------------------------------
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import JSONResponse
+
+
+class ApiKeyMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        if not request.url.path.startswith("/api/"):
+            return await call_next(request)
+
+        client_host = request.client.host if request.client else ""
+        if client_host in ("127.0.0.1", "::1", "localhost"):
+            return await call_next(request)
+
+        from core.settings import Settings
+        s = Settings(DB_PATH.parent / "settings.json")
+        api_key = s.value("api/key", "")
+        if not api_key:
+            return await call_next(request)
+
+        auth = request.headers.get("authorization", "")
+        if auth == f"Bearer {api_key}":
+            return await call_next(request)
+
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Invalid or missing API key"},
+        )
+
+
+app.add_middleware(ApiKeyMiddleware)
+
 # Im PyInstaller-Bundle liegen die statischen Dateien unter _MEIPASS/web/static.
 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
     STATIC_DIR = Path(sys._MEIPASS) / "web" / "static"
@@ -301,6 +353,9 @@ class SettingsIn(BaseModel):
     label_format: Optional[str] = None
     label_custom_w: Optional[float] = None
     label_custom_h: Optional[float] = None
+    api_enabled: Optional[bool] = None
+    api_port: Optional[int] = None
+    api_key: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +531,9 @@ def _get_settings_dict() -> dict:
         "label_format": s.value("labels/format", "a4_3x8"),
         "label_custom_w": s.value("labels/custom_w", 89),
         "label_custom_h": s.value("labels/custom_h", 36),
+        "api_enabled": s.value("api/enabled", False),
+        "api_port": s.value("api/port", 8421),
+        "api_key": s.value("api/key", ""),
     }
 
 
@@ -498,6 +556,12 @@ def _update_settings(data: SettingsIn):
         s.setValue("labels/custom_w", data.label_custom_w)
     if data.label_custom_h is not None:
         s.setValue("labels/custom_h", data.label_custom_h)
+    if data.api_enabled is not None:
+        s.setValue("api/enabled", data.api_enabled)
+    if data.api_port is not None:
+        s.setValue("api/port", data.api_port)
+    if data.api_key is not None:
+        s.setValue("api/key", data.api_key)
 
 
 # ===========================================================================
@@ -1212,6 +1276,20 @@ WEB_EXTRA_TRANSLATIONS = {
     "piece.note": {"de": "Notiz", "en": "Note", "fr": "Note", "it": "Nota"},
     "piece.defects": {"de": "Defekte", "en": "Defects", "fr": "Défauts", "it": "Difetti"},
     "dlg.delete_defect": {"de": "Defekt wirklich entfernen?", "en": "Really delete this defect?", "fr": "Vraiment supprimer ce défaut ?", "it": "Eliminare davvero questo difetto?"},
+    "set.api": {"de": "REST-API", "en": "REST API", "fr": "API REST", "it": "API REST"},
+    "set.api_enabled": {"de": "API aktivieren:", "en": "Enable API:", "fr": "Activer l’API :", "it": "Attiva API:"},
+    "set.api_port": {"de": "Port:", "en": "Port:", "fr": "Port :", "it": "Porta:"},
+    "set.api_key": {"de": "API-Key:", "en": "API key:", "fr": "Clé API :", "it": "Chiave API:"},
+    "set.api_key_generate": {"de": "Generieren", "en": "Generate", "fr": "Générer", "it": "Genera"},
+    "set.api_key_copy": {"de": "Kopieren", "en": "Copy", "fr": "Copier", "it": "Copia"},
+    "set.api_key_generated": {"de": "API-Key generiert.", "en": "API key generated.", "fr": "Clé API générée.", "it": "Chiave API generata."},
+    "set.api_key_copied": {"de": "API-Key kopiert.", "en": "API key copied.", "fr": "Clé API copiée.", "it": "Chiave API copiata."},
+    "set.api_hint": {
+        "de": "Änderungen am Port werden nach einem Neustart wirksam. Ohne API-Key ist die API nur lokal erreichbar.",
+        "en": "Port changes take effect after a restart. Without an API key the API is only reachable locally.",
+        "fr": "Les changements de port prennent effet après un redémarrage. Sans clé API, l’API n’est accessible que localement.",
+        "it": "Le modifiche alla porta hanno effetto dopo un riavvio. Senza chiave API, l’API è raggiungibile solo localmente.",
+    },
 }
 
 

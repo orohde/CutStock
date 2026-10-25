@@ -237,6 +237,27 @@
       </div>
 
       <div class="panel settings-section">
+        <h3 class="fd-title fd-title--h5" data-i18n="set.api">REST-API</h3>
+        <div class="form-group">
+          <label class="fd-form-label" for="settings-api-enabled" data-i18n="set.api_enabled">API aktivieren:</label>
+          <input type="checkbox" id="settings-api-enabled" class="cs-checkbox">
+        </div>
+        <div class="form-group api-detail-field">
+          <label class="fd-form-label" for="settings-api-port" data-i18n="set.api_port">Port:</label>
+          <input type="number" id="settings-api-port" min="1024" max="65535" step="1" value="8421" class="cs-input" style="width:100px">
+        </div>
+        <div class="form-group api-detail-field">
+          <label class="fd-form-label" for="settings-api-key" data-i18n="set.api_key">API-Key:</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="text" id="settings-api-key" class="cs-input" style="flex:1;font-family:monospace" readonly>
+            <button id="btn-api-key-gen" class="fd-button" type="button" data-i18n="set.api_key_generate">Generieren</button>
+            <button id="btn-api-key-copy" class="fd-button" type="button" data-i18n="set.api_key_copy">Kopieren</button>
+          </div>
+        </div>
+        <p class="api-hint" data-i18n="set.api_hint">Änderungen am Port werden nach einem Neustart wirksam. Ohne API-Key ist die API nur lokal erreichbar.</p>
+      </div>
+
+      <div class="panel settings-section">
         <h3 class="fd-title fd-title--h5" data-i18n="set.backup">Backup</h3>
         <div class="toolbar">
           <button id="btn-backup-create" class="fd-button fd-button--emphasized" type="button" data-i18n="set.backup_create">Backup erstellen</button>

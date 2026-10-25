@@ -5,7 +5,8 @@
 // ===========================================================================
 
 const State = {
-    settings: { language: 'de', unit: 'mm', theme: 'system', hotkeys: {} },
+    settings: { language: 'de', unit: 'mm', theme: 'system', hotkeys: {},
+                 api_enabled: false, api_port: 8421, api_key: '' },
     translations: {},
     materials: [],
     stock: [],
@@ -846,6 +847,15 @@ function renderSettings() {
     if (hInp) hInp.value = State.settings.label_custom_h ?? 36;
     updateLabelCustomVisibility();
 
+    // API settings
+    const apiEn = document.getElementById('settings-api-enabled');
+    const apiPort = document.getElementById('settings-api-port');
+    const apiKey = document.getElementById('settings-api-key');
+    if (apiEn) apiEn.checked = !!State.settings.api_enabled;
+    if (apiPort) apiPort.value = State.settings.api_port ?? 8421;
+    if (apiKey) apiKey.value = State.settings.api_key ?? '';
+    updateApiDetailVisibility();
+
     const vEl = document.getElementById('app-version');
     if (vEl) {
         Api.getVersion()
@@ -859,6 +869,14 @@ function updateLabelCustomVisibility() {
     const isCustom = document.getElementById('settings-label-format')?.value === 'custom';
     document.querySelectorAll('.label-custom-field').forEach(el => {
         el.style.display = isCustom ? '' : 'none';
+    });
+}
+
+// Port/Key-Felder nur zeigen wenn API aktiviert
+function updateApiDetailVisibility() {
+    const on = document.getElementById('settings-api-enabled')?.checked;
+    document.querySelectorAll('.api-detail-field, .api-hint').forEach(el => {
+        el.style.display = on ? '' : 'none';
     });
 }
 
@@ -3014,6 +3032,35 @@ function initEvents() {
             State.settings[key] = v;
             try { await Api.updateSettings({ [key]: v }); } catch { /* non-critical */ }
         });
+    });
+
+    // ----- API Settings -----
+    document.getElementById('settings-api-enabled')?.addEventListener('change', async (e) => {
+        State.settings.api_enabled = e.target.checked;
+        updateApiDetailVisibility();
+        try { await Api.updateSettings({ api_enabled: e.target.checked }); } catch { /* non-critical */ }
+    });
+    document.getElementById('settings-api-port')?.addEventListener('change', async (e) => {
+        const v = Math.max(1024, Math.min(65535, parseInt(e.target.value) || 8421));
+        e.target.value = v;
+        State.settings.api_port = v;
+        try { await Api.updateSettings({ api_port: v }); } catch { /* non-critical */ }
+    });
+    document.getElementById('btn-api-key-gen')?.addEventListener('click', async () => {
+        const key = Array.from(crypto.getRandomValues(new Uint8Array(24)),
+            b => b.toString(16).padStart(2, '0')).join('');
+        document.getElementById('settings-api-key').value = key;
+        State.settings.api_key = key;
+        try { await Api.updateSettings({ api_key: key }); } catch { /* non-critical */ }
+        showToast(t('set.api_key_generated'), 'info');
+    });
+    document.getElementById('btn-api-key-copy')?.addEventListener('click', () => {
+        const key = document.getElementById('settings-api-key')?.value;
+        if (key) {
+            navigator.clipboard.writeText(key).then(
+                () => showToast(t('set.api_key_copied'), 'info'),
+                () => showToast('Copy failed', 'error'));
+        }
     });
 
     // ----- Backup / Restore -----

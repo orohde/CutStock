@@ -91,12 +91,22 @@ def _lock_worker(stop_event: threading.Event, on_remote_takeover) -> None:
 def main() -> None:
     _seed_if_empty()
 
-    port = _free_port()
+    from core.settings import Settings
+    settings = Settings(DB_PATH.parent / "settings.json")
+    api_enabled = settings.value("api/enabled", False)
+    api_port = settings.value("api/port", 8421, type=int)
+
+    if api_enabled and api_port:
+        port = api_port
+        host = "0.0.0.0"
+    else:
+        port = _free_port()
+        host = "127.0.0.1"
 
     import uvicorn
     from web.app import app
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(app, host=host, port=port, log_level="warning")
     server = uvicorn.Server(config)
     server_thread = threading.Thread(target=server.run, daemon=True)
     server_thread.start()
