@@ -732,6 +732,23 @@ function renderOptResults() {
                 <div class="stat-label">${t('stat.parts_missing')}</div></div>
             </div>`;
 
+        const materialbedarf = result.materialbedarf || [];
+        const bedarfCard = materialbedarf.length > 0
+            ? `<div class="stat-card">
+                <div class="stat-icon">&#128722;</div>
+                <div><div class="stat-value">${materialbedarf.reduce((s, m) => s + m.anzahl, 0)}</div>
+                <div class="stat-label">${t('stat.material_needed')}</div>
+                <div class="stat-sub">${materialbedarf.map(m => {
+                    const dims = m.breite > 0
+                        ? formatDim(m.laenge) + ' × ' + formatDim(m.breite)
+                        : formatDim(m.laenge);
+                    return m.anzahl + '× ' + dims;
+                }).join(', ')}</div>
+                <button class="fd-button fd-button--compact btn-add-bedarf" type="button"
+                    style="margin-top:4px">${t('stat.add_to_stock')}</button></div>
+            </div>`
+            : '';
+
         statsEl.innerHTML = `
             <div class="stat-card">
                 <div class="stat-icon">&#128196;</div>
@@ -744,6 +761,7 @@ function renderOptResults() {
                 <div class="stat-label">${t('stat.parts_placed')}</div></div>
             </div>
             ${missingCard}
+            ${bedarfCard}
             <div class="stat-card">
                 <div class="stat-icon">&#9989;</div>
                 <div><div class="stat-value">${utilization.toFixed(1)}%</div>
@@ -762,6 +780,23 @@ function renderOptResults() {
             </div>
         `;
         statsEl.className = 'opt-stats';
+
+        const addBedarfBtn = statsEl.querySelector('.btn-add-bedarf');
+        if (addBedarfBtn) {
+            addBedarfBtn.addEventListener('click', async () => {
+                const matId = parseInt(document.getElementById('opt-material')?.value);
+                for (const m of materialbedarf) {
+                    await Api.createStock({
+                        material_id: matId,
+                        laenge: m.laenge,
+                        breite: m.breite,
+                        stueckzahl: m.anzahl,
+                    });
+                }
+                showToast(t('stat.stock_added'), 'info');
+                await renderStock();
+            });
+        }
     }
 
     if (plansEl) {

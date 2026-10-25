@@ -295,10 +295,17 @@ class SchnittplanOut(BaseModel):
     defekte: list[DefectOut] = []
 
 
+class MaterialBedarfOut(BaseModel):
+    laenge: float
+    breite: float
+    anzahl: int
+
+
 class OptimizeResult(BaseModel):
     schnittplaene: list[SchnittplanOut]
     fehlende_teile: list[str]
     gesamt_verschnitt_prozent: float
+    materialbedarf: list[MaterialBedarfOut] = []
 
 
 class ConfirmRequest(BaseModel):
@@ -511,6 +518,78 @@ def _out_to_ergebnis(data: OptimizeResult) -> OptimierungsErgebnis:
         fehlende_teile=data.fehlende_teile,
         gesamt_verschnitt_prozent=data.gesamt_verschnitt_prozent,
     )
+
+
+# ---------------------------------------------------------------------------
+# Material requirements estimation
+# ---------------------------------------------------------------------------
+
+
+def _berechne_materialbedarf(fehlende_labels, teile, vorrat, material, kerf):
+    """Estimate additional stock needed for parts that couldn't be placed."""
+    if not fehlende_labels:
+        return []
+
+    is_1d = material.typ == MaterialTyp.STANGE
+    besaeumung = material.besaeumung
+
+    bedarf: dict[str, int] = {}
+    for label in fehlende_labels:
+        bedarf[label] = bedarf.get(label, 0) + 1
+
+    teil_map = {t.label: t for t in teile}
+    if is_1d:
+        fehlende = [(lbl, teil_map[lbl].laenge, cnt)
+                    for lbl, cnt in bedarf.items() if lbl in teil_map]
+    else:
+        fehlende = [(lbl, teil_map[lbl].laenge, teil_map[lbl].breite, cnt)
+                    for lbl, cnt in bedarf.items() if lbl in teil_map]
+
+    if not fehlende:
+        return []
+
+    if vorrat:
+        if is_1d:
+            ref = max(vorrat, key=lambda ls: ls.laenge)
+            ref_l, ref_b = ref.laenge, 0.0
+        else:
+            ref = max(vorrat, key=lambda ls: ls.laenge * ls.breite)
+            ref_l, ref_b = ref.laenge, ref.breite
+    else:
+        if is_1d:
+            max_l = max(teil_map[lbl].laenge for lbl in bedarf if lbl in teil_map)
+            ref_l = max(max_l + 2 * besaeumung + 100, 2000)
+            ref_b = 0.0
+        else:
+            max_l = max(teil_map[lbl].laenge for lbl in bedarf if lbl in teil_map)
+            max_b = max(teil_map[lbl].breite for lbl in bedarf if lbl in teil_map)
+            ref_l = max(max_l + 2 * besaeumung + 100, 2440)
+            ref_b = max(max_b + 2 * besaeumung + 100, 1220)
+
+    usable_l = ref_l - 2 * besaeumung
+    usable_b = (ref_b - 2 * besaeumung) if not is_1d else 0.0
+    if usable_l <= 0 or (not is_1d and usable_b <= 0):
+        return []
+
+    if is_1d:
+        virt = [StangenVorrat(-1, usable_l, 999)]
+        erg = optimize_1d(fehlende, virt, kerf)
+    else:
+        virt = [PlattenVorrat(-1, usable_l, usable_b, 999)]
+        teil_drehung: dict[str, tuple[bool, bool]] = {}
+        for lbl in bedarf:
+            if lbl in teil_map:
+                t = teil_map[lbl]
+                normal_ok, gedreht_ok = drehung_fuer_teil(material.maserung, t.maserung)
+                teil_drehung[lbl] = (normal_ok, gedreht_ok)
+        drehung = material.maserung == Maserung.KEINE
+        erg = optimize_2d(fehlende, virt, kerf, drehung, teil_drehung)
+
+    used = len(erg.schnittplaene)
+    if used <= 0:
+        return []
+
+    return [MaterialBedarfOut(laenge=ref_l, breite=ref_b, anzahl=used)]
 
 
 # ---------------------------------------------------------------------------
@@ -914,8 +993,6 @@ def run_optimization(req: OptimizeRequest):
         raise HTTPException(400, "No open parts for this material")
 
     vorrat = get_db().list_lagerstuecke(req.material_id)
-    if not vorrat:
-        raise HTTPException(400, "No stock available for this material")
 
     kerf = blade.schnittbreite
     is_1d = material.typ == MaterialTyp.STANGE
@@ -930,8 +1007,6 @@ def run_optimization(req: OptimizeRequest):
             for ls in vorrat
             if ls.laenge - 2 * besaeumung > 0
         ]
-        if not stock:
-            raise HTTPException(400, "No stock available for this material")
 
         if req.algorithm == "ga":
             ergebnis = optimize_1d_ga(teil_tuples, stock, kerf, defekte_map)
@@ -967,7 +1042,11 @@ def run_optimization(req: OptimizeRequest):
             ergebnis = optimize_2d(teil_tuples, stock, kerf, drehung_erlaubt,
                                     teil_drehung, defekte_map)
 
-    return _ergebnis_to_out(ergebnis, defekte_map)
+    result = _ergebnis_to_out(ergebnis, defekte_map)
+    if ergebnis.fehlende_teile:
+        result.materialbedarf = _berechne_materialbedarf(
+            ergebnis.fehlende_teile, teile, vorrat, material, kerf)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1290,6 +1369,9 @@ WEB_EXTRA_TRANSLATIONS = {
         "fr": "Les changements de port prennent effet après un redémarrage. Sans clé API, l’API n’est accessible que localement.",
         "it": "Le modifiche alla porta hanno effetto dopo un riavvio. Senza chiave API, l’API è raggiungibile solo localmente.",
     },
+    "stat.material_needed": {"de": "Materialbedarf", "en": "Material needed", "fr": "Matériel nécessaire", "it": "Materiale necessario"},
+    "stat.add_to_stock": {"de": "Ins Lager", "en": "Add to stock", "fr": "Ajouter au stock", "it": "Aggiungi a scorte"},
+    "stat.stock_added": {"de": "Lagerbestand ergänzt.", "en": "Stock added.", "fr": "Stock ajouté.", "it": "Scorte aggiunte."},
 }
 
 
