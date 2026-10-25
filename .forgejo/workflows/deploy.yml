@@ -1,0 +1,39 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  deploy:
+    runs-on: docker
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: echo "ver=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        run: docker build -t cutstock:${{ steps.version.outputs.ver }} -t cutstock:latest .
+
+      - name: Deploy container
+        run: |
+          docker stop cutstock 2>/dev/null || true
+          docker rm cutstock 2>/dev/null || true
+          docker run -d \
+            --name cutstock \
+            --restart unless-stopped \
+            -p 8420:8000 \
+            -v /mnt/user/appdata/cutstock:/data \
+            -e CUTSTOCK_DB=/data/cutstock.db \
+            cutstock:${{ steps.version.outputs.ver }}
+
+      - name: Verify
+        run: |
+          sleep 3
+          curl -sf http://localhost:8420/api/version || exit 1
+
+      - name: Cleanup old images
+        run: docker image prune -f --filter "label!=cutstock" 2>/dev/null || true
