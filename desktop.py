@@ -20,6 +20,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+# PyInstaller-Bundle: pythonnet muss die Python-DLL finden können.
+# Python.Runtime.dll sucht relativ zu sich selbst, liegt aber in einem
+# Unterordner — PYTHONNET_PYDLL zeigt auf den tatsächlichen Pfad.
+if getattr(sys, "frozen", False) and sys.platform == "win32":
+    _dll_name = f"python{sys.version_info.major}{sys.version_info.minor}.dll"
+    _dll_path = os.path.join(sys._MEIPASS, _dll_name)
+    if os.path.exists(_dll_path):
+        os.environ["PYTHONNET_PYDLL"] = _dll_path
+
 from core.db import DEFAULT_DB, Database, seed_data
 
 # Datenbank-Pfad für das Backend festlegen, BEVOR web.app importiert wird.
