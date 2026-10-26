@@ -2726,6 +2726,20 @@ function openConfirmDialog(message, onConfirm) {
 // 9. EVENT HANDLERS
 // ===========================================================================
 
+// localStorage kann fehlen oder Exceptions werfen (pywebview-GTK im
+// Privatmodus, Safari privat, gesperrte Website-Daten). UI-Komfort darf
+// den Start der App nie verhindern.
+const SafeStorage = {
+    get(key) {
+        try { return window.localStorage ? window.localStorage.getItem(key) : null; }
+        catch (e) { return null; }
+    },
+    set(key, value) {
+        try { if (window.localStorage) window.localStorage.setItem(key, value); }
+        catch (e) { /* nicht speicherbar - ignorieren */ }
+    },
+};
+
 // Zwischen den beiden Panels (Material, Projekte) einen ziehbaren Splitter
 // einsetzen; das Breitenverhältnis wird pro Tab in localStorage gemerkt.
 function setupSplitters() {
@@ -2741,7 +2755,7 @@ function setupSplitters() {
         sp.insertBefore(splitter, panels[1]);
 
         const key = 'cutstock.split.' + (sp.closest('.tab-content')?.id || 'x');
-        let leftFr = parseFloat(localStorage.getItem(key));
+        let leftFr = parseFloat(SafeStorage.get(key));
         if (!(leftFr > 0.2 && leftFr < 0.8)) leftFr = 0.5;
         const apply = () => {
             sp.style.setProperty('--split-cols', `${leftFr}fr 16px ${1 - leftFr}fr`);
@@ -2768,7 +2782,7 @@ function setupSplitters() {
             dragging = false;
             splitter.classList.remove('dragging');
             document.body.style.userSelect = '';
-            localStorage.setItem(key, String(leftFr));
+            SafeStorage.set(key, String(leftFr));
         };
         splitter.addEventListener('pointerup', end);
         splitter.addEventListener('pointercancel', end);
