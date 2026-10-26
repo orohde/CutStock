@@ -16,12 +16,14 @@ if sys.platform == "win32":
 hiddenimports = (
     collect_submodules("uvicorn")
     + collect_submodules("webview")
+    + collect_submodules("pythonnet")
+    + collect_submodules("clr_loader")
     + [
         "core", "core.db", "core.models", "core.optimize", "core.pdf",
         "core.lock", "core.settings",
         "web", "web.app", "ui", "ui.i18n",
         "anyio", "click", "h11", "httptools", "websockets",
-        "reportlab",
+        "reportlab", "clr",
     ]
 )
 
@@ -31,6 +33,8 @@ datas = [
     ("VERSION", "."),
 ]
 datas += collect_data_files("webview")
+datas += collect_data_files("clr_loader")
+datas += collect_data_files("pythonnet")
 
 a = Analysis(
     ["desktop.py"],
@@ -41,8 +45,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["PySide6", "PyQt5", "PyQt6", "tkinter", "matplotlib", "numpy", "scipy",
-               "pythonnet", "clr", "clr_loader"],
+    excludes=["PySide6", "PyQt5", "PyQt6", "tkinter", "matplotlib", "numpy", "scipy"],
     noarchive=False,
 )
 
