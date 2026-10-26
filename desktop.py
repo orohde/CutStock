@@ -103,6 +103,13 @@ def main() -> None:
         port = _free_port()
         host = "127.0.0.1"
 
+    # PyInstaller auf Windows setzt sys.stderr/stdout auf None (kein Konsolenfenster).
+    # Uvicorns DefaultFormatter ruft sys.stderr.isatty() auf und stürzt ab.
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w")
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w")
+
     import uvicorn
     from web.app import app
 
