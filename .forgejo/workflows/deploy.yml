@@ -33,7 +33,7 @@ jobs:
       - name: Verify
         run: |
           sleep 3
-          docker exec cutstock python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/version')" || exit 1
+          docker exec cutstock python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/')" || exit 1
 
       - name: Cleanup old images
         run: docker image prune -f --filter "label!=cutstock" 2>/dev/null || true
