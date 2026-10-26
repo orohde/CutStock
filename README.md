@@ -34,6 +34,8 @@ CutStock comes in two flavors that share the same optimization core:
 - **SAP Horizon Design** -- identical Fiori look in desktop and web, light and dark theme
 - **Keyboard Shortcuts** -- fully keyboard-driven workflow, remappable in the web app
 - **Cross-platform** -- macOS (.app), Windows (.exe), Linux, Docker
+- **Material Requirements** -- when stock is insufficient, shows a shopping list of what to buy; one click adds the required material to stock
+- **REST API** -- full API for external access (automation, scripts, integrations); protected by optional API key (Bearer token)
 - **iCloud Sync** -- desktop database and settings sync between Macs automatically
 
 ## Web App (Docker)
@@ -89,6 +91,7 @@ docker run -d -p 8420:8000 -v "$(pwd)/data:/data" cutstock
 | Port | Container listens on `8000`; map any host port you like (`8420` in the examples) |
 | Data | SQLite database + `settings.json` live in the `/data` volume |
 | Unraid | Use `/mnt/user/appdata/cutstock:/data` as the volume mapping |
+| API key | Optional; set in Settings to protect the REST API from external access. The web UI works without it. |
 | Reverse proxy | Plain HTTP backend, works behind nginx, Traefik, Zoraxy, Caddy, ... |
 | Users | Single-user by design -- no authentication built in; use your reverse proxy/SSO if exposed |
 
@@ -166,6 +169,90 @@ Guillotine cuts can be made with any standard saw. The remnants are always clean
 - **Edge trimming** -- damaged edges removed before cutting
 - **Grain direction** -- parts placed only in orientations that match the wood grain
 - **Finite stock** -- uses smallest/remnant pieces first, reports parts that don't fit
+- **Material requirements** -- when parts don't fit, estimates how many additional boards/bars are needed
+
+## REST API
+
+The web app exposes a full REST API under `/api/`. All endpoints accept and return JSON.
+
+### Authentication
+
+When an API key is configured (Settings page), external requests must include it as a Bearer token:
+
+```bash
+curl -H "Authorization: Bearer YOUR_API_KEY" http://cutstock:8420/api/materials
+```
+
+Requests from the web UI (same-origin) and from localhost are always allowed without a key.
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| **Materials** | | |
+| GET | `/api/materials` | List all materials |
+| POST | `/api/materials` | Create a material |
+| PUT | `/api/materials/{id}` | Update a material |
+| DELETE | `/api/materials/{id}` | Delete a material |
+| **Stock** | | |
+| GET | `/api/stock?material_id=N` | List stock (optional filter) |
+| POST | `/api/stock` | Create stock entry |
+| PUT | `/api/stock/{id}` | Update stock entry |
+| DELETE | `/api/stock/{id}` | Delete stock entry |
+| GET | `/api/stock/{id}/pieces` | List individual pieces |
+| PUT | `/api/pieces/{id}` | Update an individual piece |
+| **Defects** | | |
+| GET | `/api/stock/{id}/defects` | Defects on a stock entry |
+| GET | `/api/pieces/{id}/defects` | Defects on a piece |
+| POST | `/api/pieces/{id}/defects` | Add a defect |
+| PUT | `/api/defects/{id}` | Update a defect |
+| DELETE | `/api/defects/{id}` | Delete a defect |
+| **Saw Blades** | | |
+| GET | `/api/blades` | List saw blades |
+| POST | `/api/blades` | Create a blade |
+| PUT | `/api/blades/{id}` | Update a blade |
+| DELETE | `/api/blades/{id}` | Delete a blade |
+| **Projects** | | |
+| GET | `/api/projects` | List projects |
+| GET | `/api/projects/{id}` | Get a project |
+| POST | `/api/projects` | Create a project |
+| PUT | `/api/projects/{id}` | Update a project |
+| DELETE | `/api/projects/{id}` | Delete a project |
+| **Parts** | | |
+| GET | `/api/projects/{id}/parts` | List parts of a project |
+| POST | `/api/projects/{id}/parts` | Add a part |
+| PUT | `/api/parts/{id}` | Update a part |
+| DELETE | `/api/parts/{id}` | Delete a part |
+| **Optimization** | | |
+| POST | `/api/optimize` | Run optimization |
+| POST | `/api/optimize/confirm` | Confirm cut plans (update stock) |
+| POST | `/api/optimize/mark-plan` | Mark a single plan as cut |
+| **Export** | | |
+| POST | `/api/pdf` | Generate PDF cut plan |
+| POST | `/api/labels` | Generate label PDF |
+| **System** | | |
+| GET | `/api/version` | App version and links |
+| GET | `/api/settings` | Read settings |
+| PUT | `/api/settings` | Update settings |
+| GET | `/api/backup` | Download database backup (ZIP) |
+| POST | `/api/restore` | Restore from backup (ZIP) |
+| GET | `/api/i18n/{lang}` | Translations for a language |
+
+### Optimization request
+
+```json
+POST /api/optimize
+{
+  "project_id": 1,
+  "material_id": 3,
+  "blade_id": 1,
+  "algorithm": "nested"
+}
+```
+
+Algorithm choices: `greedy`, `nested`, `ga`
+
+The response includes `schnittplaene` (cut plans), `fehlende_teile` (parts that didn't fit), `gesamt_verschnitt_prozent` (total waste %), and `materialbedarf` (additional material needed -- empty when everything fits).
 
 ## Download (Desktop)
 

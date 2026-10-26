@@ -34,6 +34,8 @@ CutStock gibt es in zwei Varianten, die denselben Optimierungskern teilen:
 - **SAP Horizon Design** -- identischer Fiori-Look in Desktop und Web, helles und dunkles Farbschema
 - **Tastenkuerzel** -- komplett per Tastatur bedienbar, in der Web-App frei belegbar
 - **Plattformuebergreifend** -- macOS (.app), Windows (.exe), Linux, Docker
+- **Materialbedarf** -- wenn der Lagerbestand nicht reicht, wird eine Einkaufsliste angezeigt; per Klick direkt ins Lager uebernehmen
+- **REST-API** -- vollstaendige API fuer externen Zugriff (Automatisierung, Skripte, Integrationen); optional per API-Key (Bearer-Token) geschuetzt
 - **iCloud-Sync** -- Desktop-Datenbank und Einstellungen synchronisieren automatisch zwischen Macs
 
 ## Web-App (Docker)
@@ -89,6 +91,7 @@ docker run -d -p 8420:8000 -v "$(pwd)/data:/data" cutstock
 | Port | Container lauscht auf `8000`; Host-Port frei waehlbar (`8420` in den Beispielen) |
 | Daten | SQLite-Datenbank + `settings.json` liegen im `/data`-Volume |
 | Unraid | Als Volume-Mapping `/mnt/user/appdata/cutstock:/data` verwenden |
+| API-Key | Optional; unter Einstellungen setzen, um die REST-API vor externem Zugriff zu schuetzen. Die Web-Oberflaeche funktioniert ohne. |
 | Reverse Proxy | Reines HTTP-Backend, laeuft hinter nginx, Traefik, Zoraxy, Caddy, ... |
 | Benutzer | Bewusst Single-User -- keine eingebaute Anmeldung; bei Veroeffentlichung Reverse Proxy/SSO vorschalten |
 
@@ -167,6 +170,90 @@ Guillotine-Schnitte lassen sich mit jeder normalen Saege ausfuehren. Die Reste s
 - **Besaeumung** -- beschaedigte Kanten werden vor dem Zuschnitt entfernt
 - **Maserungsrichtung** -- Teile werden nur in Orientierungen platziert, die zur Holzmaserung passen
 - **Endlicher Bestand** -- verwendet kleinste/Rest-Stuecke zuerst, meldet Teile, die nicht passen
+- **Materialbedarf** -- wenn Teile nicht passen, wird geschaetzt, wie viele zusaetzliche Bretter/Stangen benoetigt werden
+
+## REST-API
+
+Die Web-App stellt eine vollstaendige REST-API unter `/api/` bereit. Alle Endpoints akzeptieren und liefern JSON.
+
+### Authentifizierung
+
+Wenn ein API-Key konfiguriert ist (Einstellungen-Seite), muessen externe Anfragen ihn als Bearer-Token mitschicken:
+
+```bash
+curl -H "Authorization: Bearer DEIN_API_KEY" http://cutstock:8420/api/materials
+```
+
+Anfragen von der eigenen Web-Oberflaeche (Same-Origin) und von localhost sind immer ohne Key erlaubt.
+
+### Endpoints
+
+| Methode | Pfad | Beschreibung |
+|---------|------|-------------|
+| **Materialien** | | |
+| GET | `/api/materials` | Alle Materialien auflisten |
+| POST | `/api/materials` | Material anlegen |
+| PUT | `/api/materials/{id}` | Material aktualisieren |
+| DELETE | `/api/materials/{id}` | Material loeschen |
+| **Lagerbestand** | | |
+| GET | `/api/stock?material_id=N` | Lagerbestand auflisten (optionaler Filter) |
+| POST | `/api/stock` | Lagereintrag anlegen |
+| PUT | `/api/stock/{id}` | Lagereintrag aktualisieren |
+| DELETE | `/api/stock/{id}` | Lagereintrag loeschen |
+| GET | `/api/stock/{id}/pieces` | Einzelstuecke auflisten |
+| PUT | `/api/pieces/{id}` | Einzelstueck aktualisieren |
+| **Defekte** | | |
+| GET | `/api/stock/{id}/defects` | Defekte eines Lagerstuecks |
+| GET | `/api/pieces/{id}/defects` | Defekte eines Einzelstuecks |
+| POST | `/api/pieces/{id}/defects` | Defekt hinzufuegen |
+| PUT | `/api/defects/{id}` | Defekt aktualisieren |
+| DELETE | `/api/defects/{id}` | Defekt loeschen |
+| **Saegeblaetter** | | |
+| GET | `/api/blades` | Saegeblaetter auflisten |
+| POST | `/api/blades` | Saegeblatt anlegen |
+| PUT | `/api/blades/{id}` | Saegeblatt aktualisieren |
+| DELETE | `/api/blades/{id}` | Saegeblatt loeschen |
+| **Projekte** | | |
+| GET | `/api/projects` | Projekte auflisten |
+| GET | `/api/projects/{id}` | Projekt abrufen |
+| POST | `/api/projects` | Projekt anlegen |
+| PUT | `/api/projects/{id}` | Projekt aktualisieren |
+| DELETE | `/api/projects/{id}` | Projekt loeschen |
+| **Teile** | | |
+| GET | `/api/projects/{id}/parts` | Teile eines Projekts auflisten |
+| POST | `/api/projects/{id}/parts` | Teil hinzufuegen |
+| PUT | `/api/parts/{id}` | Teil aktualisieren |
+| DELETE | `/api/parts/{id}` | Teil loeschen |
+| **Optimierung** | | |
+| POST | `/api/optimize` | Optimierung ausfuehren |
+| POST | `/api/optimize/confirm` | Schnittplaene bestaetigen (Lager aktualisieren) |
+| POST | `/api/optimize/mark-plan` | Einzelnen Plan als gesaegt markieren |
+| **Export** | | |
+| POST | `/api/pdf` | PDF-Schnittplan erzeugen |
+| POST | `/api/labels` | Etiketten-PDF erzeugen |
+| **System** | | |
+| GET | `/api/version` | App-Version und Links |
+| GET | `/api/settings` | Einstellungen lesen |
+| PUT | `/api/settings` | Einstellungen aendern |
+| GET | `/api/backup` | Datenbank-Backup herunterladen (ZIP) |
+| POST | `/api/restore` | Aus Backup wiederherstellen (ZIP) |
+| GET | `/api/i18n/{lang}` | Uebersetzungen fuer eine Sprache |
+
+### Optimierungsanfrage
+
+```json
+POST /api/optimize
+{
+  "project_id": 1,
+  "material_id": 3,
+  "blade_id": 1,
+  "algorithm": "nested"
+}
+```
+
+Algorithmus-Optionen: `greedy`, `nested`, `ga`
+
+Die Antwort enthaelt `schnittplaene` (Schnittplaene), `fehlende_teile` (nicht platzierte Teile), `gesamt_verschnitt_prozent` (Gesamtverschnitt in %) und `materialbedarf` (zusaetzlich benoetigtes Material -- leer wenn alles passt).
 
 ## Download (Desktop)
 
