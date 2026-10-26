@@ -157,7 +157,8 @@ def main() -> None:
     lock_thread.start()
 
     try:
-        webview.start()  # blockiert bis das Fenster geschlossen wird
+        gui_backend = "edgechromium" if sys.platform == "win32" else None
+        webview.start(gui=gui_backend)
     finally:
         stop_event.set()
         server.should_exit = True
