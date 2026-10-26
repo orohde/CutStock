@@ -6,7 +6,7 @@ CutStock is a cut optimization tool (Verschnittoptimierung) that helps woodworke
 
 CutStock comes in two flavors that share the same optimization core:
 
-- **Desktop app** (macOS, Windows, Linux) -- double-click, works offline, data stays local (native window around the web UI via pywebview)
+- **Desktop app** (macOS, Windows) -- double-click, works offline, data stays local (opens the web UI in your default browser)
 - **Web app** (Docker) -- self-hosted, reachable from any browser or tablet in your network
 
 ![CutStock Optimization](docs/screenshot_platten.png)
@@ -33,7 +33,7 @@ CutStock comes in two flavors that share the same optimization core:
 - **Multi-language** -- English, Deutsch, Francais, Italiano
 - **SAP Horizon Design** -- identical Fiori look in desktop and web, light and dark theme
 - **Keyboard Shortcuts** -- fully keyboard-driven workflow, remappable in the web app
-- **Cross-platform** -- macOS (.app), Windows (.exe), Linux, Docker
+- **Cross-platform** -- macOS (.app), Windows (.exe), Docker
 - **Material Requirements** -- when stock is insufficient, shows a shopping list of what to buy; one click adds the required material to stock
 - **REST API** -- full API for external access (automation, scripts, integrations); protected by optional API key (Bearer token)
 - **iCloud Sync** -- desktop database and settings sync between Macs automatically
@@ -267,12 +267,14 @@ Pre-built binaries for macOS and Windows are available on the [Releases page](ht
 > - **Windows**: Click "More info", then "Run anyway" to bypass SmartScreen
 >
 > This is normal for open-source software. The source code is fully available for review.
+>
+> The desktop app opens your default browser -- no additional runtimes needed.
 
 ## Installation (from source)
 
 ### Desktop
 
-Prerequisites: Python 3.12+, macOS/Windows/Linux
+Prerequisites: Python 3.12+, macOS/Windows
 
 ```bash
 git clone https://github.com/orohde/CutStock.git
@@ -309,23 +311,28 @@ CUTSTOCK_DB=./data/cutstock.db uvicorn web.app:app --host 0.0.0.0 --port 8000
 On macOS, the desktop database and settings sync automatically via iCloud Drive between Macs. A heartbeat-based lock mechanism prevents concurrent access.
 
 The desktop app and the web app share the exact same interface: the desktop
-build runs the same FastAPI backend locally and shows it in a native window
-via [pywebview](https://pywebview.flowrl.com/) (WKWebView on macOS, WebView2 on
-Windows, WebKitGTK on Linux). One UI codebase, two ways to run it.
+build runs the same FastAPI backend locally and opens it in your default
+browser. There is no separate "app window" -- what you see on macOS, Windows,
+and Docker is the same web UI. One codebase, identical look everywhere.
 
-> **Desktop prerequisites**
-> - **macOS**: nothing extra -- WKWebView is built in.
-> - **Windows**: needs the WebView2 runtime (preinstalled on Windows 11; on
->   Windows 10 usually present via Edge, otherwise install Microsoft's free
->   Evergreen runtime).
-> - **Linux**: needs WebKitGTK (`webkit2gtk`, package name varies by distro).
->   On servers/NAS the Docker web app is usually the better choice.
+> **How it works**
+>
+> When you launch CutStock on the desktop, it starts a local web server in the
+> background and opens your browser at `http://127.0.0.1:<port>/`. The app
+> keeps running until you quit it:
+>
+> - **macOS**: quit CutStock from the Dock (right-click -> Quit) or press Cmd+Q
+> - **Windows**: close CutStock from the Task Manager or the system tray
+>
+> Closing the browser tab does **not** stop the server -- you can reopen the
+> tab or navigate back to the URL. To fully stop CutStock, quit the app itself.
+>
+> No additional runtimes or browser plugins are needed on any platform.
 
 ## Tech Stack
 
 - **Python 3.12+** -- application logic
 - **FastAPI + Uvicorn** -- backend (desktop runs it locally, Docker serves it)
-- **pywebview** -- native desktop window around the web UI
 - **SAP Fundamental Styles / Horizon theme** -- UI design system (bundled, Apache-2.0)
 - **SQLite** -- local database (no server needed)
 - **reportlab** -- PDF generation
@@ -351,7 +358,7 @@ CutStock/
     i18n.py                -- translations (EN/DE/FR/IT), shared by backend
   tests/
     test_optimize.py       -- algorithm tests
-  desktop.py               -- desktop entry point (pywebview + local FastAPI)
+  desktop.py               -- desktop entry point (local FastAPI + browser)
   desktop.spec             -- PyInstaller spec (macOS)
   desktop_win.spec         -- PyInstaller spec (Windows)
   Dockerfile               -- web app container image

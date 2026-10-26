@@ -6,7 +6,7 @@ CutStock ist ein Werkzeug zur Verschnittoptimierung, das Holzwerkern, Makern und
 
 CutStock gibt es in zwei Varianten, die denselben Optimierungskern teilen:
 
-- **Desktop-App** (macOS, Windows, Linux) -- Doppelklick, laeuft offline, Daten bleiben lokal (natives Fenster um die Web-UI via pywebview)
+- **Desktop-App** (macOS, Windows) -- Doppelklick, laeuft offline, Daten bleiben lokal (oeffnet die Web-UI im Standard-Browser)
 - **Web-App** (Docker) -- selbst gehostet, erreichbar von jedem Browser oder Tablet im Netzwerk
 
 ![CutStock Plattenoptimierung](docs/screenshot_platten.png)
@@ -33,7 +33,7 @@ CutStock gibt es in zwei Varianten, die denselben Optimierungskern teilen:
 - **Mehrsprachig** -- Deutsch, English, Francais, Italiano
 - **SAP Horizon Design** -- identischer Fiori-Look in Desktop und Web, helles und dunkles Farbschema
 - **Tastenkuerzel** -- komplett per Tastatur bedienbar, in der Web-App frei belegbar
-- **Plattformuebergreifend** -- macOS (.app), Windows (.exe), Linux, Docker
+- **Plattformuebergreifend** -- macOS (.app), Windows (.exe), Docker
 - **Materialbedarf** -- wenn der Lagerbestand nicht reicht, wird eine Einkaufsliste angezeigt; per Klick direkt ins Lager uebernehmen
 - **REST-API** -- vollstaendige API fuer externen Zugriff (Automatisierung, Skripte, Integrationen); optional per API-Key (Bearer-Token) geschuetzt
 - **iCloud-Sync** -- Desktop-Datenbank und Einstellungen synchronisieren automatisch zwischen Macs
@@ -268,12 +268,14 @@ Fertige Binaries fuer macOS und Windows gibt es auf der [Releases-Seite](https:/
 > - **Windows**: "Weitere Informationen" klicken, dann "Trotzdem ausfuehren" (SmartScreen)
 >
 > Das ist bei Open-Source-Software normal. Der Quellcode ist vollstaendig einsehbar.
+>
+> Die Desktop-App oeffnet den Standard-Browser -- keine zusaetzlichen Laufzeitumgebungen noetig.
 
 ## Installation (aus dem Quellcode)
 
 ### Desktop
 
-Voraussetzungen: Python 3.12+, macOS/Windows/Linux
+Voraussetzungen: Python 3.12+, macOS/Windows
 
 ```bash
 git clone https://github.com/orohde/CutStock.git
@@ -310,23 +312,29 @@ CUTSTOCK_DB=./data/cutstock.db uvicorn web.app:app --host 0.0.0.0 --port 8000
 Auf macOS synchronisieren Desktop-Datenbank und Einstellungen automatisch ueber iCloud Drive zwischen Macs. Ein Heartbeat-basierter Lock-Mechanismus verhindert gleichzeitigen Zugriff.
 
 Desktop-App und Web-App teilen sich exakt dieselbe Oberflaeche: Der Desktop-Build
-startet dasselbe FastAPI-Backend lokal und zeigt es in einem nativen Fenster ueber
-[pywebview](https://pywebview.flowrl.com/) (WKWebView auf macOS, WebView2 auf
-Windows, WebKitGTK auf Linux). Eine UI-Codebasis, zwei Betriebsarten.
+startet dasselbe FastAPI-Backend lokal und oeffnet es im Standard-Browser.
+Es gibt kein separates "App-Fenster" -- was man auf macOS, Windows und Docker
+sieht, ist dieselbe Web-UI. Eine Codebasis, ueberall identisch.
 
-> **Voraussetzungen Desktop**
-> - **macOS**: nichts weiter -- WKWebView ist eingebaut.
-> - **Windows**: benoetigt die WebView2-Runtime (auf Windows 11 vorinstalliert;
->   auf Windows 10 meist ueber Edge vorhanden, sonst Microsofts kostenlose
->   Evergreen-Runtime installieren).
-> - **Linux**: benoetigt WebKitGTK (`webkit2gtk`, Paketname je nach Distribution).
->   Auf Servern/NAS ist die Docker-Web-App meist die bessere Wahl.
+> **So funktioniert es**
+>
+> Beim Start von CutStock wird ein lokaler Webserver im Hintergrund gestartet
+> und der Browser oeffnet sich automatisch unter `http://127.0.0.1:<Port>/`.
+> Die App laeuft, bis man sie beendet:
+>
+> - **macOS**: CutStock ueber das Dock beenden (Rechtsklick -> Beenden) oder Cmd+Q
+> - **Windows**: CutStock ueber den Task-Manager oder das System-Tray beenden
+>
+> Das Schliessen des Browser-Tabs stoppt den Server **nicht** -- man kann den
+> Tab jederzeit wieder oeffnen oder die URL erneut aufrufen. Um CutStock
+> vollstaendig zu stoppen, muss die App selbst beendet werden.
+>
+> Keine zusaetzlichen Laufzeitumgebungen oder Browser-Plugins erforderlich.
 
 ## Tech-Stack
 
 - **Python 3.12+** -- Anwendungslogik
 - **FastAPI + Uvicorn** -- Backend (Desktop lokal, Docker als Server)
-- **pywebview** -- natives Desktop-Fenster um die Web-UI
 - **SAP Fundamental Styles / Horizon Theme** -- Designsystem der UI (gebuendelt, Apache-2.0)
 - **SQLite** -- lokale Datenbank (kein Server noetig)
 - **reportlab** -- PDF-Erzeugung
@@ -352,7 +360,7 @@ CutStock/
     i18n.py                -- Uebersetzungen (DE/EN/FR/IT), auch vom Backend genutzt
   tests/
     test_optimize.py       -- Algorithmus-Tests
-  desktop.py               -- Desktop-Einstiegspunkt (pywebview + lokales FastAPI)
+  desktop.py               -- Desktop-Einstiegspunkt (lokales FastAPI + Browser)
   desktop.spec             -- PyInstaller-Spec (macOS)
   desktop_win.spec         -- PyInstaller-Spec (Windows)
   Dockerfile               -- Container-Image der Web-App
