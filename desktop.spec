@@ -1,15 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller-Spec für die CutStock Desktop-App (macOS, pywebview)."""
+"""PyInstaller-Spec für die CutStock Desktop-App (macOS)."""
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+from PyInstaller.utils.hooks import collect_submodules
 
 VERSION = (Path(SPECPATH) / "VERSION").read_text().strip()
 
 hiddenimports = (
     collect_submodules("uvicorn")
-    + collect_submodules("webview")
     + [
         "core", "core.db", "core.models", "core.optimize", "core.pdf",
         "core.lock", "core.settings",
@@ -24,7 +23,6 @@ datas = [
     ("assets/icon.jpg", "assets"),
     ("VERSION", "."),
 ]
-datas += collect_data_files("webview")
 
 a = Analysis(
     ["desktop.py"],
@@ -35,7 +33,8 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["PySide6", "PyQt5", "PyQt6", "tkinter", "matplotlib", "numpy", "scipy"],
+    excludes=["PySide6", "PyQt5", "PyQt6", "tkinter", "matplotlib", "numpy", "scipy",
+              "pywebview", "webview", "pythonnet", "clr", "clr_loader"],
     noarchive=False,
 )
 

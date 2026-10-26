@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""CutStock Desktop – lokaler FastAPI-Server in einem nativen Fenster (pywebview).
+"""CutStock Desktop – lokaler FastAPI-Server, Oberfläche im Standard-Browser.
 
-Ersetzt die frühere PySide6/Qt-Oberfläche. Es läuft dieselbe Web-Oberfläche
-wie im Docker-Container, nur in einem eigenen Fenster:
+Die Web-Oberfläche läuft identisch wie im Docker-Container, nur lokal:
 
 * der FastAPI-Server läuft lokal auf 127.0.0.1 auf einem freien Port,
+* die Oberfläche öffnet sich automatisch im Standard-Browser,
 * die Daten liegen wie bisher lokal (SQLite); auf macOS im iCloud-Ordner,
 * ein Heartbeat-Lock verhindert gleichzeitiges Bearbeiten von zwei Macs.
 """
@@ -12,10 +12,12 @@ wie im Docker-Container, nur in einem eigenen Fenster:
 from __future__ import annotations
 
 import os
+import signal
 import socket
 import sys
 import threading
 import time
+import webbrowser
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -74,13 +76,12 @@ def _lock_worker(stop_event: threading.Event, on_remote_takeover) -> None:
             print(f"CutStock ist geöffnet auf: {lock.lock_owner_info()} – übernehme.",
                   file=sys.stderr)
             lock.request_remote_shutdown()
-            time.sleep(2)  # kurz warten, damit das Signal über iCloud sichtbar wird
+            time.sleep(2)
         lock.acquire()
 
         while not stop_event.wait(10):
             lock.heartbeat()
             if lock.is_shutdown_requested():
-                # Eine andere Maschine hat übernommen -> Fenster schließen
                 on_remote_takeover()
                 break
     finally:
@@ -104,7 +105,6 @@ def main() -> None:
         host = "127.0.0.1"
 
     # PyInstaller auf Windows setzt sys.stderr/stdout auf None (kein Konsolenfenster).
-    # Uvicorns DefaultFormatter ruft sys.stderr.isatty() auf und stürzt ab.
     if sys.stderr is None:
         sys.stderr = open(os.devnull, "w")
     if sys.stdout is None:
@@ -122,45 +122,28 @@ def main() -> None:
         print("CutStock: Server konnte nicht gestartet werden.", file=sys.stderr)
         sys.exit(1)
 
-    import webbrowser
-
-    import webview
-
-    class JsApi:
-        """Wird der Web-Oberfläche als window.pywebview.api bereitgestellt."""
-
-        def open_external(self, url: str) -> bool:
-            # Externe Links im System-Browser öffnen, nicht im App-Fenster
-            if isinstance(url, str) and url.startswith(("http://", "https://")):
-                webbrowser.open(url)
-            return True
-
-    window = webview.create_window(
-        "CutStock",
-        f"http://127.0.0.1:{port}/",
-        width=1200,
-        height=820,
-        min_size=(900, 600),
-        js_api=JsApi(),
-    )
+    webbrowser.open(f"http://127.0.0.1:{port}/")
 
     stop_event = threading.Event()
 
     def on_remote_takeover() -> None:
-        try:
-            window.destroy()
-        except Exception:
-            pass
+        stop_event.set()
 
     lock_thread = threading.Thread(
         target=_lock_worker, args=(stop_event, on_remote_takeover), daemon=True)
     lock_thread.start()
 
-    try:
-        gui_backend = "edgechromium" if sys.platform == "win32" else None
-        webview.start(gui=gui_backend)
-    finally:
+    # SIGTERM (macOS Dock-Quit, systemd stop) sauber abfangen
+    def _handle_term(signum, frame):
         stop_event.set()
+
+    signal.signal(signal.SIGTERM, _handle_term)
+
+    try:
+        stop_event.wait()
+    except KeyboardInterrupt:
+        pass
+    finally:
         server.should_exit = True
 
 

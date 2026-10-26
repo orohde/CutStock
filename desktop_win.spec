@@ -1,29 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller-Spec für die CutStock Desktop-App (Windows, pywebview/WebView2)."""
+"""PyInstaller-Spec für die CutStock Desktop-App (Windows)."""
 
-import os
-import sys
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
-
-# Python-DLLs explizit einbinden (pywebview/EdgeChromium braucht python3XX.dll)
-_binaries = []
-if sys.platform == "win32":
-    for _dll in [f"python{sys.version_info.major}{sys.version_info.minor}.dll", "python3.dll"]:
-        _path = os.path.join(sys.prefix, _dll)
-        if os.path.exists(_path):
-            _binaries.append((_path, "."))
+from PyInstaller.utils.hooks import collect_submodules
 
 hiddenimports = (
     collect_submodules("uvicorn")
-    + collect_submodules("webview")
-    + collect_submodules("pythonnet")
-    + collect_submodules("clr_loader")
     + [
         "core", "core.db", "core.models", "core.optimize", "core.pdf",
         "core.lock", "core.settings",
         "web", "web.app", "ui", "ui.i18n",
         "anyio", "click", "h11", "httptools", "websockets",
-        "reportlab", "clr",
+        "reportlab",
     ]
 )
 
@@ -32,20 +19,18 @@ datas = [
     ("assets/icon.jpg", "assets"),
     ("VERSION", "."),
 ]
-datas += collect_data_files("webview")
-datas += collect_data_files("clr_loader")
-datas += collect_data_files("pythonnet")
 
 a = Analysis(
     ["desktop.py"],
     pathex=[],
-    binaries=_binaries,
+    binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=["rthook_pythonnet.py"],
-    excludes=["PySide6", "PyQt5", "PyQt6", "tkinter", "matplotlib", "numpy", "scipy"],
+    runtime_hooks=[],
+    excludes=["PySide6", "PyQt5", "PyQt6", "tkinter", "matplotlib", "numpy", "scipy",
+              "pywebview", "webview", "pythonnet", "clr", "clr_loader"],
     noarchive=False,
 )
 

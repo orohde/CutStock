@@ -1,5 +1,4 @@
-# CutStock Desktop-App (pywebview) + lokaler FastAPI-Server
-pywebview>=5.0
+# CutStock Desktop-App + lokaler FastAPI-Server
 fastapi>=0.111
 uvicorn[standard]>=0.30
 python-multipart>=0.0.9

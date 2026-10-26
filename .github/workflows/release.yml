@@ -48,7 +48,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
 
-      - name: Build Windows exe
+      - name: Build Windows app
         run: pyinstaller desktop_win.spec --noconfirm
 
       - name: Create ZIP
@@ -94,9 +94,7 @@ jobs:
 
             This is normal for open-source software without a paid developer certificate.
 
-            **Windows** additionally needs the WebView2 runtime (preinstalled on
-            Windows 11; on Windows 10 usually present via Edge, otherwise install
-            Microsoft's free Evergreen runtime).
+            The app opens your default browser — no additional runtimes needed.
           files: |
             artifacts/macos-build/*
             artifacts/windows-build/*
