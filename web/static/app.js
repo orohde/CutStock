@@ -2974,6 +2974,7 @@ function initEvents() {
                 await fetchJSON('/api/shutdown', 'POST');
             } catch { /* server already stopping */ }
             document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--sapTextColor)"><h2>${t('app.quit_done')}</h2></div>`;
+            setTimeout(() => window.close(), 1000);
         });
     });
 
