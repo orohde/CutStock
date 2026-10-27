@@ -97,9 +97,11 @@ def optimize_1d(
         vorrat: available bars.
         kerf: saw blade width in mm.
 
-    Strategy: consume short/offcut bars first (sorted ascending, so
-    remnants get used up before fresh full-length bars), place parts
-    longest-first (FFD) into the first bar with enough room.
+    Strategy: Best-Fit-Decreasing – parts sorted longest-first, each
+    part placed on the bar that leaves the SMALLEST remaining rest
+    (tightest fit). This concentrates waste onto fewer bars and keeps
+    large remnants usable. Short/offcut bars are still consumed first
+    when they are the tightest fit.
     """
     einzelteile: list[tuple[str, float]] = []
     for label, laenge, anzahl in teile:
@@ -142,23 +144,30 @@ def optimize_1d(
     fehlend: list[str] = []
 
     for label, teil_laenge in einzelteile:
-        platziert = False
+        best_stange = None
+        best_rest = float('inf')
         for stange in verfuegbar:
             benoetigte_breite = teil_laenge
             if stange["platzierungen"]:
                 benoetigte_breite += kerf
             if stange["rest"] >= benoetigte_breite:
-                pos = stange["laenge"] - stange["rest"]
-                if stange["platzierungen"]:
-                    pos += kerf
-                stange["platzierungen"].append(
-                    Platzierung(teil_label=label, laenge=teil_laenge,
-                                x=pos + stange["_offset"])
-                )
-                stange["rest"] -= benoetigte_breite
-                platziert = True
-                break
-        if not platziert:
+                nach_rest = stange["rest"] - benoetigte_breite
+                if nach_rest < best_rest:
+                    best_rest = nach_rest
+                    best_stange = stange
+        if best_stange is not None:
+            benoetigte_breite = teil_laenge
+            if best_stange["platzierungen"]:
+                benoetigte_breite += kerf
+            pos = best_stange["laenge"] - best_stange["rest"]
+            if best_stange["platzierungen"]:
+                pos += kerf
+            best_stange["platzierungen"].append(
+                Platzierung(teil_label=label, laenge=teil_laenge,
+                            x=pos + best_stange["_offset"])
+            )
+            best_stange["rest"] -= benoetigte_breite
+        else:
             fehlend.append(label)
 
     return _build_1d_result_segments(verfuegbar, fehlend, kerf)
@@ -568,13 +577,20 @@ def optimize_1d_ga(
         genutzt = 0.0
         for idx in perm:
             _, teil_laenge = einzelteile[idx]
+            best_st = None
+            best_rest = float('inf')
             for st in stangen:
                 bed = teil_laenge + (kerf if st["n"] > 0 else 0)
                 if st["rest"] >= bed:
-                    st["rest"] -= bed
-                    st["n"] += 1
-                    genutzt += teil_laenge
-                    break
+                    nach_rest = st["rest"] - bed
+                    if nach_rest < best_rest:
+                        best_rest = nach_rest
+                        best_st = st
+            if best_st is not None:
+                bed = teil_laenge + (kerf if best_st["n"] > 0 else 0)
+                best_st["rest"] -= bed
+                best_st["n"] += 1
+                genutzt += teil_laenge
         return genutzt
 
     def crossover(p1: list[int], p2: list[int]) -> list[int]:
@@ -653,20 +669,25 @@ def optimize_1d_ga(
     fehlend: list[str] = []
     for idx in best:
         label, teil_laenge = einzelteile[idx]
-        placed = False
+        best_st = None
+        best_rest = float('inf')
         for st in verfuegbar:
             bed = teil_laenge + (kerf if st["platzierungen"] else 0)
             if st["rest"] >= bed:
-                pos = st["laenge"] - st["rest"]
-                if st["platzierungen"]:
-                    pos += kerf
-                st["platzierungen"].append(
-                    Platzierung(teil_label=label, laenge=teil_laenge,
-                                x=pos + st["_offset"]))
-                st["rest"] -= bed
-                placed = True
-                break
-        if not placed:
+                nach_rest = st["rest"] - bed
+                if nach_rest < best_rest:
+                    best_rest = nach_rest
+                    best_st = st
+        if best_st is not None:
+            bed = teil_laenge + (kerf if best_st["platzierungen"] else 0)
+            pos = best_st["laenge"] - best_st["rest"]
+            if best_st["platzierungen"]:
+                pos += kerf
+            best_st["platzierungen"].append(
+                Platzierung(teil_label=label, laenge=teil_laenge,
+                            x=pos + best_st["_offset"]))
+            best_st["rest"] -= bed
+        else:
             fehlend.append(label)
 
     return _build_1d_result_segments(verfuegbar, fehlend, kerf)

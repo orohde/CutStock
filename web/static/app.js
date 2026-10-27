@@ -1821,6 +1821,22 @@ function draw1D(ctx, canvasW, canvasH, plan, colorMap, hits) {
             ctx.setLineDash([4, 2]);
             ctx.strokeRect(rx, barY, rw, barH);
             ctx.setLineDash([]);
+
+            const restText = formatDim(restLen);
+            ctx.font = '10px -apple-system, sans-serif';
+            const rTextW = ctx.measureText(restText).width;
+            if (rTextW < rw - 4) {
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.fillText(restText, rx + rw / 2, barY + barH / 2);
+            } else {
+                ctx.textAlign = 'right';
+                ctx.textBaseline = 'bottom';
+                ctx.fillStyle = getComputedStyle(document.documentElement)
+                    .getPropertyValue('--sapContent_LabelColor').trim() || '#6b7280';
+                ctx.fillText(restText, rx + rw, barY - 2);
+            }
         }
     });
 
