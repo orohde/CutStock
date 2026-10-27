@@ -909,6 +909,31 @@ def update_project(pid: int, data: ProjectIn):
     return _projekt_to_out(existing)
 
 
+@app.post("/api/projects/{pid}/clone", response_model=ProjectOut, status_code=201)
+def clone_project(pid: int):
+    db = get_db()
+    existing = db.get_projekt(pid)
+    if not existing:
+        raise HTTPException(404, "Project not found")
+    clone = Projekt(name=f"{existing.name} (Kopie)")
+    clone = db.save_projekt(clone)
+    for t in db.list_teile(pid):
+        ct = Teil(
+            projekt_id=clone.id,
+            label=t.label,
+            typ=t.typ,
+            material_id=t.material_id,
+            laenge=t.laenge,
+            breite=t.breite,
+            stueckzahl=t.stueckzahl,
+            gesaegt_anzahl=0,
+            maserung=t.maserung,
+        )
+        db.save_teil(ct)
+    clone.teile = db.list_teile(clone.id)
+    return _projekt_to_out(clone)
+
+
 @app.delete("/api/projects/{pid}", status_code=204)
 def delete_project(pid: int):
     existing = get_db().get_projekt(pid)

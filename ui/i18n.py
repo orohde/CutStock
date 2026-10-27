@@ -363,7 +363,16 @@ TRANSLATIONS = {
     "hint": {"de": "Hinweis", "en": "Note", "fr": "Note", "it": "Nota"},
     "error": {"de": "Fehler", "en": "Error", "fr": "Erreur", "it": "Errore"},
     "done": {"de": "Erledigt", "en": "Done", "fr": "Terminé", "it": "Fatto"},
-    # ---- Import / Export ----
+    # ---- Clone / Import / Export ----
+    "proj.clone": {
+        "de": "Duplizieren", "en": "Duplicate", "fr": "Dupliquer", "it": "Duplica",
+    },
+    "proj.cloned": {
+        "de": "Projekt dupliziert.",
+        "en": "Project duplicated.",
+        "fr": "Projet dupliqué.",
+        "it": "Progetto duplicato.",
+    },
     "proj.export": {
         "de": "Export", "en": "Export", "fr": "Exporter", "it": "Esporta",
     },

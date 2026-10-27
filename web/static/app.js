@@ -177,6 +177,7 @@ const Api = {
     getProject: (id) => fetchJSON(`/api/projects/${id}`),
     createProject: (data) => fetchJSON('/api/projects', 'POST', data),
     updateProject: (id, data) => fetchJSON(`/api/projects/${id}`, 'PUT', data),
+    cloneProject: (id) => fetchJSON(`/api/projects/${id}/clone`, 'POST'),
     deleteProject: (id) => fetchJSON(`/api/projects/${id}`, 'DELETE'),
 
     getParts: (projectId) => fetchJSON(`/api/projects/${projectId}/parts`),
@@ -2997,6 +2998,18 @@ function initEvents() {
                 renderOptDropdowns();
             } catch { /* handled */ }
         });
+    });
+
+    document.getElementById('btn-proj-clone')?.addEventListener('click', async () => {
+        const proj = State.projects.find(p => p.id === State.selectedProjectId);
+        if (!proj) { showToast(t('dlg.select_project'), 'error'); return; }
+        try {
+            const cloned = await Api.cloneProject(proj.id);
+            State.selectedProjectId = cloned.id;
+            await renderProjects();
+            renderOptDropdowns();
+            showToast(t('proj.cloned'), 'success');
+        } catch { /* handled */ }
     });
 
     // ----- Projekt Export / Import (JSON, kompatibel mit Desktop-App) -----
