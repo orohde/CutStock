@@ -178,6 +178,7 @@ const Api = {
     createProject: (data) => fetchJSON('/api/projects', 'POST', data),
     updateProject: (id, data) => fetchJSON(`/api/projects/${id}`, 'PUT', data),
     cloneProject: (id) => fetchJSON(`/api/projects/${id}/clone`, 'POST'),
+    copyPartsToProject: (targetId, partIds) => fetchJSON(`/api/projects/${targetId}/copy-parts`, 'POST', { part_ids: partIds }),
     deleteProject: (id) => fetchJSON(`/api/projects/${id}`, 'DELETE'),
 
     getParts: (projectId) => fetchJSON(`/api/projects/${projectId}/parts`),
@@ -2834,6 +2835,68 @@ function openConfirmDialog(message, onConfirm) {
     };
 }
 
+function openCopyPartsDialog() {
+    const overlay = document.getElementById('modal-overlay');
+    const titleEl = document.getElementById('modal-title');
+    const body = document.getElementById('modal-body');
+    const saveBtn = document.getElementById('modal-save');
+
+    const selectedPart = State.parts.find(p => p.id === State.selectedPartId);
+    const targets = State.projects.filter(p => p.id !== State.selectedProjectId);
+
+    if (targets.length === 0) {
+        showToast(t('part.no_target'), 'error');
+        return;
+    }
+
+    titleEl.textContent = t('part.copy_to');
+    const optionsHtml = targets.map(p => `<option value="${p.id}">${escHtml(p.name)}</option>`).join('');
+    body.innerHTML = `
+        <div style="display:flex;flex-direction:column;gap:12px;padding:8px 0">
+            <div>
+                <label class="fd-form-label">${t('part.copy_mode')}</label>
+                <select id="copy-mode" class="fd-select" style="width:100%">
+                    <option value="selected">${t('part.copy_selected')}</option>
+                    <option value="all">${t('part.copy_all')}</option>
+                </select>
+            </div>
+            <div>
+                <label class="fd-form-label">${t('part.target_project')}</label>
+                <select id="copy-target" class="fd-select" style="width:100%">${optionsHtml}</select>
+            </div>
+        </div>`;
+
+    const modeSelect = body.querySelector('#copy-mode');
+    if (!selectedPart) modeSelect.value = 'all';
+
+    saveBtn.style.display = '';
+    saveBtn.textContent = t('part.copy_btn');
+    overlay.classList.remove('hidden');
+    overlay.classList.add('active');
+
+    saveBtn.onclick = async () => {
+        const targetId = parseInt(body.querySelector('#copy-target').value);
+        const mode = body.querySelector('#copy-mode').value;
+        const ids = mode === 'all'
+            ? State.parts.map(p => p.id)
+            : [State.selectedPartId];
+        closeModal();
+        saveBtn.textContent = t('btn.save');
+        try {
+            await Api.copyPartsToProject(targetId, ids);
+            showToast(t('part.copied'), 'success');
+        } catch { /* handled */ }
+    };
+
+    const cancelBtn = document.getElementById('modal-cancel');
+    const origCancel = cancelBtn.onclick;
+    cancelBtn.onclick = () => {
+        closeModal();
+        saveBtn.textContent = t('btn.save');
+        if (origCancel) cancelBtn.onclick = origCancel;
+    };
+}
+
 // ===========================================================================
 // 9. EVENT HANDLERS
 // ===========================================================================
@@ -3025,6 +3088,13 @@ function initEvents() {
 
     // ----- Trapez-Helfer -----
     document.getElementById('btn-part-trapez')?.addEventListener('click', () => openTrapezoidHelper());
+
+    // ----- Teile kopieren -----
+    document.getElementById('btn-part-copy')?.addEventListener('click', () => {
+        if (!State.selectedProjectId) { showToast(t('dlg.select_project'), 'error'); return; }
+        if (State.parts.length === 0) { showToast(t('parts.empty'), 'error'); return; }
+        openCopyPartsDialog();
+    });
 
     // ----- Teile-CSV-Import -----
     document.getElementById('btn-part-csv')?.addEventListener('click', () => {

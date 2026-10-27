@@ -164,6 +164,39 @@ TRANSLATIONS = {
         "fr": "Transversal (∥ largeur pièce)",
         "it": "Trasversale (∥ larghezza pezzo)",
     },
+    "part.copy_to": {
+        "de": "Kopieren nach…", "en": "Copy to…",
+        "fr": "Copier vers…", "it": "Copia in…",
+    },
+    "part.copy_mode": {
+        "de": "Was kopieren?", "en": "What to copy?",
+        "fr": "Que copier ?", "it": "Cosa copiare?",
+    },
+    "part.copy_selected": {
+        "de": "Ausgewähltes Teil", "en": "Selected part",
+        "fr": "Pièce sélectionnée", "it": "Pezzo selezionato",
+    },
+    "part.copy_all": {
+        "de": "Alle Teile", "en": "All parts",
+        "fr": "Toutes les pièces", "it": "Tutti i pezzi",
+    },
+    "part.target_project": {
+        "de": "Zielprojekt", "en": "Target project",
+        "fr": "Projet cible", "it": "Progetto destinazione",
+    },
+    "part.copy_btn": {
+        "de": "Kopieren", "en": "Copy", "fr": "Copier", "it": "Copia",
+    },
+    "part.copied": {
+        "de": "Teile kopiert.", "en": "Parts copied.",
+        "fr": "Pièces copiées.", "it": "Pezzi copiati.",
+    },
+    "part.no_target": {
+        "de": "Kein anderes Projekt vorhanden.",
+        "en": "No other project available.",
+        "fr": "Aucun autre projet disponible.",
+        "it": "Nessun altro progetto disponibile.",
+    },
     # ---- Sägeblätter / Saw Blades ----
     "blade.title": {
         "de": "Sägeblätter", "en": "Saw Blades", "fr": "Lames de scie",

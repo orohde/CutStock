@@ -313,6 +313,10 @@ class OptimizeResult(BaseModel):
     materialbedarf: list[MaterialBedarfOut] = []
 
 
+class CopyPartsRequest(BaseModel):
+    part_ids: list[int]
+
+
 class ConfirmRequest(BaseModel):
     project_id: int
     material_id: int
@@ -932,6 +936,33 @@ def clone_project(pid: int):
         db.save_teil(ct)
     clone.teile = db.list_teile(clone.id)
     return _projekt_to_out(clone)
+
+
+@app.post("/api/projects/{pid}/copy-parts", response_model=list[PartOut], status_code=201)
+def copy_parts_to_project(pid: int, data: CopyPartsRequest):
+    db = get_db()
+    target = db.get_projekt(pid)
+    if not target:
+        raise HTTPException(404, "Target project not found")
+    copied = []
+    for tid in data.part_ids:
+        rows = db.conn.execute("SELECT * FROM teil WHERE id=?", (tid,)).fetchone()
+        if not rows:
+            continue
+        ct = Teil(
+            projekt_id=pid,
+            label=rows["label"],
+            typ=MaterialTyp(rows["typ"]),
+            material_id=rows["material_id"],
+            laenge=rows["laenge"],
+            breite=rows["breite"],
+            stueckzahl=rows["stueckzahl"],
+            gesaegt_anzahl=0,
+            maserung=Maserung(rows["maserung"]),
+        )
+        ct = db.save_teil(ct)
+        copied.append(_teil_to_out(ct))
+    return copied
 
 
 @app.delete("/api/projects/{pid}", status_code=204)
