@@ -16,6 +16,7 @@
       <span class="fd-shellbar__title" data-i18n="app.title">CutStock</span>
     </div>
     <div class="fd-shellbar__group fd-shellbar__group--actions">
+      <span id="footer-license-badge" class="footer-license license-community">Community (CC BY-NC-SA 4.0)</span>
       <button id="theme-toggle" class="fd-button fd-shellbar__button" type="button" aria-label="Toggle theme">&#9790;</button>
     </div>
   </header>
@@ -263,6 +264,37 @@
           <button id="btn-backup-create" class="fd-button fd-button--emphasized" type="button" data-i18n="set.backup_create">Backup erstellen</button>
           <button id="btn-backup-restore" class="fd-button" type="button" data-i18n="set.backup_restore">Backup wiederherstellen</button>
           <input id="backup-restore-file" type="file" accept="application/zip,.zip" style="display:none">
+        </div>
+      </div>
+
+      <div class="panel settings-section license-section">
+        <h3 class="fd-title fd-title--h5" data-i18n="lic.title">Lizenz</h3>
+        <div id="license-info">
+          <div class="form-group">
+            <label class="fd-form-label" data-i18n="lic.type">Lizenztyp:</label>
+            <span id="license-type" class="read-only">—</span>
+          </div>
+          <div class="form-group license-detail" style="display:none">
+            <label class="fd-form-label" data-i18n="lic.holder">Lizenziert für:</label>
+            <span id="license-holder" class="read-only"></span>
+          </div>
+          <div class="form-group license-detail" style="display:none">
+            <label class="fd-form-label" data-i18n="lic.expires">Gültig bis:</label>
+            <span id="license-expires" class="read-only"></span>
+          </div>
+          <p id="license-note" class="license-note" data-i18n="lic.note_community"></p>
+        </div>
+        <div class="form-group" style="margin-top:8px">
+          <label class="fd-form-label" for="license-key-input" data-i18n="lic.key_label">Lizenzschlüssel:</label>
+          <div style="display:flex;gap:8px;align-items:flex-start">
+            <textarea id="license-key-input" class="cs-input" rows="3"
+              style="flex:1;font-family:monospace;font-size:12px;resize:vertical"
+              data-i18n-placeholder="lic.key_placeholder" placeholder="Lizenzschlüssel hier einfügen…"></textarea>
+          </div>
+          <div class="toolbar" style="margin-top:8px">
+            <button id="btn-license-activate" class="fd-button fd-button--emphasized" type="button" data-i18n="lic.activate">Aktivieren</button>
+            <button id="btn-license-remove" class="fd-button fd-button--negative" type="button" data-i18n="lic.remove" style="display:none">Entfernen</button>
+          </div>
         </div>
       </div>
 

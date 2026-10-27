@@ -703,6 +703,70 @@ TRANSLATIONS = {
         "fr": "CC BY-NC-SA 4.0 — gratuit pour un usage privé et non commercial. Pour un usage professionnel, une licence commerciale est disponible sur demande (contact via la page du projet).",
         "it": "CC BY-NC-SA 4.0 — gratuito per uso privato e non commerciale. Per l'uso in azienda è disponibile una licenza commerciale su richiesta (contatto tramite la pagina del progetto).",
     },
+    "lic.title": {
+        "de": "Lizenz", "en": "License", "fr": "Licence", "it": "Licenza",
+    },
+    "lic.type": {
+        "de": "Lizenztyp:", "en": "License type:", "fr": "Type de licence:", "it": "Tipo di licenza:",
+    },
+    "lic.community": {
+        "de": "Community (nicht-kommerziell)", "en": "Community (non-commercial)",
+        "fr": "Communauté (non commercial)", "it": "Community (non commerciale)",
+    },
+    "lic.commercial": {
+        "de": "Kommerzielle Lizenz", "en": "Commercial License",
+        "fr": "Licence commerciale", "it": "Licenza commerciale",
+    },
+    "lic.holder": {
+        "de": "Lizenziert für:", "en": "Licensed to:", "fr": "Licencié à:", "it": "Licenza per:",
+    },
+    "lic.issued": {
+        "de": "Ausgestellt:", "en": "Issued:", "fr": "Émis le:", "it": "Emesso:",
+    },
+    "lic.expires": {
+        "de": "Gültig bis:", "en": "Valid until:", "fr": "Valide jusqu'au:", "it": "Valido fino al:",
+    },
+    "lic.unlimited": {
+        "de": "Unbefristet", "en": "Unlimited", "fr": "Illimité", "it": "Illimitato",
+    },
+    "lic.expired": {
+        "de": "Abgelaufen", "en": "Expired", "fr": "Expiré", "it": "Scaduta",
+    },
+    "lic.key_label": {
+        "de": "Lizenzschlüssel:", "en": "License key:", "fr": "Clé de licence:", "it": "Chiave di licenza:",
+    },
+    "lic.key_placeholder": {
+        "de": "Lizenzschlüssel hier einfügen…", "en": "Paste license key here…",
+        "fr": "Collez la clé de licence ici…", "it": "Incolla la chiave di licenza qui…",
+    },
+    "lic.activate": {
+        "de": "Aktivieren", "en": "Activate", "fr": "Activer", "it": "Attiva",
+    },
+    "lic.remove": {
+        "de": "Entfernen", "en": "Remove", "fr": "Supprimer", "it": "Rimuovi",
+    },
+    "lic.activated": {
+        "de": "Lizenz erfolgreich aktiviert.", "en": "License activated successfully.",
+        "fr": "Licence activée avec succès.", "it": "Licenza attivata con successo.",
+    },
+    "lic.removed": {
+        "de": "Lizenz entfernt.", "en": "License removed.",
+        "fr": "Licence supprimée.", "it": "Licenza rimossa.",
+    },
+    "lic.invalid": {
+        "de": "Ungültiger Lizenzschlüssel.", "en": "Invalid license key.",
+        "fr": "Clé de licence invalide.", "it": "Chiave di licenza non valida.",
+    },
+    "lic.error_expired": {
+        "de": "Diese Lizenz ist abgelaufen.", "en": "This license has expired.",
+        "fr": "Cette licence a expiré.", "it": "Questa licenza è scaduta.",
+    },
+    "lic.note_community": {
+        "de": "Kostenlos für den privaten, nicht-kommerziellen Einsatz. Für den Einsatz im Betrieb ist eine kommerzielle Lizenz auf Anfrage erhältlich.",
+        "en": "Free for private, non-commercial use. For business use, a commercial license is available on request.",
+        "fr": "Gratuit pour un usage privé et non commercial. Pour un usage professionnel, une licence commerciale est disponible sur demande.",
+        "it": "Gratuito per uso privato e non commerciale. Per l'uso in azienda è disponibile una licenza commerciale su richiesta.",
+    },
     "csv.invalid": {
         "de": "CSV konnte nicht gelesen werden.", "en": "Could not read the CSV file.",
         "fr": "Impossible de lire le fichier CSV.", "it": "Impossibile leggere il file CSV.",

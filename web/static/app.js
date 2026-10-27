@@ -234,6 +234,7 @@ const Api = {
     updateSettings: (data) => fetchJSON('/api/settings', 'PUT', data),
     getTranslations: (lang) => fetchJSON(`/api/i18n/${lang}`),
     getVersion: () => fetchJSON('/api/version'),
+    getLicense: () => fetchJSON('/api/license'),
 
     async downloadBackup() {
         const resp = await fetch(API_BASE + '/api/backup');
@@ -897,6 +898,100 @@ function renderSettings() {
             .then(v => { vEl.textContent = v.version; State.versionInfo = v; })
             .catch(() => { vEl.textContent = '—'; });
     }
+}
+
+// ---------------------------------------------------------------------------
+// License
+// ---------------------------------------------------------------------------
+
+async function renderLicense() {
+    const typeEl = document.getElementById('license-type');
+    const holderEl = document.getElementById('license-holder');
+    const expiresEl = document.getElementById('license-expires');
+    const noteEl = document.getElementById('license-note');
+    const keyInput = document.getElementById('license-key-input');
+    const removeBtn = document.getElementById('btn-license-remove');
+    if (!typeEl) return;
+
+    try {
+        const lic = await Api.getLicense();
+        State.licenseInfo = lic;
+
+        if (lic.valid && lic.type === 'commercial') {
+            typeEl.textContent = t('lic.commercial');
+            typeEl.className = 'read-only license-badge license-commercial';
+            holderEl.textContent = lic.holder || '—';
+            expiresEl.textContent = lic.expires || t('lic.unlimited');
+            document.querySelectorAll('.license-detail').forEach(el => el.style.display = '');
+            noteEl.style.display = 'none';
+            if (keyInput) keyInput.value = State.settings.license_key || '';
+            if (removeBtn) removeBtn.style.display = '';
+        } else if (lic.type === 'expired') {
+            typeEl.textContent = t('lic.expired');
+            typeEl.className = 'read-only license-badge license-expired';
+            holderEl.textContent = lic.holder || '—';
+            expiresEl.textContent = lic.expires || '';
+            document.querySelectorAll('.license-detail').forEach(el => el.style.display = '');
+            noteEl.textContent = t('lic.error_expired');
+            noteEl.style.display = '';
+            if (keyInput) keyInput.value = State.settings.license_key || '';
+            if (removeBtn) removeBtn.style.display = '';
+        } else {
+            typeEl.textContent = t('lic.community');
+            typeEl.className = 'read-only license-badge license-community';
+            document.querySelectorAll('.license-detail').forEach(el => el.style.display = 'none');
+            noteEl.textContent = t('lic.note_community');
+            noteEl.style.display = '';
+            if (keyInput) keyInput.value = '';
+            if (removeBtn) removeBtn.style.display = 'none';
+        }
+    } catch {
+        typeEl.textContent = t('lic.community');
+        typeEl.className = 'read-only license-badge license-community';
+    }
+
+    updateLicenseFooter();
+}
+
+function updateLicenseFooter() {
+    const badge = document.getElementById('footer-license-badge');
+    if (!badge) return;
+    const lic = State.licenseInfo;
+    if (lic?.valid && lic.type === 'commercial') {
+        badge.textContent = lic.holder;
+        badge.className = 'footer-license license-commercial';
+    } else {
+        badge.textContent = 'Community (CC BY-NC-SA 4.0)';
+        badge.className = 'footer-license license-community';
+    }
+}
+
+async function activateLicense() {
+    const keyInput = document.getElementById('license-key-input');
+    const key = keyInput?.value?.trim();
+    if (!key) return;
+
+    await Api.updateSettings({ license_key: key });
+    State.settings.license_key = key;
+
+    const lic = await Api.getLicense();
+    if (lic.valid) {
+        showToast(t('lic.activated'), 'info');
+    } else if (lic.error === 'expired') {
+        showToast(t('lic.error_expired'), 'error');
+    } else {
+        showToast(t('lic.invalid'), 'error');
+    }
+    await renderLicense();
+}
+
+async function removeLicense() {
+    await Api.updateSettings({ license_key: '' });
+    State.settings.license_key = '';
+    const keyInput = document.getElementById('license-key-input');
+    if (keyInput) keyInput.value = '';
+    showToast(t('lic.removed'), 'info');
+    await renderLicense();
 }
 
 // Breite/Höhe-Felder nur beim benutzerdefinierten Etikettenformat zeigen
@@ -2821,7 +2916,7 @@ function initEvents() {
             if (tabId === 'material') { renderMaterials(); }
             else if (tabId === 'projects') { renderProjects(); }
             else if (tabId === 'optimization') { renderOptDropdowns(); }
-            else if (tabId === 'settings') { renderSettings(); renderBlades(); }
+            else if (tabId === 'settings') { renderSettings(); renderBlades(); renderLicense(); }
         });
     });
 
@@ -3175,6 +3270,10 @@ function initEvents() {
         else if (e.key === 'ArrowRight') { sawPlanIdx++; renderSawMode(); }
     });
 
+    // ----- Lizenz -----
+    document.getElementById('btn-license-activate')?.addEventListener('click', () => activateLicense());
+    document.getElementById('btn-license-remove')?.addEventListener('click', () => removeLicense());
+
     // ----- Update-Prüfung -----
     document.getElementById('btn-check-update')?.addEventListener('click', () => checkForUpdate());
 
@@ -3444,6 +3543,7 @@ async function init() {
         renderMaterials();
         renderSettings();
         renderBlades();
+        renderLicense();
         renderProjects();
         renderOptDropdowns();
     } catch (e) {

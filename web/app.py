@@ -368,6 +368,7 @@ class SettingsIn(BaseModel):
     api_enabled: Optional[bool] = None
     api_port: Optional[int] = None
     api_key: Optional[str] = None
+    license_key: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -618,6 +619,7 @@ def _get_settings_dict() -> dict:
         "api_enabled": s.value("api/enabled", False),
         "api_port": s.value("api/port", 8421),
         "api_key": s.value("api/key", ""),
+        "license_key": s.value("license/key", ""),
     }
 
 
@@ -646,6 +648,8 @@ def _update_settings(data: SettingsIn):
         s.setValue("api/port", data.api_port)
     if data.api_key is not None:
         s.setValue("api/key", data.api_key)
+    if data.license_key is not None:
+        s.setValue("license/key", data.license_key)
 
 
 # ===========================================================================
@@ -1226,6 +1230,21 @@ def get_settings():
 def update_settings(data: SettingsIn):
     _update_settings(data)
     return _get_settings_dict()
+
+
+@app.get("/api/license")
+def get_license():
+    from core.license import get_license_info
+    settings_path = DB_PATH.parent / "settings.json"
+    info = get_license_info(settings_path)
+    return {
+        "valid": info.valid,
+        "type": info.license_type,
+        "holder": info.holder,
+        "issued": info.issued,
+        "expires": info.expires,
+        "error": info.error,
+    }
 
 
 # ---------------------------------------------------------------------------
