@@ -12,6 +12,21 @@ TRANSLATIONS = {
         "fr": "CutStock – Optimisation de coupe",
         "it": "CutStock – Ottimizzazione del taglio",
     },
+    "app.quit": {
+        "de": "Beenden", "en": "Quit", "fr": "Quitter", "it": "Esci",
+    },
+    "app.quit_confirm": {
+        "de": "CutStock wirklich beenden?",
+        "en": "Really quit CutStock?",
+        "fr": "Vraiment quitter CutStock ?",
+        "it": "Chiudere davvero CutStock?",
+    },
+    "app.quit_done": {
+        "de": "CutStock wurde beendet.",
+        "en": "CutStock has been shut down.",
+        "fr": "CutStock a été arrêté.",
+        "it": "CutStock è stato chiuso.",
+    },
     # ---- Tabs ----
     "tab.material_stock": {
         "de": "Material && Lager",

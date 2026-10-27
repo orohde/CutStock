@@ -2967,6 +2967,16 @@ function setupSplitters() {
 function initEvents() {
     setupSplitters();
 
+    // ----- Quit (Desktop only) -----
+    document.getElementById('btn-quit')?.addEventListener('click', () => {
+        openConfirmDialog(t('app.quit_confirm'), async () => {
+            try {
+                await fetchJSON('/api/shutdown', 'POST');
+            } catch { /* server already stopping */ }
+            document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--sapTextColor)"><h2>${t('app.quit_done')}</h2></div>`;
+        });
+    });
+
     // ----- Tab switching -----
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -3621,6 +3631,11 @@ async function init() {
         State.materials = await Api.getMaterials();
         State.blades = await Api.getBlades();
         State.projects = await Api.getProjects();
+
+        try {
+            const deskResp = await fetchJSON('/api/is-desktop');
+            if (deskResp.desktop) document.getElementById('btn-quit').style.display = '';
+        } catch { /* not available — hide button */ }
 
         initEvents();
         renderMaterials();

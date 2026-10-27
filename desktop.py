@@ -26,6 +26,7 @@ from core.db import DEFAULT_DB, Database, seed_data
 
 # Datenbank-Pfad für das Backend festlegen, BEVOR web.app importiert wird.
 os.environ.setdefault("CUTSTOCK_DB", str(DEFAULT_DB))
+os.environ["CUTSTOCK_DESKTOP"] = "1"
 # Denselben Pfad für Seed und Lock verwenden wie das Backend.
 DB_PATH = Path(os.environ["CUTSTOCK_DB"])
 

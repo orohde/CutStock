@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import sys
 import tempfile
 from dataclasses import asdict
@@ -86,6 +87,8 @@ _init_db = get_db()
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="CutStock API", version="1.0.0")
+
+IS_DESKTOP = os.environ.get("CUTSTOCK_DESKTOP") == "1"
 
 
 # ---------------------------------------------------------------------------
@@ -1478,6 +1481,27 @@ def seed_database():
         raise HTTPException(400, "Database already contains data")
     seed_data(get_db())
     return {"status": "ok", "message": "Example data created"}
+
+
+# ---------------------------------------------------------------------------
+# Desktop mode: shutdown endpoint
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/is-desktop")
+def is_desktop():
+    return {"desktop": IS_DESKTOP}
+
+
+if IS_DESKTOP:
+    @app.post("/api/shutdown", status_code=202)
+    def shutdown_server():
+        def _exit():
+            import time
+            time.sleep(0.5)
+            os.kill(os.getpid(), signal.SIGTERM)
+        threading.Thread(target=_exit, daemon=True).start()
+        return {"status": "shutting_down"}
 
 
 # ---------------------------------------------------------------------------
