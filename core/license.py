@@ -35,7 +35,7 @@ from typing import Optional
 # Öffentlicher Schlüssel des Lizenz-Herausgebers (32 Bytes, hex).
 # Dieser Schlüssel wird NUR zur Verifikation verwendet.
 # Den zugehörigen privaten Schlüssel erzeugt `generate_keypair()`.
-PUBLIC_KEY_HEX = ""
+PUBLIC_KEY_HEX = "13e1036a086ec1843ee5a6718a5536eb3351ae0a05bff462764f45a8ea351658"
 
 SIG_LENGTH = 64
 
