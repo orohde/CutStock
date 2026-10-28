@@ -2,21 +2,29 @@
 
 Thanks for your interest in improving CutStock!
 
-## Before you start
+## How you can help
 
 - **Bugs and ideas:** open an [issue](https://github.com/orohde/CutStock/issues/new/choose).
+  A precise description, screenshots, or an exported project help a lot.
 - **Questions:** use [Discussions](https://github.com/orohde/CutStock/discussions).
-- **Pull requests:** please open an issue first to discuss what you'd like to
-  change. CutStock is maintained by one person, so small, focused PRs are much
-  easier to review than large ones.
+- **Translations and wording:** suggest corrections in an issue.
 
-English or German is fine for issues and PRs.
+English or German is fine.
+
+## Pull requests
+
+CutStock is offered under a non-commercial license **and** a separate commercial
+license. To keep the licensing clear, **code contributions (pull requests) are
+currently not accepted.** Pull requests will be closed without merging.
+
+If you've found a fix, please describe the problem and the cause in an issue.
+The fix will then be implemented in the main codebase.
 
 **Commercial licensing** is not handled on GitHub. Please use the contact form at
 [worldgate.de/cutstock](https://worldgate.de/en/cutstock-en/) instead of opening
 an issue or discussion.
 
-## Development setup
+## Running from source
 
 Prerequisites: Python 3.12+
 
@@ -28,21 +36,5 @@ cd CutStock
 ./test.sh    # runs the test suite (pytest)
 ```
 
-See the [README](README.md#project-structure) for an overview of the code layout.
-
-## Guidelines
-
-- Keep changes in `core/` GUI-independent -- it is shared by the desktop and web variants.
-- Add or update tests in `tests/` when you change optimization logic.
-- New UI texts need translations in `ui/i18n.py` for all languages (EN/DE/FR/IT).
-  If you can't translate a language, use English and mention it in the PR.
-
-## Adding a language
-
-Add your language code to `LANGUAGES` in `ui/i18n.py` and a translation for
-each key in `TRANSLATIONS`.
-
-## License
-
-CutStock is licensed under [CC BY-NC-SA 4.0](LICENSE). By submitting a
-contribution, you agree that it is published under this license.
+You're welcome to modify CutStock for your own non-commercial use within the
+terms of the [license](LICENSE).

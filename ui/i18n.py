@@ -778,10 +778,10 @@ TRANSLATIONS = {
         "fr": "Matériau (si colonne absente):", "it": "Materiale (se manca la colonna):",
     },
     "set.license_note": {
-        "de": "CC BY-NC-SA 4.0 — kostenlos für den privaten, nicht-kommerziellen Einsatz. Für den Einsatz im Betrieb ist eine kommerzielle Lizenz auf Anfrage erhältlich (Kontakt über die Projektseite).",
-        "en": "CC BY-NC-SA 4.0 — free for private, non-commercial use. For business use, a commercial license is available on request (contact via the project page).",
-        "fr": "CC BY-NC-SA 4.0 — gratuit pour un usage privé et non commercial. Pour un usage professionnel, une licence commerciale est disponible sur demande (contact via la page du projet).",
-        "it": "CC BY-NC-SA 4.0 — gratuito per uso privato e non commerciale. Per l'uso in azienda è disponibile una licenza commerciale su richiesta (contatto tramite la pagina del progetto).",
+        "de": "PolyForm Noncommercial 1.0.0 — kostenlos für den privaten, nicht-kommerziellen Einsatz. Für den Einsatz im Betrieb ist eine kommerzielle Lizenz auf Anfrage erhältlich (Kontakt über die Projektseite).",
+        "en": "PolyForm Noncommercial 1.0.0 — free for private, non-commercial use. For business use, a commercial license is available on request (contact via the project page).",
+        "fr": "PolyForm Noncommercial 1.0.0 — gratuit pour un usage privé et non commercial. Pour un usage professionnel, une licence commerciale est disponible sur demande (contact via la page du projet).",
+        "it": "PolyForm Noncommercial 1.0.0 — gratuito per uso privato e non commerciale. Per l'uso in azienda è disponibile una licenza commerciale su richiesta (contatto tramite la pagina del progetto).",
     },
     "lic.title": {
         "de": "Lizenz", "en": "License", "fr": "Licence", "it": "Licenza",

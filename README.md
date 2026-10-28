@@ -266,7 +266,7 @@ Pre-built binaries for macOS and Windows are available on the [Releases page](ht
 > - **macOS**: Right-click the app, select "Open", then click "Open" again to bypass Gatekeeper
 > - **Windows**: Click "More info", then "Run anyway" to bypass SmartScreen
 >
-> This is normal for open-source software. The source code is fully available for review.
+> This is normal for small independent software. The source code is fully available for review.
 >
 > The desktop app opens your default browser -- no additional runtimes needed.
 
@@ -367,16 +367,14 @@ CutStock/
 
 ## License
 
-**CC BY-NC-SA 4.0** -- free for personal, non-commercial use; attribution required.
+**[PolyForm Noncommercial 1.0.0](LICENSE)** -- free for any noncommercial use: private use, hobby projects, schools, non-profits, and public institutions. You may use, modify, and share CutStock for these purposes.
 
-**Commercial use:** If you would like to use CutStock in your business -- for example in a joinery, cabinet shop, or any other commercial workshop -- a separate commercial license is available. Please get in touch via [worldgate.de/cutstock](https://worldgate.de/en/cutstock-en/).
+**Commercial use:** If you would like to use CutStock in your business -- for example in a joinery, cabinet shop, or any other commercial workshop -- a separate commercial license is available. Please use the contact form at [worldgate.de/cutstock](https://worldgate.de/en/cutstock-en/).
 
-See [LICENSE](LICENSE) for details.
+CutStock is *source-available*: the code is public, but it is not open source in the OSI sense because commercial use requires a license. Versions up to and including 2026.10.46 were released under CC BY-NC-SA 4.0.
 
-The bundled SAP Fundamental Styles and Horizon theme assets (`web/static/vendor/`) are licensed under Apache-2.0 by SAP SE.
+Bundled third-party components (including the SAP Fundamental Styles and Horizon theme assets in `web/static/vendor/`, Apache-2.0) are licensed under their own terms -- see [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
 
 ## Contributing
 
-Contributions welcome! Please open an issue first to discuss what you'd like to change.
-
-When adding a new language, see `ui/i18n.py` -- just add your language code to `LANGUAGES` and a translation for each key in `TRANSLATIONS`.
+Bug reports, ideas, and translation suggestions are welcome as [issues](https://github.com/orohde/CutStock/issues/new/choose). Code contributions (pull requests) are currently not accepted -- see [CONTRIBUTING.md](CONTRIBUTING.md).

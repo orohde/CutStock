@@ -267,7 +267,7 @@ Fertige Binaries fuer macOS und Windows gibt es auf der [Releases-Seite](https:/
 > - **macOS**: Rechtsklick auf die App, "Oeffnen" waehlen, dann nochmal "Oeffnen" klicken (Gatekeeper)
 > - **Windows**: "Weitere Informationen" klicken, dann "Trotzdem ausfuehren" (SmartScreen)
 >
-> Das ist bei Open-Source-Software normal. Der Quellcode ist vollstaendig einsehbar.
+> Das ist bei kleiner, unabhaengiger Software normal. Der Quellcode ist vollstaendig einsehbar.
 >
 > Die Desktop-App oeffnet den Standard-Browser -- keine zusaetzlichen Laufzeitumgebungen noetig.
 
@@ -369,16 +369,14 @@ CutStock/
 
 ## Lizenz
 
-**CC BY-NC-SA 4.0** -- frei fuer den persoenlichen, nicht-kommerziellen Gebrauch; Namensnennung erforderlich.
+**[PolyForm Noncommercial 1.0.0](LICENSE)** -- frei fuer jede nicht-kommerzielle Nutzung: privat, als Hobby, in Schulen, gemeinnuetzigen Vereinen und oeffentlichen Einrichtungen. Fuer diese Zwecke darf CutStock genutzt, veraendert und weitergegeben werden.
 
-**Kommerzielle Nutzung:** Wer CutStock im Betrieb einsetzen moechte -- etwa in einer Schreinerei, Tischlerei oder einem anderen Gewerbe -- kann eine separate kommerzielle Lizenz erwerben. Anfragen gern ueber [worldgate.de/cutstock](https://worldgate.de/cutstock/).
+**Kommerzielle Nutzung:** Wer CutStock im Betrieb einsetzen moechte -- etwa in einer Schreinerei, Tischlerei oder einem anderen Gewerbe -- kann eine separate kommerzielle Lizenz erwerben. Anfragen bitte ueber das Kontaktformular auf [worldgate.de/cutstock](https://worldgate.de/cutstock/).
 
-Details siehe [LICENSE](LICENSE).
+CutStock ist *source-available*: Der Quellcode ist offen einsehbar, aber kein Open Source im Sinne der OSI, weil kommerzielle Nutzung eine Lizenz erfordert. Versionen bis einschliesslich 2026.10.46 wurden unter CC BY-NC-SA 4.0 veroeffentlicht.
 
-Die gebuendelten SAP Fundamental Styles und Horizon-Theme-Assets (`web/static/vendor/`) stehen unter Apache-2.0-Lizenz von SAP SE.
+Gebuendelte Fremdbestandteile (u. a. SAP Fundamental Styles und Horizon-Theme-Assets in `web/static/vendor/`, Apache-2.0) stehen unter eigenen Lizenzen -- siehe [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
 
 ## Mitmachen
 
-Beitraege willkommen! Bitte zuerst ein Issue eroeffnen, um die geplante Aenderung zu besprechen.
-
-Fuer eine neue Sprache siehe `ui/i18n.py` -- einfach den Sprachcode zu `LANGUAGES` hinzufuegen und jede Zeile in `TRANSLATIONS` uebersetzen.
+Fehlermeldungen, Ideen und Uebersetzungsvorschlaege sind als [Issues](https://github.com/orohde/CutStock/issues/new/choose) willkommen. Code-Beitraege (Pull Requests) werden derzeit nicht angenommen -- siehe [CONTRIBUTING.md](CONTRIBUTING.md).

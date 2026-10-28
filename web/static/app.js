@@ -994,7 +994,7 @@ function updateLicenseFooter() {
         badge.textContent = lic.holder;
         badge.className = 'footer-license license-commercial';
     } else {
-        badge.textContent = 'Community (CC BY-NC-SA 4.0)';
+        badge.textContent = 'Community (PolyForm Noncommercial)';
         badge.className = 'footer-license license-community';
     }
 }

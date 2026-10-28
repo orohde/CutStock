@@ -92,7 +92,7 @@ jobs:
             - **macOS**: Right-click the app → "Open" → "Open" again to bypass Gatekeeper
             - **Windows**: Click "More info" → "Run anyway" to bypass SmartScreen
 
-            This is normal for open-source software without a paid developer certificate.
+            This is normal for small independent software without a paid developer certificate.
 
             The app opens your default browser — no additional runtimes needed.
           files: |

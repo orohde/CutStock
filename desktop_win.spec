@@ -18,6 +18,8 @@ datas = [
     ("web/static", "web/static"),
     ("assets/icon.jpg", "assets"),
     ("VERSION", "."),
+    ("LICENSE", "."),
+    ("THIRD_PARTY_NOTICES.txt", "."),
 ]
 
 a = Analysis(
