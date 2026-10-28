@@ -18,22 +18,33 @@ jobs:
       - name: Build image
         run: docker build -t cutstock:${{ steps.version.outputs.ver }} -t cutstock:latest .
 
-      - name: Deploy container
+      # Der Container gehört dem Compose-Projekt "CutStock" im Unraid Compose Manager
+      # (Image cutstock:latest, pull_policy: never). Das Projektverzeichnis liegt auf dem
+      # Unraid-Stick und ist im Job-Container nicht sichtbar, deshalb läuft
+      # "compose up" in einem Hilfscontainer mit gleichem Pfad und Projektnamen.
+      - name: Deploy via Compose-Projekt
         run: |
-          docker stop cutstock 2>/dev/null || true
-          docker rm cutstock 2>/dev/null || true
-          docker run -d \
-            --name cutstock \
-            --restart unless-stopped \
-            -p 8420:8000 \
-            -v /mnt/user/appdata/cutstock:/data \
-            -e CUTSTOCK_DB=/data/cutstock.db \
-            cutstock:${{ steps.version.outputs.ver }}
+          PROJ=/boot/config/plugins/compose.manager/projects/CutStock
+          # Container ohne Compose-Kennung (früher per docker run angelegt) entfernen
+          if [ "$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' cutstock 2>/dev/null)" != "cutstock" ]; then
+            docker rm -f cutstock 2>/dev/null || true
+          fi
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PROJ:$PROJ:ro" -w "$PROJ" \
+            catthehacker/ubuntu:act-latest \
+            docker compose -p cutstock -f docker-compose.yml -f docker-compose.override.yml up -d
 
       - name: Verify
         run: |
           sleep 3
           docker exec cutstock python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/')" || exit 1
+          test "$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' cutstock)" = "cutstock"
 
+      # Nur die letzten drei Versionen für ein Zurückrollen behalten
       - name: Cleanup old images
-        run: docker image prune -f --filter "label!=cutstock" 2>/dev/null || true
+        run: |
+          docker image ls cutstock --format '{{ .Tag }}' | grep -E '^[0-9]{4}\.[0-9]{2}\.[0-9]+$' \
+            | sort -t. -k1,1n -k2,2n -k3,3n | head -n -3 \
+            | xargs -r -I{} docker rmi cutstock:{} || true
+          docker image prune -f 2>/dev/null || true
