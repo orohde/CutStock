@@ -107,42 +107,102 @@ app.add_middleware(
 
 # ---------------------------------------------------------------------------
 # API-Key-Middleware – schützt /api/* wenn ein Key konfiguriert ist.
-# Lokale Requests (127.0.0.1 / ::1) und nicht-API-Pfade passieren immer.
+# Ohne Key bleibt die API offen. Mit Key passieren:
+#   - Clients mit "Authorization: Bearer <Key>",
+#   - die eigene Weboberfläche: Sie bekommt beim Laden der Seite ein
+#     HttpOnly-Cookie (HMAC des Keys), das nur bei Same-Origin-Requests zählt,
+#   - direkte Requests vom selben Rechner (127.0.0.1 / ::1), aber nur ohne
+#     Proxy-Header – hinter einem Reverse-Proxy auf demselben Host käme sonst
+#     jede Anfrage als „lokal“ an.
 # ---------------------------------------------------------------------------
+
+import hashlib
+import hmac
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import JSONResponse
 
+UI_COOKIE_MAX_AGE = 30 * 24 * 3600
+_PROXY_HEADERS = ("x-forwarded-for", "x-real-ip", "forwarded")
+
+
+def _current_api_key() -> str:
+    from core.settings import Settings
+    return Settings(SETTINGS_PATH).value("api/key", "") or ""
+
+
+def _ui_token(api_key: str) -> str:
+    return hmac.new(api_key.encode(), b"cutstock-ui", hashlib.sha256).hexdigest()
+
+
+def _ui_cookie_name(request: StarletteRequest) -> str:
+    # Cookies trennen nicht nach Port – mehrere Instanzen auf einem Host
+    # (Desktop + Dev-Server) sollen sich nicht gegenseitig überschreiben.
+    return f"cutstock_ui_{request.url.port or 'default'}"
+
+
+def _is_same_origin(request: StarletteRequest) -> bool:
+    # Browser senden Sec-Fetch-Site immer; "same-site" (andere Subdomain oder
+    # anderer Port) reicht nicht.
+    return request.headers.get("sec-fetch-site", "same-origin") == "same-origin"
+
+
+def _is_direct_local(request: StarletteRequest) -> bool:
+    client_host = request.client.host if request.client else ""
+    if client_host not in ("127.0.0.1", "::1"):
+        return False
+    return not any(h in request.headers for h in _PROXY_HEADERS)
+
+
+def _has_valid_ui_cookie(request: StarletteRequest, api_key: str) -> bool:
+    cookie = request.cookies.get(_ui_cookie_name(request), "")
+    return (bool(cookie) and _is_same_origin(request)
+            and hmac.compare_digest(cookie, _ui_token(api_key)))
+
+
+def _has_valid_bearer(request: StarletteRequest, api_key: str) -> bool:
+    auth = request.headers.get("authorization", "")
+    return hmac.compare_digest(auth.encode(), f"Bearer {api_key}".encode())
+
+
+def _refresh_ui_cookie(request: StarletteRequest, response) -> None:
+    """UI-Cookie setzen, wenn ein Key gesetzt ist und das Cookie fehlt oder veraltet ist."""
+    api_key = _current_api_key()
+    if not api_key:
+        return
+    name = _ui_cookie_name(request)
+    token = _ui_token(api_key)
+    if request.cookies.get(name) == token:
+        return
+    secure = (request.url.scheme == "https"
+              or request.headers.get("x-forwarded-proto", "") == "https")
+    response.set_cookie(name, token, max_age=UI_COOKIE_MAX_AGE, path="/",
+                        httponly=True, samesite="strict", secure=secure)
+
 
 class ApiKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: StarletteRequest, call_next):
         if not request.url.path.startswith("/api/"):
-            return await call_next(request)
+            response = await call_next(request)
+            _refresh_ui_cookie(request, response)
+            return response
 
-        client_host = request.client.host if request.client else ""
-        if client_host in ("127.0.0.1", "::1", "localhost"):
-            return await call_next(request)
+        api_key = _current_api_key()
+        if api_key and not (_has_valid_bearer(request, api_key)
+                            or _has_valid_ui_cookie(request, api_key)
+                            or _is_direct_local(request)):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Invalid or missing API key"},
+            )
 
-        referer = request.headers.get("referer", "")
-        host = request.headers.get("host", "")
-        if referer and host and host in referer:
-            return await call_next(request)
-
-        from core.settings import Settings
-        s = Settings(DB_PATH.parent / "settings.json")
-        api_key = s.value("api/key", "")
-        if not api_key:
-            return await call_next(request)
-
-        auth = request.headers.get("authorization", "")
-        if auth == f"Bearer {api_key}":
-            return await call_next(request)
-
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "Invalid or missing API key"},
-        )
+        response = await call_next(request)
+        # Der Key kann sich durch diesen Request geändert haben (Einstellungen,
+        # Backup-Restore) – dann bekommt die Oberfläche sofort das neue Cookie.
+        if _is_same_origin(request) and "sec-fetch-site" in request.headers:
+            _refresh_ui_cookie(request, response)
+        return response
 
 
 app.add_middleware(ApiKeyMiddleware)
@@ -617,10 +677,12 @@ def _get_settings_dict() -> dict:
 
     settings_path = DB_PATH.parent / "settings.json"
     s = Settings(settings_path)
+    theme = s.value("appearance/theme", "system")
     return {
         "language": s.value("appearance/language", "en"),
         "unit": s.value("appearance/unit", "mm"),
-        "theme": s.value("appearance/theme", "system"),
+        # "auto" stammt aus älteren Versionen des Dropdowns
+        "theme": "system" if theme == "auto" else theme,
         "hotkeys": s.value("web/hotkeys", {}),
         "label_format": s.value("labels/format", "a4_3x8"),
         "label_custom_w": s.value("labels/custom_w", 89),
@@ -1206,6 +1268,7 @@ def mark_plan(req: MarkPlanRequest):
     """
     db = get_db()
     consumed = req.prev_consumed
+    lagerstueck_id = req.lagerstueck_id
     # Zuvor gebuchte Reste immer entfernen und ggf. neu buchen
     for rid in req.prev_rest_ids:
         db.lager_verbrauchen(rid)
@@ -1233,10 +1296,33 @@ def mark_plan(req: MarkPlanRequest):
                         rest_ids.append(r.id)
     elif consumed:
         # Alle Markierungen entfernt → Original-Lagerstück zurückbuchen
-        db.rest_einbuchen(req.material_id, req.lager_laenge, req.lager_breite)
+        lagerstueck_id = _lagerstueck_zurueckbuchen(db, req)
         consumed = False
 
-    return {"consumed": consumed, "rest_ids": rest_ids}
+    return {"consumed": consumed, "rest_ids": rest_ids, "lagerstueck_id": lagerstueck_id}
+
+
+def _lagerstueck_zurueckbuchen(db: Database, req: MarkPlanRequest) -> int:
+    """Verbrauchtes Lagerstück mit seinen Originalmaßen wieder einbuchen.
+
+    Der Plan kennt nur die besäumten Maße (Original − 2·Besäumung). Existiert die
+    Lagerzeile noch, wird nur die Stückzahl erhöht; sonst wird sie neu angelegt
+    (bzw. mit einer gleich großen Zeile zusammengefasst). Liefert die ID zurück.
+    """
+    ls = db.get_lagerstueck(req.lagerstueck_id)
+    if ls is None:
+        mat = db.get_material(req.material_id)
+        trim = 2 * (mat.besaeumung if mat else 0.0)
+        laenge = req.lager_laenge + trim
+        breite = 0.0 if req.is_1d else req.lager_breite + trim
+        ls = next((e for e in db.list_lagerstuecke(req.material_id)
+                   if abs(e.laenge - laenge) < 0.1 and abs(e.breite - breite) < 0.1),
+                  None)
+        if ls is None:
+            ls = Lagerstueck(material_id=req.material_id, laenge=laenge,
+                             breite=breite, stueckzahl=0)
+    ls.stueckzahl += 1
+    return db.save_lagerstueck(ls).id
 
 
 # ---------------------------------------------------------------------------
@@ -1479,10 +1565,10 @@ WEB_EXTRA_TRANSLATIONS = {
     "set.api_key_generated": {"de": "API-Key generiert.", "en": "API key generated.", "fr": "Clé API générée.", "it": "Chiave API generata."},
     "set.api_key_copied": {"de": "API-Key kopiert.", "en": "API key copied.", "fr": "Clé API copiée.", "it": "Chiave API copiata."},
     "set.api_hint": {
-        "de": "Änderungen am Port werden nach einem Neustart wirksam. Ohne API-Key ist die API nur lokal erreichbar.",
-        "en": "Port changes take effect after a restart. Without an API key the API is only reachable locally.",
-        "fr": "Les changements de port prennent effet après un redémarrage. Sans clé API, l’API n’est accessible que localement.",
-        "it": "Le modifiche alla porta hanno effetto dopo un riavvio. Senza chiave API, l’API è raggiungibile solo localmente.",
+        "de": "Änderungen am Port werden nach einem Neustart wirksam. Ohne API-Key ist die API für jeden erreichbar, der den Server erreicht. Mit Key müssen externe Programme „Authorization: Bearer <Key>“ mitsenden; die eigene Weboberfläche und Zugriffe vom selben Rechner brauchen ihn nicht.",
+        "en": "Port changes take effect after a restart. Without an API key, anyone who can reach the server can use the API. With a key, external programs must send “Authorization: Bearer <key>”; this web interface and requests from the same computer don’t need it.",
+        "fr": "Les changements de port prennent effet après un redémarrage. Sans clé API, l’API est accessible à toute personne pouvant joindre le serveur. Avec une clé, les programmes externes doivent envoyer « Authorization: Bearer <clé> » ; cette interface web et les accès depuis le même ordinateur n’en ont pas besoin.",
+        "it": "Le modifiche alla porta hanno effetto dopo un riavvio. Senza chiave API, l’API è accessibile a chiunque raggiunga il server. Con una chiave, i programmi esterni devono inviare “Authorization: Bearer <chiave>”; questa interfaccia web e gli accessi dallo stesso computer non ne hanno bisogno.",
     },
     "stat.material_needed": {"de": "Materialbedarf", "en": "Material needed", "fr": "Matériel nécessaire", "it": "Materiale necessario"},
     "stat.add_to_stock": {"de": "Ins Lager", "en": "Add to stock", "fr": "Ajouter au stock", "it": "Aggiungi a scorte"},

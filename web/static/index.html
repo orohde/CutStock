@@ -218,7 +218,7 @@
         <div class="form-group">
           <label class="fd-form-label" for="settings-theme" data-i18n="set.theme">Farbschema:</label>
           <select id="settings-theme" class="cs-select">
-            <option value="auto">Auto (System)</option>
+            <option value="system">Auto (System)</option>
             <option value="light">Hell</option>
             <option value="dark">Dunkel</option>
           </select>
@@ -259,7 +259,7 @@
             <button id="btn-api-key-copy" class="fd-button" type="button" data-i18n="set.api_key_copy">Kopieren</button>
           </div>
         </div>
-        <p class="api-hint" data-i18n="set.api_hint">Änderungen am Port werden nach einem Neustart wirksam. Ohne API-Key ist die API nur lokal erreichbar.</p>
+        <p class="api-hint" data-i18n="set.api_hint">Änderungen am Port werden nach einem Neustart wirksam. Ohne API-Key ist die API für jeden erreichbar, der den Server erreicht. Mit Key müssen externe Programme „Authorization: Bearer &lt;Key&gt;“ mitsenden; die eigene Weboberfläche und Zugriffe vom selben Rechner brauchen ihn nicht.</p>
       </div>
 
       <div class="panel settings-section">

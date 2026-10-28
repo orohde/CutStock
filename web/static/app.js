@@ -125,6 +125,17 @@ const formatDim = (mm) => {
 // 5. API FUNCTIONS
 // ===========================================================================
 
+// UI-Cookie veraltet (API-Key anderswo geändert)? Einmal neu laden, damit der
+// Server ein frisches Cookie setzt – nicht in einer Schleife.
+function reloadForFreshUiCookie() {
+    try {
+        if (sessionStorage.getItem('cutstock_401_reload')) return false;
+        sessionStorage.setItem('cutstock_401_reload', '1');
+    } catch { return false; }
+    location.reload();
+    return true;
+}
+
 async function fetchJSON(url, method = 'GET', body = null) {
     const opts = {
         method,
@@ -136,6 +147,10 @@ async function fetchJSON(url, method = 'GET', body = null) {
     }
     const resp = await fetch(API_BASE + url, opts);
     if (resp.status === 204) return null;
+    if (resp.status === 401 && reloadForFreshUiCookie()) {
+        throw new Error('HTTP 401');
+    }
+    sessionStorage.removeItem('cutstock_401_reload');
     if (!resp.ok) {
         let msg = `HTTP ${resp.status}`;
         try {
@@ -1226,6 +1241,15 @@ async function reconcilePlanStock(plan) {
         });
         plan._consumed = res.consumed;
         plan._restIds = res.rest_ids || [];
+        // Beim Zurückbuchen kann die Lagerzeile eine neue ID bekommen haben –
+        // alle Pläne, die noch auf die alte zeigen, mitziehen.
+        const oldId = plan.lagerstueck_id;
+        if (res.lagerstueck_id && res.lagerstueck_id !== oldId) {
+            (State.optimizationResult?.schnittplaene || []).forEach(p => {
+                if (p.lagerstueck_id === oldId) p.lagerstueck_id = res.lagerstueck_id;
+            });
+            plan.lagerstueck_id = res.lagerstueck_id;
+        }
     } catch { /* nicht kritisch */ }
 }
 
@@ -3112,10 +3136,13 @@ function initEvents() {
         if (!mat) { showToast(t('dlg.select_material'), 'error'); return; }
         openMaterialDialog(mat);
     });
-    document.getElementById('btn-mat-del')?.addEventListener('click', () => {
+    document.getElementById('btn-mat-del')?.addEventListener('click', async () => {
         const mat = getSelectedMaterial();
         if (!mat) { showToast(t('dlg.select_material'), 'error'); return; }
-        openConfirmDialog(t('dlg.delete_material', { n: 0 }), async () => {
+        let stock;
+        try { stock = await Api.getStock(mat.id); } catch { return; }
+        const n = stock.reduce((sum, s) => sum + s.stueckzahl, 0);
+        openConfirmDialog(t('dlg.delete_material', { n }), async () => {
             try {
                 await Api.deleteMaterial(mat.id);
                 State.selectedMaterialId = null;
@@ -3670,7 +3697,7 @@ function startHotkeyCapture(el) {
 // ===========================================================================
 
 function applyTheme(theme) {
-    if (theme === 'system' || theme === 'auto') {
+    if (theme === 'system') {
         document.documentElement.removeAttribute('data-theme');
     } else {
         document.documentElement.setAttribute('data-theme', theme);
@@ -3678,7 +3705,7 @@ function applyTheme(theme) {
 
     // Horizon-Theme-Stylesheet (hell/dunkel) umschalten
     const dark = theme === 'dark' ||
-        ((theme === 'system' || theme === 'auto') &&
+        (theme === 'system' &&
             window.matchMedia('(prefers-color-scheme: dark)').matches);
     const lightSheet = document.getElementById('theme-light');
     const darkSheet = document.getElementById('theme-dark');
@@ -3693,7 +3720,7 @@ function applyTheme(theme) {
 
 // Bei System-Theme auf Betriebssystem-Wechsel reagieren
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-    if (State.settings.theme === 'system' || State.settings.theme === 'auto') {
+    if (State.settings.theme === 'system') {
         applyTheme(State.settings.theme);
         if (State.optimizationResult) renderOptResults();
     }
