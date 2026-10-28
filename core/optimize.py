@@ -30,6 +30,7 @@ Conventions used throughout this module:
 from __future__ import annotations
 
 import bisect
+import math
 import random
 import time
 from dataclasses import dataclass, field
@@ -104,10 +105,11 @@ def optimize_1d(
     """1D cutting-stock optimization (pattern-based, ILP-optimal).
 
     Uses a two-phase approach:
-      1. Pattern enumeration – find all feasible cutting patterns
-         (combinations of parts) for each distinct bar length.
-      2. ILP (Integer Linear Programming) via scipy – select the
-         optimal set of patterns that minimizes total bars used.
+      1. Patterns – column generation (`_generate_columns`) finds the
+         patterns of the LP optimum; enumeration adds the maximal
+         patterns (complete for few lengths, truncated for many).
+      2. ILP (Integer Linear Programming) via scipy – select the set of
+         patterns that minimizes the bar material (`_ilp_select`).
          Falls back to greedy selection if scipy is unavailable.
          With the same bars, a second ILP then bundles the waste on one
          bar and minimizes the distinct patterns (`_ilp_refine`, given
@@ -138,19 +140,33 @@ def optimize_1d(
     for sv in vorrat:
         bar_types.setdefault(sv.laenge, []).append(sv)
 
-    all_patterns: list[tuple[float, dict[float, int], float]] = []
-    for bar_len in bar_types:
-        patterns = _enumerate_patterns(bar_len, distinct_lengths, kerf)
-        for pat in patterns:
-            used = sum(l * c for l, c in pat.items())
-            cuts = sum(pat.values())
-            total_used = used + kerf * max(0, cuts - 1)
-            all_patterns.append((bar_len, pat, total_used / bar_len))
-
     remaining = dict(demand)
     bar_counts: dict[float, int] = {}
     for sv in vorrat:
         bar_counts[sv.laenge] = bar_counts.get(sv.laenge, 0) + sv.anzahl
+
+    # Column generation first (its patterns lead the list, see
+    # _ilp_select), then the enumerated maximal patterns
+    cg_patterns = []
+    if _HAS_SCIPY:
+        try:
+            cg_patterns = _generate_columns(demand, bar_counts,
+                                            distinct_lengths, kerf)
+        except Exception:
+            cg_patterns = []
+    seen = set()
+    all_patterns: list[tuple[float, dict[float, int], float]] = []
+    for bar_len, pat in cg_patterns + [
+            (bl, p) for bl in bar_types
+            for p in _enumerate_patterns(bl, distinct_lengths, kerf)]:
+        key = (bar_len, tuple(sorted(pat.items())))
+        if key in seen:
+            continue
+        seen.add(key)
+        used = sum(l * c for l, c in pat.items())
+        cuts = sum(pat.values())
+        total_used = used + kerf * max(0, cuts - 1)
+        all_patterns.append((bar_len, pat, total_used / bar_len))
 
     selected: list[tuple[float, dict[float, int]]] = []
 
@@ -158,7 +174,7 @@ def optimize_1d(
         try:
             ilp_result = _ilp_select(
                 all_patterns, demand, bar_counts, distinct_lengths, bar_types,
-                kerf, refine_zeit)
+                kerf, refine_zeit, n_cg=len(cg_patterns))
             if ilp_result:
                 selected = ilp_result
                 for bar_len, pat in selected:
@@ -276,62 +292,140 @@ def _ilp_select(
     bar_types: dict[float, list],
     kerf: float = 3.0,
     refine_zeit: float = 1.0,
+    n_cg: int = 0,
 ) -> list[tuple[float, dict[float, int]]]:
-    """Select patterns via ILP (Integer Linear Programming) to minimize bars."""
-    n = len(patterns)
+    """Select patterns via ILP (Integer Linear Programming) to minimize
+    bar material.
+
+    Only a pool of patterns enters the ILP: the first `n_cg` (from
+    column generation, else the best-filled enumerated ones); with all
+    patterns the solver doesn't finish in time. A rounding heuristic
+    gives a first plan quickly: round the LP solution down and cover the
+    small residual demand by a second ILP. The full ILP then only has to
+    find something better than that plan, within _ILP_SELECT_TIME.
+    Demand that the stock can't cover stays unmet and is left to the
+    caller.
+    """
     bar_len_keys = sorted(bar_types.keys())
+    best_filled = np.argsort([-p[2] for p in patterns], kind="stable")
+    pool = list(range(n_cg)) or list(best_filled[:_ILP_REFINE_PATTERNS])
+    pats = [patterns[j] for j in pool]
+    n = len(pats)
+    unit = math.gcd(*(round(bl * 10) for bl in bar_len_keys)) / 10
 
-    rows, lb, ub = [], [], []
-    for l in distinct_lengths:
-        rows.append([float(p.get(l, 0)) for _, p, _ in patterns])
-        lb.append(float(demand[l]))
-        ub.append(np.inf)
-    for bl in bar_len_keys:
-        rows.append([1.0 if pbl == bl else 0.0 for pbl, _, _ in patterns])
-        lb.append(0.0)
-        ub.append(float(bar_supply[bl]))
+    def _solve(dem, supply, zeit=None, below=None, relax=False, slack=False):
+        return _select_milp(pats, dem, supply, distinct_lengths, bar_len_keys,
+                            unit, zeit, below, relax, slack)
 
-    res = milp(
-        np.ones(n),
-        constraints=LinearConstraint(np.array(rows, dtype=float), lb, ub),
-        integrality=np.ones(n),
-        bounds=Bounds(lb=0),
-    )
-    if not res.success:
-        return []
+    met = dict(demand)
+    lp = _solve(demand, bar_supply, relax=True)
+    if lp is None:
+        # Not enough stock: place as much as possible
+        x = _solve(demand, bar_supply, _ILP_SELECT_TIME, slack=True)
+        if x is None:
+            return []
+        x = np.round(x).astype(int)
+        for l in distinct_lengths:
+            met[l] = min(demand[l], sum(int(x[j]) * pats[j][1].get(l, 0)
+                                        for j in range(n)))
+    else:
+        x = np.floor(lp + 1e-9).astype(int)
+        res_dem = {l: max(0, demand[l] - sum(int(x[j]) * pats[j][1].get(l, 0)
+                                             for j in range(n)))
+                   for l in distinct_lengths}
+        res_sup = {bl: bar_supply[bl] - sum(int(x[j]) for j in range(n)
+                                            if pats[j][0] == bl)
+                   for bl in bar_len_keys}
+        rest = _solve(res_dem, res_sup, _RESIDUAL_TIME)
+        if rest is not None:
+            x = x + np.round(rest).astype(int)
+            better = _solve(demand, bar_supply, _ILP_SELECT_TIME,
+                            below=sum(pats[j][0] * x[j] for j in range(n)))
+        else:
+            better = _solve(demand, bar_supply, _ILP_SELECT_TIME)
+            if better is None:
+                return []
+        if better is not None:
+            x = np.round(better).astype(int)
 
-    x = np.round(res.x).astype(int)
+    if len(distinct_lengths) <= _REFINE_FULL_LENGTHS:
+        # The refinement additionally gets the best-filled patterns: they
+        # hold the most parts, which leaves the most room for one long
+        # remnant.
+        in_pool = set(pool)
+        pool += [j for j in best_filled[:_ILP_REFINE_PATTERNS]
+                 if j not in in_pool]
+        pats = [patterns[j] for j in pool]
+        x = np.concatenate([x, np.zeros(len(pats) - n, dtype=int)])
+    else:
+        # With many lengths the solver finds no plan as good as x in time
+        # among all patterns: rearrange only the patterns of the solution
+        # (x itself is a valid start, so it always finishes quickly).
+        used = np.flatnonzero(x)
+        pats = [pats[j] for j in used]
+        x = x[used]
+        refine_zeit /= 3
     rest_j = -1
-    # The refinement only looks at the patterns of the solution plus the
-    # best-filled ones; with all patterns the solver doesn't finish in time.
-    cand = sorted(set(np.argsort([-p[2] for p in patterns],
-                                 kind="stable")[:_ILP_REFINE_PATTERNS])
-                  | set(np.flatnonzero(x)))
     try:
-        refined = _ilp_refine([patterns[j] for j in cand], demand,
-                              bar_supply, distinct_lengths, bar_len_keys,
-                              x[cand], kerf, refine_zeit)
+        refined = _ilp_refine(pats, met, bar_supply, distinct_lengths,
+                              bar_len_keys, x, kerf, refine_zeit)
         if refined is not None:
-            x = np.zeros(n, dtype=int)
-            x[cand] = refined[0]
-            rest_j = cand[refined[1]]
+            x, rest_j = refined
     except Exception:
         pass
 
     selected = []
-    for j in range(n):
-        bar_len, pat, _ = patterns[j]
+    for j in range(len(pats)):
+        bar_len, pat, _ = pats[j]
         for _ in range(x[j] - (1 if j == rest_j else 0)):
             selected.append((bar_len, dict(pat)))
     # The remnant bar goes last: labels are assigned in bar order, so the
     # surplus slots (parts nobody ordered) end up empty on this bar.
     if rest_j >= 0:
-        bar_len, pat, _ = patterns[rest_j]
+        bar_len, pat, _ = pats[rest_j]
         selected.append((bar_len, dict(pat)))
     return selected
 
 
 _ILP_REFINE_PATTERNS = 300
+_RESIDUAL_TIME = 0.3     # seconds for the residual of the rounding heuristic
+_REFINE_FULL_LENGTHS = 10  # up to this many lengths, refine over the full pool
+
+
+def _select_milp(pats, demand, supply, lengths, bar_len_keys, unit,
+                 zeit=None, below=None, relax=False, slack=False):
+    """Pattern counts covering `demand` with the least bar material.
+
+    Costs are bar lengths in multiples of `unit` (common divisor of all
+    bar lengths): integer costs let the solver prune by objective.
+    below: only accept plans with less material than this (mm).
+    relax: solve the LP relaxation instead.
+    slack: demand may stay unmet, at a price above any bar.
+    Returns the counts (float array, slack columns cut off) or None.
+    """
+    n, m = len(pats), len(lengths)
+    k = m if slack else 0
+    A = np.zeros((m + len(bar_len_keys), n + k))
+    for j, (bl, pat, _) in enumerate(pats):
+        for i, l in enumerate(lengths):
+            A[i, j] = pat.get(l, 0)
+        A[m + bar_len_keys.index(bl), j] = 1
+    A[np.arange(k), n + np.arange(k)] = 1
+    lb = [demand[l] for l in lengths] + [0] * len(bar_len_keys)
+    ub = [np.inf] * m + [supply[bl] for bl in bar_len_keys]
+    c = [round(bl / unit) for bl, _, _ in pats]
+    if slack:
+        penalty = 2 * max(c) / min(lengths)
+        c += [math.ceil(penalty * l) for l in lengths]
+    c = np.array(c, dtype=float)
+    cons = [LinearConstraint(A, lb, ub)]
+    if below is not None:
+        cons.append(LinearConstraint(c.reshape(1, -1), -np.inf,
+                                     round(below / unit) - 1))
+    options = {"time_limit": zeit} if zeit else {}
+    res = milp(c, constraints=cons, integrality=np.zeros(n + k) if relax
+               else np.ones(n + k), bounds=Bounds(lb=0), options=options)
+    return None if res.x is None else res.x[:n]
 
 
 def _ilp_refine(patterns, demand, bar_supply, distinct_lengths, bar_len_keys,
@@ -422,6 +516,130 @@ def _ilp_refine(patterns, demand, bar_supply, distinct_lengths, bar_len_keys,
     if v2 is not None:
         v = v2
     return v[X:X + n], int(np.argmax(v[Z:Z + n]))
+
+
+_CG_MAX_ITER = 300
+_CG_TIME = 0.5           # seconds for the column generation
+_ILP_SELECT_TIME = 0.5   # seconds for the integer pattern selection
+_KNAPSACK_NODES = 5_000  # per pricing; the best pattern found so far is enough
+
+
+def _generate_columns(demand, bar_supply, distinct_lengths, kerf):
+    """Column generation (Gilmore–Gomory) for the LP relaxation.
+
+    Solves "minimize bar material" over a growing set of patterns. The
+    LP duals price each part length; a bounded knapsack per bar length
+    then finds the pattern with the most negative reduced cost. Stops
+    when no pattern improves the LP (or at the time limit). Returns the
+    generated patterns as (bar_len, {length: count}); the LP optimum is a
+    lower bound and its patterns are a much better pool for the integer
+    selection than a truncated enumeration.
+
+    Unmet demand is allowed at a high price (slack), so the LP stays
+    feasible when the stock runs out.
+    """
+    from scipy.optimize import linprog
+
+    bar_lens = sorted(bl for bl in bar_supply if bar_supply[bl] > 0)
+    lengths = [l for l in distinct_lengths
+               if any(l <= bl + 1e-9 for bl in bar_lens)]
+    if not lengths or not bar_lens:
+        return []
+    m = len(lengths)
+    penalty = 2 * max(bar_lens) / min(lengths)
+
+    cols: list[tuple[float, dict[float, int]]] = []
+    # LP columns: slacks (unmet demand) first, then one per pattern
+    A_cols = [np.eye(m + len(bar_lens))[:, i] * -1 for i in range(m)]
+    costs = [penalty * l for l in lengths]
+    seen = set()
+
+    def _add(bl, pat):
+        key = (bl, tuple(sorted(pat.items())))
+        if not pat or key in seen:
+            return False
+        seen.add(key)
+        cols.append((bl, pat))
+        col = np.zeros(m + len(bar_lens))
+        for i, l in enumerate(lengths):
+            col[i] = -pat.get(l, 0)
+        col[m + bar_lens.index(bl)] = 1
+        A_cols.append(col)
+        # Material first; the tiny per-bar term prefers fewer bars on ties
+        costs.append(bl + 1e-3)
+        return True
+
+    # Start: one homogeneous pattern per length and bar length
+    for bl in bar_lens:
+        for l in lengths:
+            if l <= bl + 1e-9:
+                fit = int((bl - l + 1e-6) // (l + kerf)) + 1
+                _add(bl, {l: min(fit, demand[l])})
+
+    b_ub = np.array([-float(demand[l]) for l in lengths]
+                    + [float(bar_supply[bl]) for bl in bar_lens])
+    deadline = time.monotonic() + _CG_TIME
+    for _ in range(_CG_MAX_ITER):
+        res = linprog(np.array(costs), A_ub=np.column_stack(A_cols),
+                      b_ub=b_ub, bounds=(0, None), method="highs")
+        if res.status != 0:
+            break
+        duals = -res.ineqlin.marginals
+        prices = {l: duals[i] for i, l in enumerate(lengths)}
+        added = False
+        for k, bl in enumerate(bar_lens):
+            pat, value = _knapsack(bl, lengths, prices, demand, kerf)
+            # reduced cost = cost - Σ price·count - supply dual (≤ 0)
+            if value > bl + 1e-3 + duals[m + k] + 1e-6 and _add(bl, pat):
+                added = True
+        if not added or time.monotonic() > deadline:
+            break
+    return cols
+
+
+def _knapsack(bar_len, lengths, prices, demand, kerf):
+    """Bounded knapsack by branch and bound: the pattern for `bar_len`
+    with the highest total price. Returns ({length: count}, value)."""
+    cap = bar_len + kerf + 1e-6   # every part takes its length + one kerf
+    items = sorted(((l, prices[l]) for l in lengths
+                    if prices[l] > 1e-9 and l <= bar_len + 1e-9),
+                   key=lambda t: t[1] / (t[0] + kerf), reverse=True)
+    best = [0.0, {}]
+    nodes = [0]
+    cur: dict[float, int] = {}
+
+    def _bound(k, rest):
+        # LP relaxation: fill greedily by ratio, the last item fractionally
+        value = 0.0
+        for l, p in items[k:]:
+            w = l + kerf
+            cnt = min(demand[l], rest / w)
+            value += cnt * p
+            rest -= cnt * w
+            if rest <= 1e-9:
+                break
+        return value
+
+    def _dfs(k, rest, value):
+        nodes[0] += 1
+        if value > best[0]:
+            best[0], best[1] = value, dict(cur)
+        if k >= len(items) or nodes[0] > _KNAPSACK_NODES:
+            return
+        if value + _bound(k, rest) <= best[0] + 1e-9:
+            return
+        l, p = items[k]
+        w = l + kerf
+        for cnt in range(min(demand[l], int(rest // w)), -1, -1):
+            if cnt:
+                cur[l] = cnt
+            else:
+                cur.pop(l, None)
+            _dfs(k + 1, rest - cnt * w, value + cnt * p)
+        cur.pop(l, None)
+
+    _dfs(0, cap, 0.0)
+    return best[1], best[0]
 
 
 def _enumerate_patterns(

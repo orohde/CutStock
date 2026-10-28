@@ -1,5 +1,7 @@
 """Tests für die Optimierungsalgorithmen."""
 
+import random
+
 import pytest
 
 from core.models import Defekt
@@ -157,6 +159,40 @@ class TestOptimize1D:
                   for p in erg.schnittplaene}
         assert len(muster) <= 4
         assert max(x[0] for p in erg.schnittplaene for x in p.reste) > 860
+
+    @staticmethod
+    def _zufallsteile(seed, anzahl_laengen):
+        rng = random.Random(seed)
+        return [(f"T{i}", float(rng.randint(150, 1800)), rng.randint(1, 12))
+                for i in range(anzahl_laengen)]
+
+    @staticmethod
+    def _pruefe_vollstaendig(teile, erg):
+        assert not erg.fehlende_teile
+        anzahl = {}
+        for p in erg.schnittplaene:
+            for t in p.platzierungen:
+                anzahl[t.teil_label] = anzahl.get(t.teil_label, 0) + 1
+        assert anzahl == {label: n for label, _, n in teile}
+
+    def test_viele_laengen_nahe_gruendlich(self):
+        """25 verschiedene Längen: Schnell braucht höchstens 5 % mehr
+        Material als Gründlich (150 m). Vorher waren es 354 m."""
+        teile = self._zufallsteile(1, 25)
+        erg = optimize_1d(teile, [StangenVorrat(0, 6000.0, 500)], 3.0)
+        self._pruefe_vollstaendig(teile, erg)
+        material = sum(p.lager_laenge for p in erg.schnittplaene)
+        assert material <= 150_000 * 1.05
+
+    def test_gemischte_stangen_material_statt_stangenzahl(self):
+        """Zwei Stangenlängen: Schnell minimiert das Material, nicht die
+        Stangenzahl – höchstens 5 % über Gründlich (102 m), vorher 126 m."""
+        teile = self._zufallsteile(3, 15)
+        erg = optimize_1d(teile, [StangenVorrat(0, 6000.0, 500),
+                                  StangenVorrat(1, 3000.0, 500)], 3.0)
+        self._pruefe_vollstaendig(teile, erg)
+        material = sum(p.lager_laenge for p in erg.schnittplaene)
+        assert material <= 102_000 * 1.05
 
 
 @pytest.mark.parametrize("optimize", [optimize_1d, optimize_1d_ga])
