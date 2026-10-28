@@ -29,7 +29,9 @@ Conventions used throughout this module:
 
 from __future__ import annotations
 
+import bisect
 import random
+import time
 from dataclasses import dataclass, field
 
 try:
@@ -770,6 +772,9 @@ _GA_POPULATION = 80
 _GA_GENERATIONS = 200
 _GA_MUTATION_RATE = 0.15
 _GA_ELITE_RATIO = 0.1
+# Safety net: after this many seconds the search stops and returns the
+# best plan found so far (never worse than the seeded start solution).
+_GA_TIME_LIMIT = 10.0
 
 
 def optimize_1d_ga(
@@ -787,13 +792,15 @@ def optimize_1d_ga(
     worse than plain FFD.
 
     Note: random.Random(42) makes runs reproducible – two runs on the
-    same input always return the same plan.
+    same input return the same plan, unless the search hits
+    _GA_TIME_LIMIT (then a slower machine stops earlier).
     """
     einzelteile: list[tuple[str, float]] = []
     for label, laenge, anzahl in teile:
         einzelteile.extend((label, laenge) for _ in range(anzahl))
 
-    if not einzelteile or not vorrat:
+    # Fewer than two parts: nothing to reorder (crossover needs two)
+    if len(einzelteile) < 2 or not vorrat:
         return optimize_1d(teile, vorrat, kerf, defekte)
 
     n = len(einzelteile)
@@ -814,29 +821,40 @@ def optimize_1d_ga(
                     bars.append(sv.laenge)
         return bars
 
-    _bar_lengths = _expand_bars()
-
-    def make_stangen():
-        return [{"laenge": bl, "rest": bl, "n": 0} for bl in _bar_lengths]
+    # Uncut bars of the same length are interchangeable – best-fit always
+    # picks the first of them. evaluate() therefore only scans bars that
+    # are already cut plus the first uncut bar per length. Same result as
+    # scanning every bar, but the run time no longer grows with the stock.
+    _gruppen: dict[float, list[int]] = {}
+    for bar_i, bl in enumerate(_expand_bars()):
+        _gruppen.setdefault(bl, []).append(bar_i)
 
     def evaluate(perm: list[int]) -> float:
-        stangen = make_stangen()
+        # Entries [index, rest, part count, length], sorted by index
+        aktiv = sorted([idxs[0], bl, 0, bl] for bl, idxs in _gruppen.items())
+        naechste = dict.fromkeys(_gruppen, 1)
         genutzt = 0.0
         for idx in perm:
             _, teil_laenge = einzelteile[idx]
             best_st = None
             best_rest = float('inf')
-            for st in stangen:
-                bed = teil_laenge + (kerf if st["n"] > 0 else 0)
-                if st["rest"] >= bed:
-                    nach_rest = st["rest"] - bed
+            for st in aktiv:
+                bed = teil_laenge + (kerf if st[2] > 0 else 0)
+                if st[1] >= bed:
+                    nach_rest = st[1] - bed
                     if nach_rest < best_rest:
                         best_rest = nach_rest
                         best_st = st
             if best_st is not None:
-                bed = teil_laenge + (kerf if best_st["n"] > 0 else 0)
-                best_st["rest"] -= bed
-                best_st["n"] += 1
+                if best_st[2] == 0:
+                    bl = best_st[3]
+                    k = naechste[bl]
+                    if k < len(_gruppen[bl]):
+                        bisect.insort(aktiv, [_gruppen[bl][k], bl, 0, bl])
+                        naechste[bl] = k + 1
+                bed = teil_laenge + (kerf if best_st[2] > 0 else 0)
+                best_st[1] -= bed
+                best_st[2] += 1
                 genutzt += teil_laenge
         return genutzt
 
@@ -867,8 +885,11 @@ def optimize_1d_ga(
         population.append(p)
 
     elite_count = max(2, int(_GA_POPULATION * _GA_ELITE_RATIO))
+    deadline = time.monotonic() + _GA_TIME_LIMIT
 
     for _ in range(_GA_GENERATIONS):
+        if time.monotonic() > deadline:
+            break
         # Elitism: the best individuals survive unchanged; parents are
         # drawn from the top third, mutation = swap two positions.
         scored = sorted([(evaluate(p), p) for p in population],
@@ -961,7 +982,7 @@ def optimize_2d_ga(
     for label, laenge, breite, anzahl in teile:
         einzelteile.extend((label, laenge, breite) for _ in range(anzahl))
 
-    if not einzelteile or not vorrat:
+    if len(einzelteile) < 2 or not vorrat:
         return optimize_2d(teile, vorrat, kerf, drehung_erlaubt, teil_drehung,
                            defekte)
 
@@ -982,16 +1003,32 @@ def optimize_2d_ga(
                 d.laenge, d.breite, kerf)
         return freiraeume
 
-    def make_plates():
-        plates = []
-        for pv in sorted(vorrat, key=lambda p: p.laenge * p.breite):
-            for copy_idx in range(pv.anzahl):
-                plates.append({"laenge": pv.laenge, "breite": pv.breite,
-                               "freiraeume": _init_freiraeume(pv, copy_idx + 1)})
-        return plates
+    # Same idea as in 1D: unused panels of the same size without defects
+    # are interchangeable, first-fit always lands in the first of them.
+    # evaluate() only keeps used panels plus the first unused panel per
+    # group (each panel with defects is its own group), in stock order.
+    # Same result, run time independent of the stock size.
+    _gruppen: dict[tuple, list[tuple[int, PlattenVorrat, int]]] = {}
+    plate_i = 0
+    for pv in sorted(vorrat, key=lambda p: p.laenge * p.breite):
+        defekte_map = defekte.get(pv.lagerstueck_id, {}) if defekte else {}
+        for copy_idx in range(pv.anzahl):
+            stueck_nr = copy_idx + 1
+            key = (("d", pv.lagerstueck_id, stueck_nr)
+                   if defekte_map.get(stueck_nr) else (pv.laenge, pv.breite))
+            _gruppen.setdefault(key, []).append((plate_i, pv, stueck_nr))
+            plate_i += 1
+
+    def _neue_platte(key, k):
+        i, pv, stueck_nr = _gruppen[key][k]
+        return [i, {"laenge": pv.laenge, "breite": pv.breite, "_key": key,
+                    "freiraeume": _init_freiraeume(pv, stueck_nr)}]
 
     def evaluate(perm, rots):
-        plates = make_plates()
+        # Entries [index, panel], sorted by index
+        aktiv = sorted((_neue_platte(key, 0) for key in _gruppen),
+                       key=lambda e: e[0])
+        naechste = dict.fromkeys(_gruppen, 1)
         placed = 0
         for pos, idx in enumerate(perm):
             label, tl, tb = einzelteile[idx]
@@ -1000,7 +1037,7 @@ def optimize_2d_ga(
                 tl, tb = tb, tl
             elif not normal_ok and gedreht_ok:
                 tl, tb = tb, tl
-            for plate in plates:
+            for _, plate in aktiv:
                 best_fi, best_rest = None, float("inf")
                 for fi, fr in enumerate(plate["freiraeume"]):
                     if tl <= fr.laenge and tb <= fr.breite:
@@ -1008,6 +1045,13 @@ def optimize_2d_ga(
                         if r < best_rest:
                             best_rest, best_fi = r, fi
                 if best_fi is not None:
+                    if not plate.get("_used"):
+                        key = plate["_key"]
+                        k = naechste[key]
+                        if k < len(_gruppen[key]):
+                            bisect.insort(aktiv, _neue_platte(key, k),
+                                          key=lambda e: e[0])
+                            naechste[key] = k + 1
                     fr = plate["freiraeume"].pop(best_fi)
                     rr = fr.laenge - tl - kerf
                     if rr > 0:
@@ -1026,7 +1070,7 @@ def optimize_2d_ga(
         # weight makes one extra placed part always outweigh any
         # possible area saving (panel areas are ≪ 1e12 mm²).
         used_area = sum(p["laenge"] * p["breite"]
-                        for p in plates if p.get("_used"))
+                        for _, p in aktiv if p.get("_used"))
         return placed * 1e12 - used_area
 
     def crossover(p1, p2):
@@ -1054,8 +1098,11 @@ def optimize_2d_ga(
         population.append((p, [rng.random() < 0.3 for _ in range(n)]))
 
     elite_count = max(2, int(_GA_POPULATION * _GA_ELITE_RATIO))
+    deadline = time.monotonic() + _GA_TIME_LIMIT
 
     for _ in range(_GA_GENERATIONS):
+        if time.monotonic() > deadline:
+            break
         scored = sorted([(evaluate(p, r), p, r) for p, r in population],
                         key=lambda x: x[0], reverse=True)
         elite = [(p, r) for _, p, r in scored[:elite_count]]

@@ -3,12 +3,15 @@
 import pytest
 
 from core.models import Defekt
+import core.optimize as optimize_mod
 from core.optimize import (
     OptimierungsErgebnis,
     PlattenVorrat,
     StangenVorrat,
     optimize_1d,
+    optimize_1d_ga,
     optimize_2d,
+    optimize_2d_ga,
 )
 
 
@@ -269,3 +272,60 @@ class TestOptimize2D:
             for rest_l, rest_b in plan.reste:
                 assert rest_l > 0
                 assert rest_b > 0
+
+
+# =====================================================================
+# Gründlich (genetischer Algorithmus)
+# =====================================================================
+
+def _plaene(erg):
+    return [(p.lagerstueck_id, p.stueck_nr,
+             [(z.teil_label, z.x, z.y, z.gedreht) for z in p.platzierungen])
+            for p in erg.schnittplaene]
+
+
+class TestGenetisch:
+
+    @pytest.fixture(autouse=True)
+    def _schnell(self, monkeypatch):
+        monkeypatch.setattr(optimize_mod, "_GA_GENERATIONS", 20)
+
+    def test_1d_unabhaengig_von_lagermenge(self):
+        """Zusätzliche gleiche Stangen im Lager ändern den Plan nicht."""
+        teile = [("lang", 375.5, 30), ("kurz", 291.3, 30)]
+        wenig = optimize_1d_ga(teile, [StangenVorrat(1, 1200.0, 20)], 4.0)
+        viel = optimize_1d_ga(teile, [StangenVorrat(1, 1200.0, 2000)], 4.0)
+        assert not wenig.fehlende_teile
+        assert _plaene(wenig) == _plaene(viel)
+
+    def test_1d_defekt_macht_teil_unmoeglich(self):
+        """Ein Defekt teilt die Stange auch im genetischen Algorithmus."""
+        defekte = {1: {1: [Defekt(einzelstueck_id=1, position=500, laenge=100)]}}
+        erg = optimize_1d_ga([("A", 2000.0, 1)],
+                             [StangenVorrat(1, 2500.0, 1)], 3.0, defekte)
+        assert erg.fehlende_teile == ["A"]
+
+    def test_2d_unabhaengig_von_lagermenge(self):
+        """Zusätzliche gleiche Platten im Lager ändern den Plan nicht."""
+        teile = [("A", 600.0, 400.0, 10), ("B", 350.0, 350.0, 10)]
+        wenig = optimize_2d_ga(teile, [PlattenVorrat(1, 2800.0, 2070.0, 5)], 4.0)
+        viel = optimize_2d_ga(teile, [PlattenVorrat(1, 2800.0, 2070.0, 500)], 4.0)
+        assert not wenig.fehlende_teile
+        assert _plaene(wenig) == _plaene(viel)
+
+    def test_zeitlimit_liefert_startloesung(self, monkeypatch):
+        """Bei abgelaufenem Zeitlimit kommt mindestens die Startlösung zurück."""
+        monkeypatch.setattr(optimize_mod, "_GA_TIME_LIMIT", 0.0)
+        teile = [("lang", 375.5, 30), ("kurz", 291.3, 30)]
+        vorrat = [StangenVorrat(1, 1200.0, 50)]
+        ga = optimize_1d_ga(teile, vorrat, 4.0)
+        assert not ga.fehlende_teile
+        assert len(ga.schnittplaene) <= len(optimize_1d(teile, vorrat, 4.0).schnittplaene) + 1
+
+    def test_ein_einzelnes_teil(self):
+        """Mit nur einem offenen Teil darf „Gründlich“ nicht abstürzen."""
+        erg1 = optimize_1d_ga([("A", 500.0, 1)], [StangenVorrat(1, 2500.0, 3)], 3.0)
+        erg2 = optimize_2d_ga([("A", 500.0, 400.0, 1)],
+                              [PlattenVorrat(1, 2000.0, 1000.0, 3)], 3.0)
+        assert not erg1.fehlende_teile and len(erg1.schnittplaene) == 1
+        assert not erg2.fehlende_teile and len(erg2.schnittplaene) == 1
