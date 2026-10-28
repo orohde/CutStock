@@ -131,10 +131,8 @@ const formatDim = (mm) => {
 // UI-Cookie veraltet (API-Key anderswo geändert)? Einmal neu laden, damit der
 // Server ein frisches Cookie setzt – nicht in einer Schleife.
 function reloadForFreshUiCookie() {
-    try {
-        if (sessionStorage.getItem('cutstock_401_reload')) return false;
-        sessionStorage.setItem('cutstock_401_reload', '1');
-    } catch { return false; }
+    if (storageGet('sessionStorage', 'cutstock_401_reload')) return false;
+    if (!storageSet('sessionStorage', 'cutstock_401_reload', '1')) return false;
     location.reload();
     return true;
 }
@@ -153,7 +151,7 @@ async function fetchJSON(url, method = 'GET', body = null) {
     if (resp.status === 401 && reloadForFreshUiCookie()) {
         throw new Error('HTTP 401');
     }
-    sessionStorage.removeItem('cutstock_401_reload');
+    storageRemove('sessionStorage', 'cutstock_401_reload');
     if (!resp.ok) {
         let msg = `HTTP ${resp.status}`;
         try {
@@ -3041,7 +3039,7 @@ function setupSplitters() {
         sp.insertBefore(splitter, panels[1]);
 
         const key = 'cutstock.split.' + (sp.closest('.tab-content')?.id || 'x');
-        let leftFr = parseFloat(localStorage.getItem(key));
+        let leftFr = parseFloat(storageGet('localStorage', key));
         if (!(leftFr > 0.2 && leftFr < 0.8)) leftFr = 0.5;
         const apply = () => {
             sp.style.setProperty('--split-cols', `${leftFr}fr 16px ${1 - leftFr}fr`);
@@ -3068,7 +3066,7 @@ function setupSplitters() {
             dragging = false;
             splitter.classList.remove('dragging');
             document.body.style.userSelect = '';
-            localStorage.setItem(key, String(leftFr));
+            storageSet('localStorage', key, String(leftFr));
         };
         splitter.addEventListener('pointerup', end);
         splitter.addEventListener('pointercancel', end);
@@ -3728,6 +3726,22 @@ function escHtml(str) {
 function escAttr(str) {
     if (str == null) return '';
     return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+
+// Web Storage kann fehlen oder schon beim Zugriff werfen (SecurityError in
+// manchen Webviews, blockierte Website-Daten, private Modi). Dann gelten die
+// Defaults und es wird nichts gespeichert – aber auch nichts geworfen.
+// area: 'localStorage' oder 'sessionStorage'.
+function storageGet(area, key) {
+    try { return window[area].getItem(key); } catch { return null; }
+}
+
+function storageSet(area, key, value) {
+    try { window[area].setItem(key, value); return true; } catch { return false; }
+}
+
+function storageRemove(area, key) {
+    try { window[area].removeItem(key); } catch { /* ignorieren */ }
 }
 
 // ===========================================================================
