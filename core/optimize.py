@@ -224,6 +224,8 @@ def optimize_1d(
         for l in distinct_lengths:
             c = pat.get(l, 0)
             for _ in range(c):
+                if not labels_by_len.get(l):
+                    break
                 if platzierungen:
                     pos += kerf
                 lab = labels_by_len[l].pop(0)
@@ -1199,6 +1201,18 @@ def _split_bar_by_defects(bar_length: float, defects: list,
     return segments
 
 
+def _sort_1d_placements(platzierungen: list[Platzierung], kerf: float,
+                        offset: float = 0.0) -> None:
+    """Sort placements on a bar by length descending, recalculate positions."""
+    platzierungen.sort(key=lambda p: p.laenge, reverse=True)
+    pos = offset
+    for i, p in enumerate(platzierungen):
+        if i > 0:
+            pos += kerf
+        p.x = pos
+        pos += p.laenge
+
+
 def _build_1d_result_segments(verfuegbar, fehlend, kerf):
     """Build 1D result, merging segments of the same physical bar."""
     by_bar: dict[int, list] = {}
@@ -1221,6 +1235,7 @@ def _build_1d_result_segments(verfuegbar, fehlend, kerf):
             total_len += seg["laenge"]
             total_rest += seg["rest"]
 
+        _sort_1d_placements(all_platz, kerf)
         genutzt = sum(p.laenge for p in all_platz)
         kv = kerf * max(0, len(all_platz) - 1)
         verschnitt = total_len - genutzt - kv
@@ -1246,6 +1261,7 @@ def _build_1d_result(verfuegbar, fehlend, kerf):
     for st in verfuegbar:
         if not st["platzierungen"]:
             continue
+        _sort_1d_placements(st["platzierungen"], kerf)
         genutzt = sum(p.laenge for p in st["platzierungen"])
         kv = kerf * max(0, len(st["platzierungen"]) - 1)
         verschnitt = st["laenge"] - genutzt - kv
