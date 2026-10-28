@@ -2350,7 +2350,7 @@ async function exportProject() {
     showToast(t('proj.export_done'), 'info');
 }
 
-// Projekt aus JSON importieren – Material per Name→ID, fehlende melden
+// Projekt aus JSON importieren – fehlende Materialien automatisch anlegen
 async function importProject(file) {
     let data;
     try {
@@ -2368,10 +2368,23 @@ async function importProject(file) {
     } catch { return; }
 
     let imported = 0;
-    const missing = new Set();
+    const created = [];
     for (const p of (data.parts || [])) {
-        const mat = matByName.get(p.material || '');
-        if (!mat) { missing.add(p.material || '?'); continue; }
+        let mat = matByName.get(p.material || '');
+        if (!mat && p.material) {
+            try {
+                const typ = p.type === 'Stange' ? 'Stange' : 'Platte';
+                mat = await Api.createMaterial({
+                    name: p.material,
+                    typ,
+                    maserung: p.grain || 'keine',
+                });
+                matByName.set(p.material, mat);
+                State.materials.push(mat);
+                created.push(p.material);
+            } catch { /* skip */ }
+        }
+        if (!mat) continue;
         const typ = p.type === 'Stange' ? 'Stange' : 'Platte';
         try {
             await Api.createPart(project.id, {
@@ -2391,13 +2404,15 @@ async function importProject(file) {
     State.selectedProjectId = project.id;
     await renderProjects();
     State.projects = await Api.getProjects();
+    State.materials = await Api.getMaterials();
     renderOptDropdowns();
+    renderMaterials();
 
-    if (missing.size > 0) {
-        showToast(t('proj.import_missing', { materials: [...missing].sort().join(', ') }), 'error');
-    } else {
-        showToast(t('proj.import_done', { n: imported }), 'info');
+    let msg = t('proj.import_done', { n: imported });
+    if (created.length > 0) {
+        msg += ' ' + t('proj.import_materials_created', { materials: created.join(', ') });
     }
+    showToast(msg, 'info');
 }
 
 // ---------------------------------------------------------------------------

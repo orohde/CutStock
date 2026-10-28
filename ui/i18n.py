@@ -445,6 +445,12 @@ TRANSLATIONS = {
         "fr": "Les matériaux suivants n'ont pas été trouvés, pièces concernées ignorées:\n{materials}",
         "it": "I seguenti materiali non sono stati trovati, pezzi interessati saltati:\n{materials}",
     },
+    "proj.import_materials_created": {
+        "de": "(Materialien angelegt: {materials})",
+        "en": "(Materials created: {materials})",
+        "fr": "(Matériaux créés : {materials})",
+        "it": "(Materiali creati: {materials})",
+    },
     # ---- Backup / Restore ----
     "set.backup": {
         "de": "Backup", "en": "Backup", "fr": "Sauvegarde", "it": "Backup",
