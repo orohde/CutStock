@@ -106,6 +106,17 @@ TRANSLATIONS = {
         "de": "Dicke/Querschnitt", "en": "Thickness/Section",
         "fr": "Épaisseur/Section", "it": "Spessore/Sezione",
     },
+    "mat.image": {"de": "Bild", "en": "Image", "fr": "Image", "it": "Immagine"},
+    "mat.image.upload": {
+        "de": "Bild hochladen", "en": "Upload image",
+        "fr": "Télécharger l'image", "it": "Carica immagine",
+    },
+    "mat.image.change": {
+        "de": "Ändern", "en": "Change", "fr": "Changer", "it": "Cambia",
+    },
+    "mat.image.remove": {
+        "de": "Entfernen", "en": "Remove", "fr": "Supprimer", "it": "Rimuovi",
+    },
     # ---- Lager / Stock ----
     "stock.title": {
         "de": "Lagerbestand", "en": "Stock", "fr": "Stock",
@@ -450,6 +461,12 @@ TRANSLATIONS = {
         "en": "(Materials created: {materials})",
         "fr": "(Matériaux créés : {materials})",
         "it": "(Materiali creati: {materials})",
+    },
+    "proj.import_version_newer": {
+        "de": "Die Datei wurde mit einer neueren Version ({v}) erstellt. Einige Daten könnten nicht korrekt importiert werden.",
+        "en": "The file was created with a newer version ({v}). Some data may not import correctly.",
+        "fr": "Le fichier a été créé avec une version plus récente ({v}). Certaines données pourraient ne pas être importées correctement.",
+        "it": "Il file è stato creato con una versione più recente ({v}). Alcuni dati potrebbero non essere importati correttamente.",
     },
     # ---- Backup / Restore ----
     "set.backup": {

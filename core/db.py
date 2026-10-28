@@ -81,7 +81,8 @@ CREATE TABLE IF NOT EXISTS material (
     maserung        TEXT    NOT NULL DEFAULT 'keine',
     besaeumung      REAL    NOT NULL DEFAULT 0,
     rest_min_laenge REAL    NOT NULL DEFAULT 0,
-    rest_min_breite REAL    NOT NULL DEFAULT 0
+    rest_min_breite REAL    NOT NULL DEFAULT 0,
+    bild            BLOB    DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS lagerstueck (
@@ -164,6 +165,9 @@ class Database:
         """Spalten nachrüsten die in älteren DB-Versionen fehlen."""
         mat_cols = {row[1] for row in
                     self.conn.execute("PRAGMA table_info(material)").fetchall()}
+        if "bild" not in mat_cols:
+            self.conn.execute(
+                "ALTER TABLE material ADD COLUMN bild BLOB DEFAULT NULL")
         if "besaeumung" not in mat_cols:
             self.conn.execute(
                 "ALTER TABLE material ADD COLUMN besaeumung REAL NOT NULL DEFAULT 0")
@@ -270,6 +274,16 @@ class Database:
         self.conn.commit()
         return m
 
+    def save_material_image(self, mid: int, image: bytes | None):
+        self.conn.execute(
+            "UPDATE material SET bild=? WHERE id=?", (image, mid))
+        self.conn.commit()
+
+    def get_material_image(self, mid: int) -> bytes | None:
+        row = self.conn.execute(
+            "SELECT bild FROM material WHERE id=?", (mid,)).fetchone()
+        return row["bild"] if row else None
+
     def get_material(self, mid: int) -> Material | None:
         row = self.conn.execute(
             "SELECT * FROM material WHERE id=?", (mid,)
@@ -277,8 +291,12 @@ class Database:
         return self._row_to_material(row) if row else None
 
     def list_materials(self) -> list[Material]:
-        rows = self.conn.execute("SELECT * FROM material ORDER BY name").fetchall()
-        return [self._row_to_material(r) for r in rows]
+        rows = self.conn.execute(
+            "SELECT id, name, typ, dicke, querschnitt_breite, querschnitt_tiefe,"
+            " drehung_erlaubt, maserung, besaeumung, rest_min_laenge, rest_min_breite,"
+            " (bild IS NOT NULL AND length(bild) > 0) AS hat_bild"
+            " FROM material ORDER BY name").fetchall()
+        return [self._row_to_material(r, hat_bild_col=True) for r in rows]
 
     def delete_material(self, mid: int):
         self.conn.execute("DELETE FROM teil WHERE material_id=?", (mid,))
@@ -287,7 +305,7 @@ class Database:
         self.conn.commit()
 
     @staticmethod
-    def _row_to_material(row: sqlite3.Row) -> Material:
+    def _row_to_material(row: sqlite3.Row, hat_bild_col: bool = False) -> Material:
         maserung = Maserung(row["maserung"]) if row["maserung"] else Maserung.KEINE
         return Material(
             id=row["id"], name=row["name"],
@@ -299,6 +317,7 @@ class Database:
             besaeumung=row["besaeumung"],
             rest_min_laenge=row["rest_min_laenge"],
             rest_min_breite=row["rest_min_breite"],
+            bild=b"\x01" if (hat_bild_col and row["hat_bild"]) else b"",
         )
 
     # ------------------------------------------------------------------

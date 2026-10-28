@@ -138,6 +138,28 @@ main { padding: 1rem; }
 
 td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
+.mat-img-col { width: 48px; text-align: center; padding: 2px 4px !important; }
+.mat-thumb-wrap { position: relative; display: inline-block; }
+.mat-thumb {
+  width: 36px; height: 36px; object-fit: cover; border-radius: 4px;
+  transition: transform .2s ease, box-shadow .2s ease;
+  cursor: zoom-in;
+}
+.mat-thumb:hover {
+  transform: scale(4);
+  z-index: 100; position: relative;
+  box-shadow: 0 4px 16px rgba(0,0,0,.35);
+  border-radius: 4px;
+}
+
+.mat-img-upload { margin-top: .5rem; }
+.mat-img-upload .mat-img-preview {
+  width: 80px; height: 80px; object-fit: cover; border-radius: 4px;
+  border: 1px solid var(--sapField_BorderColor, #89919a);
+}
+.mat-img-upload .mat-img-actions { display: flex; gap: .25rem; margin-top: .25rem; }
+.mat-img-upload .mat-img-actions button { font-size: .8125rem; }
+
 .empty-state {
   text-align: center;
   color: var(--sapContent_LabelColor, #556b82);

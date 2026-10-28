@@ -153,6 +153,15 @@ const Api = {
     createMaterial: (data) => fetchJSON('/api/materials', 'POST', data),
     updateMaterial: (id, data) => fetchJSON(`/api/materials/${id}`, 'PUT', data),
     deleteMaterial: (id) => fetchJSON(`/api/materials/${id}`, 'DELETE'),
+    uploadMaterialImage: (id, file) => {
+        const fd = new FormData();
+        fd.append('file', file);
+        return fetch(API_BASE + `/api/materials/${id}/image`, { method: 'POST', body: fd })
+            .then(r => { if (!r.ok) throw new Error(r.status); });
+    },
+    deleteMaterialImage: (id) => fetch(API_BASE + `/api/materials/${id}/image`, { method: 'DELETE' })
+        .then(r => { if (!r.ok) throw new Error(r.status); }),
+    materialImageUrl: (id) => API_BASE + `/api/materials/${id}/image`,
 
     getStock: (materialId) => fetchJSON(`/api/stock?material_id=${materialId}`),
     createStock: (data) => fetchJSON('/api/stock', 'POST', data),
@@ -321,7 +330,7 @@ async function renderMaterials() {
     if (!tbody) return;
 
     if (State.materials.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="4" class="empty-state">${t('mat.empty')}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="empty-state">${t('mat.empty')}</td></tr>`;
         State.selectedMaterialId = null;
         renderStock();
         return;
@@ -342,7 +351,11 @@ async function renderMaterials() {
             dims = `${formatDim(m.querschnitt_breite)} x ${formatDim(m.querschnitt_tiefe)}`;
         }
         const grain = m.typ === 'Platte' ? t(GRAIN_KEY[m.maserung] || m.maserung) : '';
+        const imgCell = m.hat_bild
+            ? `<div class="mat-thumb-wrap"><img class="mat-thumb" src="${Api.materialImageUrl(m.id)}" loading="lazy" alt=""></div>`
+            : '';
         return `<tr class="fd-table__row ${selected}" data-id="${m.id}">
+            <td class="fd-table__cell mat-img-col">${imgCell}</td>
             <td class="fd-table__cell">${escHtml(m.name)}</td>
             <td class="fd-table__cell">${typLabel}</td>
             <td class="fd-table__cell num">${dims}</td>
@@ -2094,11 +2107,21 @@ function openMaterialDialog(material = null) {
 
     openModal(title, fields, data, async (formData) => {
         try {
+            let mat;
             if (isEdit) {
-                await Api.updateMaterial(material.id, formData);
+                mat = await Api.updateMaterial(material.id, formData);
             } else {
-                await Api.createMaterial(formData);
+                mat = await Api.createMaterial(formData);
             }
+            const mid = isEdit ? material.id : mat?.id;
+            if (mid && _matImgPendingFile) {
+                try { await Api.uploadMaterialImage(mid, _matImgPendingFile); } catch { /* ignore */ }
+            }
+            if (mid && _matImgPendingDelete) {
+                try { await Api.deleteMaterialImage(mid); } catch { /* ignore */ }
+            }
+            _matImgPendingFile = null;
+            _matImgPendingDelete = false;
             await renderMaterials();
             renderOptDropdowns();
         } catch { /* fetchJSON shows toast */ }
@@ -2111,7 +2134,59 @@ function openMaterialDialog(material = null) {
     if (typSel) {
         typSel.addEventListener('change', () => setupMaterialTypToggle(typSel.value));
     }
+
+    // Image upload section
+    _matImgPendingFile = null;
+    _matImgPendingDelete = false;
+    const imgSection = document.createElement('div');
+    imgSection.className = 'form-group mat-img-upload';
+    imgSection.innerHTML = `<label class="fd-form-label">${t('mat.image')}</label>
+        <div class="mat-img-preview-wrap"></div>
+        <div class="mat-img-actions">
+            <button type="button" class="fd-button fd-button--compact mat-img-choose">${isEdit && data.hat_bild ? t('mat.image.change') : t('mat.image.upload')}</button>
+            ${isEdit && data.hat_bild ? `<button type="button" class="fd-button fd-button--compact fd-button--negative mat-img-remove">${t('mat.image.remove')}</button>` : ''}
+        </div>
+        <input type="file" accept="image/*" style="display:none" class="mat-img-input">`;
+    document.getElementById('modal-body').appendChild(imgSection);
+
+    const previewWrap = imgSection.querySelector('.mat-img-preview-wrap');
+    if (isEdit && data.hat_bild) {
+        previewWrap.innerHTML = `<img class="mat-img-preview" src="${Api.materialImageUrl(material.id)}">`;
+    }
+
+    const fileInput = imgSection.querySelector('.mat-img-input');
+    imgSection.querySelector('.mat-img-choose').addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+        if (!fileInput.files.length) return;
+        _matImgPendingFile = fileInput.files[0];
+        _matImgPendingDelete = false;
+        const url = URL.createObjectURL(_matImgPendingFile);
+        previewWrap.innerHTML = `<img class="mat-img-preview" src="${url}">`;
+        const rmBtn = imgSection.querySelector('.mat-img-remove');
+        if (!rmBtn) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'fd-button fd-button--compact fd-button--negative mat-img-remove';
+            btn.textContent = t('mat.image.remove');
+            btn.addEventListener('click', removeImg);
+            imgSection.querySelector('.mat-img-actions').appendChild(btn);
+        }
+    });
+
+    function removeImg() {
+        _matImgPendingFile = null;
+        _matImgPendingDelete = true;
+        previewWrap.innerHTML = '';
+        const rmBtn = imgSection.querySelector('.mat-img-remove');
+        if (rmBtn) rmBtn.remove();
+        imgSection.querySelector('.mat-img-choose').textContent = t('mat.image.upload');
+    }
+
+    const rmBtn = imgSection.querySelector('.mat-img-remove');
+    if (rmBtn) rmBtn.addEventListener('click', removeImg);
 }
+let _matImgPendingFile = null;
+let _matImgPendingDelete = false;
 
 function setupMaterialTypToggle(typ) {
     const body = document.getElementById('modal-body');
@@ -2359,6 +2434,13 @@ async function importProject(file) {
     } catch {
         showToast(t('error.pdf_failed'), 'error');
         return;
+    }
+
+    if (data.version) {
+        const cur = State.versionInfo ? State.versionInfo.version : '';
+        if (cur && data.version > cur) {
+            showToast(t('proj.import_version_newer', { v: data.version }), 'warning');
+        }
     }
 
     const matByName = new Map(State.materials.map(m => [m.name, m]));

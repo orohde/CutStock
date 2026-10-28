@@ -182,6 +182,7 @@ class MaterialOut(BaseModel):
     besaeumung: float
     rest_min_laenge: float
     rest_min_breite: float
+    hat_bild: bool = False
 
 
 class StockIn(BaseModel):
@@ -396,6 +397,7 @@ def _material_to_out(m: Material) -> MaterialOut:
         besaeumung=m.besaeumung,
         rest_min_laenge=m.rest_min_laenge,
         rest_min_breite=m.rest_min_breite,
+        hat_bild=bool(m.bild),
     )
 
 
@@ -696,6 +698,36 @@ def delete_material(mid: int):
     if not existing:
         raise HTTPException(404, "Material not found")
     get_db().delete_material(mid)
+
+
+@app.post("/api/materials/{mid}/image", status_code=204)
+async def upload_material_image(mid: int, file: UploadFile = File(...)):
+    if not get_db().get_material(mid):
+        raise HTTPException(404, "Material not found")
+    data = await file.read()
+    if len(data) > 5 * 1024 * 1024:
+        raise HTTPException(400, "Image too large (max 5 MB)")
+    get_db().save_material_image(mid, data)
+
+
+@app.get("/api/materials/{mid}/image")
+def get_material_image(mid: int):
+    data = get_db().get_material_image(mid)
+    if not data:
+        raise HTTPException(404, "No image")
+    ct = "image/jpeg"
+    if data[:4] == b"\x89PNG":
+        ct = "image/png"
+    elif data[:4] == b"RIFF":
+        ct = "image/webp"
+    return Response(content=data, media_type=ct)
+
+
+@app.delete("/api/materials/{mid}/image", status_code=204)
+def delete_material_image(mid: int):
+    if not get_db().get_material(mid):
+        raise HTTPException(404, "Material not found")
+    get_db().save_material_image(mid, None)
 
 
 # ---------------------------------------------------------------------------

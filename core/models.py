@@ -54,6 +54,7 @@ class Material:
     # Rest-Schwellen (Reste kleiner als diese Werte = Abfall)
     rest_min_laenge: float = 0.0
     rest_min_breite: float = 0.0
+    bild: bytes = b""
 
 
 @dataclass
