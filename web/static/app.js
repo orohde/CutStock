@@ -2337,7 +2337,8 @@ async function exportProject() {
         return entry;
     });
 
-    const data = { project: proj.name, parts };
+    const ver = State.versionInfo ? State.versionInfo.version : '';
+    const data = { version: ver, project: proj.name, parts };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
