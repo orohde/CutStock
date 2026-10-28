@@ -69,9 +69,10 @@ class Schnittplan:
     lager_breite: float = 0.0
     stueck_nr: int = 0
     platzierungen: list[Platzierung] = field(default_factory=list)
-    reste: list[tuple[float, float]] = field(default_factory=list)  # (L, W) or (L,)
+    reste: list[tuple[float, float]] = field(default_factory=list)  # 2D: (L, W), 1D: (L, x)
     verschnitt_mm: float = 0.0       # 1D: mm, 2D: mm² (absolute waste)
     verschnitt_prozent: float = 0.0
+    defekte: list = field(default_factory=list)  # Defekt objects, for the PDF
 
 
 @dataclass
@@ -377,6 +378,7 @@ def _optimize_1d_bfd(
                             "platzierungen": [],
                             "_offset": seg_start,
                             "_bar": bar_idx,
+                            "_bar_len": sv.laenge,
                         })
             else:
                 verfuegbar.append({
@@ -924,6 +926,7 @@ def optimize_1d_ga(
                             "laenge": seg_len,
                             "rest": seg_len, "platzierungen": [],
                             "_offset": seg_start, "_bar": bar_idx,
+                            "_bar_len": sv.laenge,
                         })
             else:
                 verfuegbar.append({
@@ -1261,39 +1264,51 @@ def _sort_1d_placements(platzierungen: list[Platzierung], kerf: float,
 
 
 def _build_1d_result_segments(verfuegbar, fehlend, kerf):
-    """Build 1D result, merging segments of the same physical bar."""
+    """Build 1D result, merging segments of the same physical bar.
+
+    A bar with defects consists of several segments (see
+    _split_bar_by_defects). Parts are arranged within their own segment,
+    so they never overlap a defect. lager_laenge is the physical bar
+    length; each segment's unused end becomes a separate rest
+    (laenge, x), because the defect zones in between are cut out as waste.
+    """
     by_bar: dict[int, list] = {}
     for st in verfuegbar:
-        if not st["platzierungen"]:
-            continue
         by_bar.setdefault(st["_bar"], []).append(st)
 
     ergebnis = OptimierungsErgebnis(fehlende_teile=fehlend)
     gesamt_nutzbar = gesamt_genutzt = 0.0
 
     for _, segments in sorted(by_bar.items()):
+        # Bars that stay uncut are not part of the plan
+        if not any(seg["platzierungen"] for seg in segments):
+            continue
+        segments.sort(key=lambda seg: seg["_offset"])
         all_platz: list = []
-        total_len = 0.0
-        total_rest = 0.0
+        reste: list[tuple[float, float]] = []
+        kv = 0.0
         lid = segments[0]["id"]
         stueck_nr = segments[0].get("stueck_nr", 0)
+        bar_len = segments[0].get("_bar_len", segments[0]["laenge"])
         for seg in segments:
-            all_platz.extend(seg["platzierungen"])
-            total_len += seg["laenge"]
-            total_rest += seg["rest"]
+            platz = seg["platzierungen"]
+            _sort_1d_placements(platz, kerf, seg["_offset"])
+            all_platz.extend(platz)
+            kv += kerf * max(0, len(platz) - 1)
+            if seg["rest"] > 0:
+                seg_end = seg["_offset"] + seg["laenge"]
+                reste.append((seg["rest"], seg_end - seg["rest"]))
 
-        _sort_1d_placements(all_platz, kerf)
         genutzt = sum(p.laenge for p in all_platz)
-        kv = kerf * max(0, len(all_platz) - 1)
-        verschnitt = total_len - genutzt - kv
+        verschnitt = bar_len - genutzt - kv
         ergebnis.schnittplaene.append(Schnittplan(
-            lagerstueck_id=lid, lager_laenge=total_len,
+            lagerstueck_id=lid, lager_laenge=bar_len,
             stueck_nr=stueck_nr, platzierungen=all_platz,
-            reste=[(total_rest,)] if total_rest > 0 else [],
+            reste=reste,
             verschnitt_mm=verschnitt,
-            verschnitt_prozent=round(verschnitt / total_len * 100, 1)
-            if total_len > 0 else 0))
-        gesamt_nutzbar += total_len
+            verschnitt_prozent=round(verschnitt / bar_len * 100, 1)
+            if bar_len > 0 else 0))
+        gesamt_nutzbar += bar_len
         gesamt_genutzt += genutzt
 
     if gesamt_nutzbar > 0:

@@ -143,6 +143,76 @@ class TestOptimize1D:
         assert erg.fehlende_teile == ["A"]
 
 
+@pytest.mark.parametrize("optimize", [optimize_1d, optimize_1d_ga])
+class TestDefekt1DPositionen:
+    """Teile liegen neben dem Defekt, nicht darüber (Schnell und Gründlich)."""
+
+    @pytest.fixture(autouse=True)
+    def _schnell(self, monkeypatch):
+        monkeypatch.setattr(optimize_mod, "_GA_GENERATIONS", 20)
+
+    def _pruefe_plan(self, plan, defekte, kerf):
+        belegt = sorted((p.x, p.x + p.laenge) for p in plan.platzierungen)
+        for d in defekte:
+            for x0, x1 in belegt:
+                assert x1 <= d.position or x0 >= d.position + d.laenge, \
+                    f"Teil {x0}–{x1} überlappt Defekt bei {d.position}"
+        for (_, a1), (b0, _) in zip(belegt, belegt[1:]):
+            assert b0 >= a1 + kerf - 1e-6 or any(
+                a1 <= d.position and b0 >= d.position + d.laenge for d in defekte)
+        assert belegt[0][0] >= 0 and belegt[-1][1] <= plan.lager_laenge
+        # Reste liegen in freien Bereichen
+        for rest_l, rest_x in plan.reste:
+            for x0, x1 in belegt:
+                assert rest_x + rest_l <= x0 + 1e-6 or rest_x >= x1 - 1e-6
+            for d in defekte:
+                assert (rest_x + rest_l <= d.position + 1e-6
+                        or rest_x >= d.position + d.laenge - 1e-6)
+
+    def test_kein_teil_ueber_defekt(self, optimize):
+        defekt = Defekt(einzelstueck_id=1, position=1000, laenge=50)
+        erg = optimize([("a", 820.0, 4), ("b", 455.0, 6)],
+                       [StangenVorrat(1, 2000.0, 2), StangenVorrat(2, 3000.0, 2)],
+                       3.0, {2: {1: [defekt]}})
+        assert not erg.fehlende_teile
+        plaene = [sp for sp in erg.schnittplaene
+                  if sp.lagerstueck_id == 2 and sp.stueck_nr == 1]
+        assert len(plaene) == 1
+        plan = plaene[0]
+        assert plan.lager_laenge == 3000.0
+        self._pruefe_plan(plan, [defekt], 3.0)
+        # Teile + Fugen + Reste + Defekt ergeben die ganze Stange;
+        # Fugen nur zwischen Teilen desselben Segments
+        segmente = {p.x < defekt.position for p in plan.platzierungen}
+        fugen = 3.0 * (len(plan.platzierungen) - len(segmente))
+        genutzt = sum(p.laenge for p in plan.platzierungen)
+        assert plan.verschnitt_mm == pytest.approx(
+            plan.lager_laenge - genutzt - fugen)
+        assert sum(r[0] for r in plan.reste) == pytest.approx(
+            plan.verschnitt_mm - defekt.laenge)
+
+    def test_ungenutztes_segment_wird_rest(self, optimize):
+        """Ein Segment ohne Teile bleibt als eigener Rest erhalten."""
+        defekt = Defekt(einzelstueck_id=1, position=400, laenge=50)
+        erg = optimize([("A", 2000.0, 1), ("B", 2000.0, 1)],
+                       [StangenVorrat(1, 3000.0, 2)], 3.0,
+                       {1: {1: [defekt], 2: [defekt]}})
+        assert not erg.fehlende_teile
+        for plan in erg.schnittplaene:
+            assert plan.platzierungen[0].x == 450
+            self._pruefe_plan(plan, [defekt], 3.0)
+            assert sorted(plan.reste) == [(400.0, 0.0), (550.0, 2450.0)]
+
+    def test_mehrere_defekte(self, optimize):
+        defekte = [Defekt(einzelstueck_id=1, position=700, laenge=30),
+                   Defekt(einzelstueck_id=1, position=1500, laenge=80)]
+        erg = optimize([("A", 600.0, 6), ("B", 250.0, 6)],
+                       [StangenVorrat(1, 2400.0, 3)], 4.0, {1: {1: defekte}})
+        plaene = [sp for sp in erg.schnittplaene if sp.stueck_nr == 1]
+        assert plaene
+        self._pruefe_plan(plaene[0], defekte, 4.0)
+
+
 # =====================================================================
 # 2D – Platten
 # =====================================================================

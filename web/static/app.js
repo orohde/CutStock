@@ -1224,7 +1224,7 @@ async function reconcilePlanStock(plan) {
     const blade = State.blades.find(
         b => b.id === parseInt(document.getElementById('opt-blade')?.value));
     const kerf = blade?.schnittbreite || 0;
-    const markedLaengen = plan.platzierungen.filter(p => p._done).map(p => p.laenge);
+    const marked = plan.platzierungen.filter(p => p._done);
 
     try {
         const res = await Api.markPlan({
@@ -1234,7 +1234,9 @@ async function reconcilePlanStock(plan) {
             lager_laenge: plan.lager_laenge,
             lager_breite: plan.lager_breite || 0,
             kerf,
-            marked_laengen: markedLaengen,
+            marked_laengen: marked.map(p => p.laenge),
+            marked_x: marked.map(p => p.x),
+            defekte: is1D ? (plan.defekte || []).map(d => [d.position, d.laenge]) : [],
             total_pieces: plan.platzierungen.length,
             reste: plan.reste || [],
             prev_consumed: plan._consumed || false,
@@ -1630,13 +1632,21 @@ function buildCutSequence(plan, is1D, kerf) {
     const dim = (l, b) => `${toDisplay(l)}×${toDisplay(b)}`;
     if (is1D) {
         // Chop saw: cut pieces to length one after another, left to right.
+        // Defects are cut out as waste at their position in between.
         // pieceIndex refers back into plan.platzierungen for hover highlight.
-        return [...plan.platzierungen]
-            .sort((a, b) => a.x - b.x)
-            .map(p => {
-                const text = t('seq.cut_1d', { label: p.teil_label, len: formatDim(p.laenge) });
-                return { text, html: escHtml(text), pieceIndex: plan.platzierungen.indexOf(p) };
-            });
+        const steps = [
+            ...plan.platzierungen.map(p => ({ x: p.x, p })),
+            ...(plan.defekte || []).map(d => ({ x: d.position, d })),
+        ].sort((a, b) => a.x - b.x);
+        return steps.map(({ p, d }) => {
+            const text = p
+                ? t('seq.cut_1d', { label: p.teil_label, len: formatDim(p.laenge) })
+                : t('seq.cut_defect', { from: formatDim(d.position),
+                                        to: formatDim(d.position + d.laenge) });
+            return p
+                ? { text, html: escHtml(text), pieceIndex: plan.platzierungen.indexOf(p) }
+                : { text, html: escHtml(text) };
+        });
     }
     const cuts = [];
     computeGuillotineCuts(
@@ -1944,11 +1954,11 @@ function draw1D(ctx, canvasW, canvasH, plan, colorMap, hits) {
         ctx.strokeRect(px + 1, barY + 1, pw - 2, barH - 2);
     }
 
-    // Rest areas (unused at the end)
+    // Rest areas: [length, x] – one per segment next to a defect
     plan.reste.forEach(rest => {
         if (rest.length >= 1 && rest[0] > 0) {
             const restLen = rest[0];
-            const rx = padding.left + (plan.lager_laenge - restLen) * scale;
+            const rx = padding.left + (rest[1] ?? plan.lager_laenge - restLen) * scale;
             const rw = restLen * scale;
             ctx.fillStyle = 'rgba(128,128,128,0.2)';
             ctx.fillRect(rx, barY, rw, barH);

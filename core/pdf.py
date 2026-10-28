@@ -286,6 +286,25 @@ def _draw_1d_plans(c: canvas.Canvas, cur: _PageCursor,
             c.drawCentredString(x + w / 2, bar_y + bar_h / 2 - 8,
                                 f"{p.laenge:.0f}")
 
+        # Defekte rot schraffiert (werden als Abfall herausgeschnitten)
+        for d in plan.defekte:
+            x = ox + d.position * scale
+            w = d.laenge * scale
+            c.setFillColor(colors.Color(0.8, 0.1, 0.1, alpha=0.2))
+            c.setStrokeColor(colors.Color(0.8, 0.1, 0.1))
+            c.setLineWidth(0.5)
+            c.rect(x, bar_y, w, bar_h, fill=1, stroke=1)
+            p_clip = c.beginPath()
+            p_clip.rect(x, bar_y, w, bar_h)
+            c.saveState()
+            c.clipPath(p_clip, stroke=0, fill=0)
+            step = 4
+            i = -bar_h
+            while i < w:
+                c.line(x + i, bar_y, x + i + bar_h, bar_y + bar_h)
+                i += step
+            c.restoreState()
+
         if col == 1:
             cur.y = row_start_y
             cur.advance(row_h)

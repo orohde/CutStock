@@ -158,3 +158,18 @@ class TestMarkPlanUndo:
         res = self._mark(client, mid, sid, True, 2990, 0, [800], False)
         res = self._mark(client, mid, sid, True, 2990, 0, [], True, res["rest_ids"])
         assert self._stock(client, mid) == [(3000, 0, 1)]
+
+    def test_stange_mit_defekt_reste_ohne_defekt(self, client):
+        """Defektzone wird herausgeschnitten, die Reste liegen links/rechts."""
+        mid = self._material(client, "Stange", 0)
+        sid = client.post("/api/stock", json={
+            "material_id": mid, "laenge": 3000, "stueckzahl": 1}).json()["id"]
+        res = client.post("/api/optimize/mark-plan", json={
+            "material_id": mid, "lagerstueck_id": sid, "is_1d": True,
+            "lager_laenge": 3000, "kerf": 3,
+            "marked_laengen": [820, 820], "marked_x": [0, 1050],
+            "defekte": [[1000, 50]], "prev_consumed": False}).json()
+        assert sorted(self._stock(client, mid)) == [(177, 0, 1), (1127, 0, 1)]
+        self._mark(client, mid, res["lagerstueck_id"], True, 3000, 0, [], True,
+                   res["rest_ids"])
+        assert self._stock(client, mid) == [(3000, 0, 1)]

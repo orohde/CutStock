@@ -698,6 +698,12 @@ TRANSLATIONS = {
         "de": "{label}: {len} ablängen", "en": "{label}: cut {len} to length",
         "fr": "{label} : couper à {len}", "it": "{label}: tagliare a {len}",
     },
+    "seq.cut_defect": {
+        "de": "Defekt {from}–{to} herausschneiden (Abfall)",
+        "en": "Cut out defect {from}–{to} (waste)",
+        "fr": "Découper le défaut {from}–{to} (chute)",
+        "it": "Rimuovere il difetto {from}–{to} (scarto)",
+    },
     # ---- Werkstatt-Modus ----
     "saw.mode": {
         "de": "Werkstatt-Modus", "en": "Workshop mode",

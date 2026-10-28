@@ -395,6 +395,10 @@ class MarkPlanRequest(BaseModel):
     lager_breite: float = 0.0
     kerf: float = 0.0
     marked_laengen: list[float] = []
+    # 1D mit Defekten: Startposition je markiertem Stück (parallel zu
+    # marked_laengen) und Defekte des Stücks als [position, laenge]
+    marked_x: list[float] = []
+    defekte: list[list[float]] = []
     total_pieces: int = 0
     reste: list[list[float]] = []
     prev_consumed: bool = False
@@ -587,6 +591,11 @@ def _out_to_ergebnis(data: OptimizeResult) -> OptimierungsErgebnis:
                 reste=[tuple(r) for r in sp.reste],
                 verschnitt_mm=sp.verschnitt_mm,
                 verschnitt_prozent=sp.verschnitt_prozent,
+                defekte=[
+                    Defekt(position=d.position, position_y=d.position_y,
+                           laenge=d.laenge, breite=d.breite)
+                    for d in sp.defekte
+                ],
             )
             for sp in data.schnittplaene
         ],
@@ -1280,11 +1289,16 @@ def mark_plan(req: MarkPlanRequest):
             db.lager_verbrauchen(req.lagerstueck_id)
             consumed = True
         if req.is_1d:
-            rest_val = req.lager_laenge - sum(req.marked_laengen) - req.kerf * n_marked
-            if rest_val > 0:
-                r = db.rest_einbuchen(req.material_id, rest_val)
-                if r:
-                    rest_ids.append(r.id)
+            if req.defekte:
+                rest_vals = _reste_1d_mit_defekten(req)
+            else:
+                rest_vals = [req.lager_laenge - sum(req.marked_laengen)
+                             - req.kerf * n_marked]
+            for rest_val in rest_vals:
+                if rest_val > 0:
+                    r = db.rest_einbuchen(req.material_id, rest_val)
+                    if r:
+                        rest_ids.append(r.id)
         else:
             # 2D: Sobald das Brett angesägt wird, die Reststücke des Plans
             # einbuchen (durchgängige Schnitte). Beim Zurücknehmen aller
@@ -1300,6 +1314,27 @@ def mark_plan(req: MarkPlanRequest):
         consumed = False
 
     return {"consumed": consumed, "rest_ids": rest_ids, "lagerstueck_id": lagerstueck_id}
+
+
+def _reste_1d_mit_defekten(req: MarkPlanRequest) -> list[float]:
+    """Reststücke einer Stange mit Defekten nach den markierten Schnitten.
+
+    Defektzonen werden als Abfall herausgeschnitten, damit kein Rest mit
+    (dann nicht mehr markiertem) Defekt ins Lager kommt. Jedes markierte
+    Stück belegt zusätzlich die Schnittfuge links und rechts davon.
+    """
+    belegt = [(d[0], d[0] + d[1]) for d in req.defekte if len(d) >= 2]
+    belegt += [(x - req.kerf, x + l + req.kerf)
+               for x, l in zip(req.marked_x, req.marked_laengen)]
+    reste: list[float] = []
+    pos = 0.0
+    for start, ende in sorted(belegt):
+        if start > pos:
+            reste.append(start - pos)
+        pos = max(pos, ende)
+    if req.lager_laenge > pos:
+        reste.append(req.lager_laenge - pos)
+    return reste
 
 
 def _lagerstueck_zurueckbuchen(db: Database, req: MarkPlanRequest) -> int:
