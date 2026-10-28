@@ -1,8 +1,9 @@
 """Generate the documentation screenshots against a local dev server.
 
-Creates a rich demo dataset via the REST API (materials, stock, blades,
-two projects) and then drives the web UI with Playwright to capture the
-screenshots used in README / website (light Horizon theme, German UI).
+Creates a rich demo dataset via the REST API (materials with images, stock
+with a marked defect, blades, three projects – panels and bars) and then
+drives the web UI with Playwright to capture the screenshots used in
+README / website (light Horizon theme, German UI).
 
 Usage:
     # 1) start a dev server with a THROWAWAY database:
@@ -22,6 +23,7 @@ from pathlib import Path
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8010"
 OUT = Path(__file__).resolve().parent
+IMAGES = OUT / "demo_images"
 
 
 # ---------------------------------------------------------------------------
@@ -37,6 +39,18 @@ def api(method: str, path: str, body: dict | None = None) -> dict | list | None:
     with urllib.request.urlopen(req, data) as resp:
         raw = resp.read()
         return json.loads(raw) if raw else None
+
+
+def upload_image(material_id: int, filename: str) -> None:
+    """Multipart upload of a demo texture as material image."""
+    boundary = "cutstock-demo-boundary"
+    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; "
+            f"filename=\"{filename}\"\r\nContent-Type: image/jpeg\r\n\r\n").encode()
+    body += (IMAGES / filename).read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(f"{BASE}/api/materials/{material_id}/image",
+                                 data=body, method="POST")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    urllib.request.urlopen(req).read()
 
 
 def seed_demo_data() -> dict:
@@ -56,6 +70,14 @@ def seed_demo_data() -> dict:
         "name": "Buchenleiste 20x40", "typ": "Stange",
         "querschnitt_breite": 20.0, "querschnitt_tiefe": 40.0,
         "rest_min_laenge": 150.0})
+    kiefer = api("POST", "/api/materials", {
+        "name": "Kiefer Kantholz 44x44", "typ": "Stange",
+        "querschnitt_breite": 44.0, "querschnitt_tiefe": 44.0,
+        "rest_min_laenge": 200.0})
+
+    for mat, img in [(span, "spanplatte.jpg"), (eiche, "eiche.jpg"),
+                     (leiste, "buche.jpg"), (kiefer, "kiefer.jpg")]:
+        upload_image(mat["id"], img)
 
     for stock in [
         {"material_id": span["id"], "laenge": 2800, "breite": 2070, "stueckzahl": 8},
@@ -65,8 +87,20 @@ def seed_demo_data() -> dict:
         {"material_id": eiche["id"], "laenge": 2500, "breite": 1250, "stueckzahl": 3},
         {"material_id": leiste["id"], "laenge": 2400, "breite": 0, "stueckzahl": 12},
         {"material_id": leiste["id"], "laenge": 1000, "breite": 0, "stueckzahl": 2},
+        {"material_id": kiefer["id"], "laenge": 3000, "breite": 0, "stueckzahl": 10},
     ]:
-        api("POST", "/api/stock", stock)
+        created = api("POST", "/api/stock", stock)
+        if stock["material_id"] == eiche["id"]:
+            eiche_stock = created
+        elif stock["material_id"] == span["id"] and stock["laenge"] == 2800:
+            span_stock = created
+
+    # Knot hole on oak board #1 – shows the badge, the piece list and the
+    # hatched defect area in the cut plan
+    piece1 = api("GET", f"/api/stock/{eiche_stock['id']}/pieces")[0]
+    api("POST", f"/api/pieces/{piece1['id']}/defects",
+        {"position": 900, "position_y": 420, "laenge": 80, "breite": 60})
+    api("PUT", f"/api/pieces/{piece1['id']}", {"notiz": "Astloch"})
 
     api("POST", "/api/blades", {"name": "Standard 3,0 mm", "schnittbreite": 3.0})
     api("POST", "/api/blades", {"name": "Feinschnitt 2,4 mm", "schnittbreite": 2.4})
@@ -105,10 +139,27 @@ def seed_demo_data() -> dict:
             "laenge": l, "breite": b, "stueckzahl": n,
             "gesaegt_anzahl": 0, "maserung": grain})
 
+    # Bars with mixed lengths → varied, colourful 1D plan with remnants
+    regal = api("POST", "/api/projects", {"name": "Werkstattregal Kiefer"})
+    for label, l, n in [
+        ("Pfosten", 1800, 4),
+        ("Querriegel", 1150, 6),
+        ("Tiefenriegel", 500, 6),
+        ("Diagonalstrebe", 780, 2),
+        ("Fußleiste", 1150, 2),
+        ("Konsole", 320, 4),
+    ]:
+        api("POST", f"/api/projects/{regal['id']}/parts", {
+            "label": label, "typ": S, "material_id": kiefer["id"],
+            "laenge": l, "breite": 0, "stueckzahl": n,
+            "gesaegt_anzahl": 0, "maserung": "egal"})
+
     # Light theme + German UI + mm for consistent screenshots
     api("PUT", "/api/settings", {"language": "de", "theme": "light", "unit": "mm"})
 
-    return {"span": span["id"], "leiste": leiste["id"], "schrank": schrank["id"]}
+    return {"span": span["id"], "eiche": eiche["id"], "kiefer": kiefer["id"],
+            "schrank": schrank["id"], "bank": bank["id"], "regal": regal["id"],
+            "span_stock": span_stock}
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +169,17 @@ def seed_demo_data() -> dict:
 def shoot(ids: dict):
     from playwright.sync_api import sync_playwright
 
+    def optimize(page, project: int, material: int, algorithm: str = "nested"):
+        page.select_option("#opt-project", str(project))
+        page.select_option("#opt-material", str(material))
+        page.select_option("#opt-algorithm", algorithm)
+        page.click("#btn-optimize")
+        page.wait_for_selector(".cut-plan-canvas", timeout=30000)
+        page.wait_for_timeout(600)
+
+    def hide_toasts(page):
+        page.evaluate("document.querySelectorAll('[class*=toast]').forEach(e => e.remove())")
+
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
         page = browser.new_page(viewport={"width": 1280, "height": 860},
@@ -125,10 +187,19 @@ def shoot(ids: dict):
         page.goto(BASE)
         page.wait_for_selector("#material-table tbody tr")
 
-        # 1) Material & Lager (Spanplatte ausgewählt → Lagerbestand rechts)
-        page.click('#material-table tbody tr:has-text("Spanplatte")')
-        page.wait_for_timeout(400)
+        # 1) Material & Lager: Eiche ausgewählt, Einzelstücke aufgeklappt
+        # (Defekt-Badge + Notiz), Materialbilder als Thumbnails
+        page.set_viewport_size({"width": 1280, "height": 440})
+        page.click('#material-table tbody tr:has-text("Eiche")')
+        page.wait_for_selector("#stock-table tbody tr .expand-toggle")
+        page.wait_for_timeout(500)  # Lager-Rerender nach Materialwahl abwarten
+        page.click("#stock-table tbody tr .expand-toggle")
+        page.wait_for_selector("#stock-table td.expand-toggle.expanded")
+        page.wait_for_timeout(500)
+        page.mouse.move(1270, 430)
+        page.wait_for_timeout(300)
         page.screenshot(path=str(OUT / "screenshot_material.png"))
+        page.set_viewport_size({"width": 1280, "height": 860})
 
         # 2) Projekte (Kleiderschrank ausgewählt → Teileliste)
         page.click('.tab-btn[data-tab="projects"]')
@@ -142,11 +213,7 @@ def shoot(ids: dict):
         # Größerer Viewport + Scroll auf die Statistik, damit Kacheln,
         # erster Plan und Schnittfolge gemeinsam ins Bild passen.
         page.click('.tab-btn[data-tab="optimization"]')
-        page.select_option("#opt-project", str(ids["schrank"]))
-        page.select_option("#opt-material", str(ids["span"]))
-        page.select_option("#opt-algorithm", "nested")
-        page.click("#btn-optimize")
-        page.wait_for_selector(".cut-plan-canvas", timeout=30000)
+        optimize(page, ids["schrank"], ids["span"])
         # Erst Viewport setzen und den Resize-Rerender (250 ms Debounce)
         # abwarten – der baut die Karten neu und würde ein zuvor geöffnetes
         # <details> wieder schließen. Dann Schnittfolge öffnen.
@@ -159,7 +226,27 @@ def shoot(ids: dict):
         page.set_viewport_size({"width": 1280, "height": 860})
         page.wait_for_timeout(600)
 
-        # 4) Werkstatt-Modus: zwei Teile abhaken, damit Fortschritt,
+        # 4) Materialbedarf: Lager absichtlich zu knapp (vor dem Werkstatt-Modus,
+        # der sonst schon eine Platte verbraucht) → Kacheln
+        # "Fehlende Teile" + "Materialbedarf" mit Button "Ins Lager"
+        api("PUT", f"/api/stock/{ids['span_stock']['id']}", {
+            "material_id": ids["span"], "laenge": 2800, "breite": 2070, "stueckzahl": 2})
+        page.select_option("#opt-project", str(ids["bank"]))  # reset view
+        optimize(page, ids["schrank"], ids["span"])
+        hide_toasts(page)
+        page.evaluate("window.scrollTo(0, 0)")
+        page.wait_for_timeout(300)
+        box = page.locator("#opt-stats").bounding_box()
+        page.screenshot(path=str(OUT / "screenshot_materialbedarf.png"),
+                        clip={"x": 0, "y": 0, "width": 1280,
+                              "height": box["y"] + box["height"] + 16})
+        api("PUT", f"/api/stock/{ids['span_stock']['id']}", {
+            "material_id": ids["span"], "laenge": 2800, "breite": 2070, "stueckzahl": 8})
+
+        optimize(page, ids["schrank"], ids["span"])
+        hide_toasts(page)
+
+        # 5) Werkstatt-Modus: zwei Teile abhaken, damit Fortschritt,
         # Häkchen und "Als Nächstes"-Markierung sichtbar sind
         page.click("#btn-saw-mode")
         page.wait_for_selector(".saw-piece")
@@ -170,14 +257,21 @@ def shoot(ids: dict):
         page.screenshot(path=str(OUT / "screenshot_werkstatt.png"))
         page.click("#saw-close")
 
-        # 5) Optimierung 1D (Stangen)
-        page.select_option("#opt-material", str(ids["leiste"]))
-        page.click("#btn-optimize")
-        page.wait_for_selector(".cut-plan-canvas", timeout=30000)
-        page.wait_for_timeout(600)
+        # 6) Optimierung 1D (Stangen): Werkstattregal mit gemischten Längen
+        page.set_viewport_size({"width": 1280, "height": 1000})
+        optimize(page, ids["regal"], ids["kiefer"])
+        hide_toasts(page)
+        page.evaluate("window.scrollTo(0, 0)")
+        page.wait_for_timeout(300)
         page.screenshot(path=str(OUT / "screenshot_optimierung.png"))
 
-        # 6) Einstellungen (ganze Seite inkl. Etiketten + Tastenkürzel)
+        # 7) Defekt im Schnittplan: Gartenbank auf Eiche mit Astloch (#1)
+        optimize(page, ids["bank"], ids["eiche"])
+        hide_toasts(page)
+        page.locator(".cut-plan-card").first.screenshot(
+            path=str(OUT / "screenshot_defekt.png"))
+
+        # 8) Einstellungen (ganze Seite inkl. Etiketten + Tastenkürzel)
         page.click('.tab-btn[data-tab="settings"]')
         page.wait_for_selector("#settings-label-format")
         page.wait_for_timeout(400)
