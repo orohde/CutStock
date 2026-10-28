@@ -12,6 +12,10 @@ Thanks for your interest in improving CutStock!
 
 English or German is fine for issues and PRs.
 
+**Commercial licensing** is not handled on GitHub. Please use the contact form at
+[worldgate.de/cutstock](https://worldgate.de/en/cutstock-en/) instead of opening
+an issue or discussion.
+
 ## Development setup
 
 Prerequisites: Python 3.12+
