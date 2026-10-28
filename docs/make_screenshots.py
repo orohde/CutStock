@@ -3,15 +3,18 @@
 Creates a rich demo dataset via the REST API (materials with images, stock
 with a marked defect, blades, three projects – panels and bars) and then
 drives the web UI with Playwright to capture the screenshots used in
-README / website (light Horizon theme, German UI).
+README / website (light Horizon theme, German or English UI).
 
 Usage:
     # 1) start a dev server with a THROWAWAY database:
     CUTSTOCK_DB=/tmp/cutstock-shots.db python -m uvicorn web.app:app --port 8010
     # 2) run this script (needs: pip install playwright && playwright install chromium):
     python docs/make_screenshots.py http://localhost:8010
+    # English UI + English demo data (website EN pages), needs its own fresh DB:
+    python docs/make_screenshots.py http://localhost:8010 en
 
-Output: docs/screenshot_*.png (viewport 1280px @2x = 2560px wide).
+Output: docs/screenshot_*.png, docs/screenshot_*_en.png for English
+(viewport 1280px @2x = 2560px wide).
 """
 
 from __future__ import annotations
@@ -22,8 +25,58 @@ import urllib.request
 from pathlib import Path
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8010"
+LANG = sys.argv[2] if len(sys.argv) > 2 else "de"
 OUT = Path(__file__).resolve().parent
 IMAGES = OUT / "demo_images"
+
+
+# English demo data for the EN website pages (German strings are the keys)
+EN = {
+    "Spanplatte weiß 19mm": "White chipboard 19mm",
+    "Eiche Leimholz 18mm": "Oak panel 18mm",
+    "Buchenleiste 20x40": "Beech batten 20x40",
+    "Kiefer Kantholz 44x44": "Pine timber 44x44",
+    "Eiche": "Oak",
+    "Astloch": "Knot hole",
+    "Standard 3,0 mm": "Standard 3.0 mm",
+    "Feinschnitt 2,4 mm": "Fine cut 2.4 mm",
+    "Kleiderschrank Schlafzimmer": "Bedroom wardrobe",
+    "Kleiderschrank": "wardrobe",
+    "Seitenwand": "Side panel",
+    "Boden": "Bottom",
+    "Deckel": "Top",
+    "Mittelwand": "Divider",
+    "Tür": "Door",
+    "Einlegeboden": "Shelf",
+    "Schubladenfront": "Drawer front",
+    "Schubladenseite": "Drawer side",
+    "Schubladenboden": "Drawer bottom",
+    "Sockelblende": "Plinth",
+    "Kleiderstange": "Clothes rail",
+    "Rahmenleiste": "Frame batten",
+    "Sockelleiste": "Skirting",
+    "Gartenbank Eiche": "Oak garden bench",
+    "Sitzlatte": "Seat slat",
+    "Lehnenlatte": "Backrest slat",
+    "Seitenteil": "Side frame",
+    "Querstrebe": "Cross brace",
+    "Werkstattregal Kiefer": "Pine workshop shelf",
+    "Pfosten": "Post",
+    "Querriegel": "Rail",
+    "Tiefenriegel": "Depth rail",
+    "Diagonalstrebe": "Diagonal brace",
+    "Fußleiste": "Foot rail",
+    "Konsole": "Bracket",
+}
+
+
+def tr(text: str) -> str:
+    return EN.get(text, text) if LANG == "en" else text
+
+
+def shot(name: str) -> str:
+    suffix = "" if LANG == "de" else f"_{LANG}"
+    return str(OUT / f"screenshot_{name}{suffix}.png")
 
 
 # ---------------------------------------------------------------------------
@@ -59,19 +112,19 @@ def seed_demo_data() -> dict:
         raise SystemExit("Database is not empty – use a fresh throwaway DB!")
 
     span = api("POST", "/api/materials", {
-        "name": "Spanplatte weiß 19mm", "typ": "Platte", "dicke": 19.0,
+        "name": tr("Spanplatte weiß 19mm"), "typ": "Platte", "dicke": 19.0,
         "maserung": "keine", "besaeumung": 10.0,
         "rest_min_laenge": 300.0, "rest_min_breite": 200.0})
     eiche = api("POST", "/api/materials", {
-        "name": "Eiche Leimholz 18mm", "typ": "Platte", "dicke": 18.0,
+        "name": tr("Eiche Leimholz 18mm"), "typ": "Platte", "dicke": 18.0,
         "maserung": "längs", "besaeumung": 5.0,
         "rest_min_laenge": 200.0, "rest_min_breite": 150.0})
     leiste = api("POST", "/api/materials", {
-        "name": "Buchenleiste 20x40", "typ": "Stange",
+        "name": tr("Buchenleiste 20x40"), "typ": "Stange",
         "querschnitt_breite": 20.0, "querschnitt_tiefe": 40.0,
         "rest_min_laenge": 150.0})
     kiefer = api("POST", "/api/materials", {
-        "name": "Kiefer Kantholz 44x44", "typ": "Stange",
+        "name": tr("Kiefer Kantholz 44x44"), "typ": "Stange",
         "querschnitt_breite": 44.0, "querschnitt_tiefe": 44.0,
         "rest_min_laenge": 200.0})
 
@@ -100,12 +153,12 @@ def seed_demo_data() -> dict:
     piece1 = api("GET", f"/api/stock/{eiche_stock['id']}/pieces")[0]
     api("POST", f"/api/pieces/{piece1['id']}/defects",
         {"position": 900, "position_y": 420, "laenge": 80, "breite": 60})
-    api("PUT", f"/api/pieces/{piece1['id']}", {"notiz": "Astloch"})
+    api("PUT", f"/api/pieces/{piece1['id']}", {"notiz": tr("Astloch")})
 
-    api("POST", "/api/blades", {"name": "Standard 3,0 mm", "schnittbreite": 3.0})
-    api("POST", "/api/blades", {"name": "Feinschnitt 2,4 mm", "schnittbreite": 2.4})
+    api("POST", "/api/blades", {"name": tr("Standard 3,0 mm"), "schnittbreite": 3.0})
+    api("POST", "/api/blades", {"name": tr("Feinschnitt 2,4 mm"), "schnittbreite": 2.4})
 
-    schrank = api("POST", "/api/projects", {"name": "Kleiderschrank Schlafzimmer"})
+    schrank = api("POST", "/api/projects", {"name": tr("Kleiderschrank Schlafzimmer")})
     P, S = "Platte", "Stange"
     for label, typ, mat, l, b, n, grain in [
         ("Seitenwand",       P, span, 2000, 600, 2, "längs"),
@@ -123,11 +176,11 @@ def seed_demo_data() -> dict:
         ("Sockelleiste",     S, leiste, 960, 0, 2, "egal"),
     ]:
         api("POST", f"/api/projects/{schrank['id']}/parts", {
-            "label": label, "typ": typ, "material_id": mat["id"],
+            "label": tr(label), "typ": typ, "material_id": mat["id"],
             "laenge": l, "breite": b, "stueckzahl": n,
             "gesaegt_anzahl": 0, "maserung": grain})
 
-    bank = api("POST", "/api/projects", {"name": "Gartenbank Eiche"})
+    bank = api("POST", "/api/projects", {"name": tr("Gartenbank Eiche")})
     for label, l, b, n, grain in [
         ("Sitzlatte", 1500, 90, 6, "längs"),
         ("Lehnenlatte", 1500, 70, 3, "längs"),
@@ -135,12 +188,12 @@ def seed_demo_data() -> dict:
         ("Querstrebe", 1360, 80, 2, "egal"),
     ]:
         api("POST", f"/api/projects/{bank['id']}/parts", {
-            "label": label, "typ": P, "material_id": eiche["id"],
+            "label": tr(label), "typ": P, "material_id": eiche["id"],
             "laenge": l, "breite": b, "stueckzahl": n,
             "gesaegt_anzahl": 0, "maserung": grain})
 
     # Bars with mixed lengths → varied, colourful 1D plan with remnants
-    regal = api("POST", "/api/projects", {"name": "Werkstattregal Kiefer"})
+    regal = api("POST", "/api/projects", {"name": tr("Werkstattregal Kiefer")})
     for label, l, n in [
         ("Pfosten", 1800, 4),
         ("Querriegel", 1150, 6),
@@ -150,12 +203,12 @@ def seed_demo_data() -> dict:
         ("Konsole", 320, 4),
     ]:
         api("POST", f"/api/projects/{regal['id']}/parts", {
-            "label": label, "typ": S, "material_id": kiefer["id"],
+            "label": tr(label), "typ": S, "material_id": kiefer["id"],
             "laenge": l, "breite": 0, "stueckzahl": n,
             "gesaegt_anzahl": 0, "maserung": "egal"})
 
-    # Light theme + German UI + mm for consistent screenshots
-    api("PUT", "/api/settings", {"language": "de", "theme": "light", "unit": "mm"})
+    # Light theme + UI language + mm for consistent screenshots
+    api("PUT", "/api/settings", {"language": LANG, "theme": "light", "unit": "mm"})
 
     return {"span": span["id"], "eiche": eiche["id"], "kiefer": kiefer["id"],
             "schrank": schrank["id"], "bank": bank["id"], "regal": regal["id"],
@@ -190,7 +243,7 @@ def shoot(ids: dict):
         # 1) Material & Lager: Eiche ausgewählt, Einzelstücke aufgeklappt
         # (Defekt-Badge + Notiz), Materialbilder als Thumbnails
         page.set_viewport_size({"width": 1280, "height": 440})
-        page.click('#material-table tbody tr:has-text("Eiche")')
+        page.click(f'#material-table tbody tr:has-text("{tr("Eiche")}")')
         page.wait_for_selector("#stock-table tbody tr .expand-toggle")
         page.wait_for_timeout(500)  # Lager-Rerender nach Materialwahl abwarten
         page.click("#stock-table tbody tr .expand-toggle")
@@ -198,16 +251,16 @@ def shoot(ids: dict):
         page.wait_for_timeout(500)
         page.mouse.move(1270, 430)
         page.wait_for_timeout(300)
-        page.screenshot(path=str(OUT / "screenshot_material.png"))
+        page.screenshot(path=shot("material"))
         page.set_viewport_size({"width": 1280, "height": 860})
 
         # 2) Projekte (Kleiderschrank ausgewählt → Teileliste)
         page.click('.tab-btn[data-tab="projects"]')
         page.wait_for_selector("#project-list tbody tr")
-        page.click('#project-list tbody tr:has-text("Kleiderschrank")')
-        page.wait_for_selector('#parts-table tbody tr:has-text("Seitenwand")')
+        page.click(f'#project-list tbody tr:has-text("{tr("Kleiderschrank")}")')
+        page.wait_for_selector(f'#parts-table tbody tr:has-text("{tr("Seitenwand")}")')
         page.wait_for_timeout(300)
-        page.screenshot(path=str(OUT / "screenshot_projekte.png"))
+        page.screenshot(path=shot("projekte"))
 
         # 3) Optimierung 2D (Platten) inkl. aufgeklappter Schnittfolge.
         # Größerer Viewport + Scroll auf die Statistik, damit Kacheln,
@@ -222,7 +275,7 @@ def shoot(ids: dict):
         page.eval_on_selector(".cut-seq", "d => d.open = true")
         page.evaluate("document.getElementById('opt-stats').scrollIntoView(); window.scrollBy(0, -12)")
         page.wait_for_timeout(200)
-        page.screenshot(path=str(OUT / "screenshot_platten.png"))
+        page.screenshot(path=shot("platten"))
         page.set_viewport_size({"width": 1280, "height": 860})
         page.wait_for_timeout(600)
 
@@ -237,7 +290,7 @@ def shoot(ids: dict):
         page.evaluate("window.scrollTo(0, 0)")
         page.wait_for_timeout(300)
         box = page.locator("#opt-stats").bounding_box()
-        page.screenshot(path=str(OUT / "screenshot_materialbedarf.png"),
+        page.screenshot(path=shot("materialbedarf"),
                         clip={"x": 0, "y": 0, "width": 1280,
                               "height": box["y"] + box["height"] + 16})
         api("PUT", f"/api/stock/{ids['span_stock']['id']}", {
@@ -254,7 +307,7 @@ def shoot(ids: dict):
         page.wait_for_timeout(500)
         page.click(".saw-piece >> nth=1")
         page.wait_for_timeout(500)
-        page.screenshot(path=str(OUT / "screenshot_werkstatt.png"))
+        page.screenshot(path=shot("werkstatt"))
         page.click("#saw-close")
 
         # 6) Optimierung 1D (Stangen): Werkstattregal mit gemischten Längen
@@ -263,19 +316,19 @@ def shoot(ids: dict):
         hide_toasts(page)
         page.evaluate("window.scrollTo(0, 0)")
         page.wait_for_timeout(300)
-        page.screenshot(path=str(OUT / "screenshot_optimierung.png"))
+        page.screenshot(path=shot("optimierung"))
 
         # 7) Defekt im Schnittplan: Gartenbank auf Eiche mit Astloch (#1)
         optimize(page, ids["bank"], ids["eiche"])
         hide_toasts(page)
         page.locator(".cut-plan-card").first.screenshot(
-            path=str(OUT / "screenshot_defekt.png"))
+            path=shot("defekt"))
 
         # 8) Einstellungen (ganze Seite inkl. Etiketten + Tastenkürzel)
         page.click('.tab-btn[data-tab="settings"]')
         page.wait_for_selector("#settings-label-format")
         page.wait_for_timeout(400)
-        page.screenshot(path=str(OUT / "screenshot_einstellungen.png"), full_page=True)
+        page.screenshot(path=shot("einstellungen"), full_page=True)
 
         browser.close()
 

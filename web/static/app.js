@@ -86,6 +86,9 @@ const applyTranslations = () => {
         const key = el.getAttribute('data-i18n');
         el.textContent = t(key);
     });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+        el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
+    });
     if (typeof renderHotkeyTable === 'function') renderHotkeyTable();
 };
 

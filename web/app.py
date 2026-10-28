@@ -1564,6 +1564,11 @@ WEB_EXTRA_TRANSLATIONS = {
     "set.api_key_copy": {"de": "Kopieren", "en": "Copy", "fr": "Copier", "it": "Copia"},
     "set.api_key_generated": {"de": "API-Key generiert.", "en": "API key generated.", "fr": "Clé API générée.", "it": "Chiave API generata."},
     "set.api_key_copied": {"de": "API-Key kopiert.", "en": "API key copied.", "fr": "Clé API copiée.", "it": "Chiave API copiata."},
+    "set.unit_mm": {"de": "Millimeter (mm)", "en": "Millimetres (mm)", "fr": "Millimètres (mm)", "it": "Millimetri (mm)"},
+    "set.unit_cm": {"de": "Zentimeter (cm)", "en": "Centimetres (cm)", "fr": "Centimètres (cm)", "it": "Centimetri (cm)"},
+    "set.theme_system": {"de": "Auto (System)", "en": "Auto (system)", "fr": "Auto (système)", "it": "Auto (sistema)"},
+    "set.theme_light": {"de": "Hell", "en": "Light", "fr": "Clair", "it": "Chiaro"},
+    "set.theme_dark": {"de": "Dunkel", "en": "Dark", "fr": "Sombre", "it": "Scuro"},
     "set.api_hint": {
         "de": "Änderungen am Port werden nach einem Neustart wirksam. Ohne API-Key ist die API für jeden erreichbar, der den Server erreicht. Mit Key müssen externe Programme „Authorization: Bearer <Key>“ mitsenden; die eigene Weboberfläche und Zugriffe vom selben Rechner brauchen ihn nicht.",
         "en": "Port changes take effect after a restart. Without an API key, anyone who can reach the server can use the API. With a key, external programs must send “Authorization: Bearer <key>”; this web interface and requests from the same computer don’t need it.",
