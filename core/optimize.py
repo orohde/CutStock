@@ -32,6 +32,13 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 
+try:
+    import numpy as np
+    from scipy.optimize import milp, LinearConstraint, Bounds
+    _HAS_SCIPY = True
+except ImportError:
+    _HAS_SCIPY = False
+
 
 # =====================================================================
 # Result dataclasses
@@ -90,19 +97,257 @@ def optimize_1d(
     kerf: float = 3.0,
     defekte: dict[int, dict[int, list]] | None = None,
 ) -> OptimierungsErgebnis:
-    """1D bin packing with First-Fit-Decreasing.
+    """1D cutting-stock optimization (pattern-based, ILP-optimal).
 
-    Args:
-        teile: list of (label, length, quantity) – expanded to single pieces.
-        vorrat: available bars.
-        kerf: saw blade width in mm.
+    Uses a two-phase approach:
+      1. Pattern enumeration – find all feasible cutting patterns
+         (combinations of parts) for each distinct bar length.
+      2. ILP (Integer Linear Programming) via scipy – select the
+         optimal set of patterns that minimizes total bars used.
+         Falls back to greedy selection if scipy is unavailable.
+      3. Assign labels to the chosen patterns and build Schnittplan.
 
-    Strategy: Best-Fit-Decreasing – parts sorted longest-first, each
-    part placed on the bar that leaves the SMALLEST remaining rest
-    (tightest fit). This concentrates waste onto fewer bars and keeps
-    large remnants usable. Short/offcut bars are still consumed first
-    when they are the tightest fit.
+    Falls back to Best-Fit-Decreasing for any remaining demand and
+    for problems with defects (which create variable-length segments).
     """
+    has_defects = defekte and any(
+        any(dl for dl in dm.values()) for dm in defekte.values())
+
+    if has_defects:
+        return _optimize_1d_bfd(teile, vorrat, kerf, defekte)
+
+    demand: dict[float, int] = {}
+    labels_by_len: dict[float, list[str]] = {}
+    for label, laenge, anzahl in teile:
+        demand[laenge] = demand.get(laenge, 0) + anzahl
+        labels_by_len.setdefault(laenge, []).extend([label] * anzahl)
+
+    if not demand:
+        return OptimierungsErgebnis()
+
+    distinct_lengths = sorted(demand.keys(), reverse=True)
+
+    bar_types: dict[float, list[StangenVorrat]] = {}
+    for sv in vorrat:
+        bar_types.setdefault(sv.laenge, []).append(sv)
+
+    all_patterns: list[tuple[float, dict[float, int], float]] = []
+    for bar_len in bar_types:
+        patterns = _enumerate_patterns(bar_len, distinct_lengths, kerf)
+        for pat in patterns:
+            used = sum(l * c for l, c in pat.items())
+            cuts = sum(pat.values())
+            total_used = used + kerf * max(0, cuts - 1)
+            all_patterns.append((bar_len, pat, total_used / bar_len))
+
+    remaining = dict(demand)
+    bar_counts: dict[float, int] = {}
+    for sv in vorrat:
+        bar_counts[sv.laenge] = bar_counts.get(sv.laenge, 0) + sv.anzahl
+
+    selected: list[tuple[float, dict[float, int]]] = []
+
+    if _HAS_SCIPY and all_patterns:
+        try:
+            ilp_result = _ilp_select(
+                all_patterns, demand, bar_counts, distinct_lengths, bar_types)
+            if ilp_result:
+                selected = ilp_result
+                for bar_len, pat in selected:
+                    for l, cnt in pat.items():
+                        remaining[l] -= cnt
+                    bar_counts[bar_len] -= 1
+        except Exception:
+            selected = []
+            remaining = dict(demand)
+            bar_counts = {}
+            for sv in vorrat:
+                bar_counts[sv.laenge] = bar_counts.get(sv.laenge, 0) + sv.anzahl
+
+    if not selected and all_patterns:
+        all_patterns.sort(key=lambda x: x[2], reverse=True)
+        for bar_len, pat, _score in all_patterns:
+            if bar_counts.get(bar_len, 0) <= 0:
+                continue
+            if not any(remaining.get(l, 0) > 0 for l in pat):
+                continue
+            max_times = bar_counts[bar_len]
+            for l, c in pat.items():
+                if c > 0 and remaining.get(l, 0) >= 0:
+                    max_times = min(max_times, remaining.get(l, 0) // c)
+            if max_times <= 0:
+                continue
+            for _ in range(max_times):
+                selected.append((bar_len, dict(pat)))
+            for l, c in pat.items():
+                remaining[l] -= c * max_times
+            bar_counts[bar_len] -= max_times
+
+    leftover_teile = []
+    for l in distinct_lengths:
+        r = remaining.get(l, 0)
+        if r > 0:
+            for lab in labels_by_len[l][-r:]:
+                leftover_teile.append((lab, l, 1))
+
+    if leftover_teile:
+        leftover_vorrat = []
+        for bl, svlist in bar_types.items():
+            bc = bar_counts.get(bl, 0)
+            if bc > 0:
+                leftover_vorrat.append(StangenVorrat(
+                    svlist[0].lagerstueck_id, bl, bc))
+        if leftover_vorrat:
+            fallback = _optimize_1d_bfd(leftover_teile, leftover_vorrat, kerf, None)
+        else:
+            fallback = OptimierungsErgebnis(
+                fehlende_teile=[lab for lab, _, _ in leftover_teile])
+
+    verfuegbar: list[dict] = []
+    bar_idx = 0
+    sv_usage: dict[float, int] = {}
+
+    for bar_len, pat in selected:
+        sv_idx = sv_usage.get(bar_len, 0)
+        sv_usage[bar_len] = sv_idx + 1
+        svlist = bar_types[bar_len]
+        cum = 0
+        sv = svlist[0]
+        for s in svlist:
+            cum += s.anzahl
+            if sv_idx < cum:
+                sv = s
+                break
+
+        platzierungen = []
+        pos = 0.0
+        for l in distinct_lengths:
+            c = pat.get(l, 0)
+            for _ in range(c):
+                if platzierungen:
+                    pos += kerf
+                lab = labels_by_len[l].pop(0)
+                platzierungen.append(
+                    Platzierung(teil_label=lab, laenge=l, x=pos))
+                pos += l
+
+        rest = bar_len - pos
+        verfuegbar.append({
+            "id": sv.lagerstueck_id,
+            "stueck_nr": sv_idx + 1,
+            "laenge": bar_len,
+            "rest": rest,
+            "platzierungen": platzierungen,
+            "_offset": 0.0,
+            "_bar": bar_idx,
+        })
+        bar_idx += 1
+
+    result = _build_1d_result_segments(verfuegbar, [], kerf)
+
+    if leftover_teile:
+        result.schnittplaene.extend(fallback.schnittplaene)
+        result.fehlende_teile.extend(fallback.fehlende_teile)
+        gesamt_nutzbar = sum(s.lager_laenge for s in result.schnittplaene)
+        gesamt_genutzt = sum(
+            sum(p.laenge for p in s.platzierungen) for s in result.schnittplaene)
+        if gesamt_nutzbar > 0:
+            result.gesamt_verschnitt_prozent = round(
+                (1 - gesamt_genutzt / gesamt_nutzbar) * 100, 1)
+
+    return result
+
+
+def _ilp_select(
+    patterns: list[tuple[float, dict[float, int], float]],
+    demand: dict[float, int],
+    bar_supply: dict[float, int],
+    distinct_lengths: list[float],
+    bar_types: dict[float, list],
+) -> list[tuple[float, dict[float, int]]]:
+    """Select patterns via ILP (Integer Linear Programming) to minimize bars."""
+    n = len(patterns)
+    bar_len_keys = sorted(bar_types.keys())
+
+    rows, lb, ub = [], [], []
+    for l in distinct_lengths:
+        rows.append([float(p.get(l, 0)) for _, p, _ in patterns])
+        lb.append(float(demand[l]))
+        ub.append(np.inf)
+    for bl in bar_len_keys:
+        rows.append([1.0 if pbl == bl else 0.0 for pbl, _, _ in patterns])
+        lb.append(0.0)
+        ub.append(float(bar_supply[bl]))
+
+    res = milp(
+        np.ones(n),
+        constraints=LinearConstraint(np.array(rows, dtype=float), lb, ub),
+        integrality=np.ones(n),
+        bounds=Bounds(lb=0),
+    )
+    if not res.success:
+        return []
+
+    x = np.round(res.x).astype(int)
+    selected = []
+    for j in range(n):
+        if x[j] > 0:
+            bar_len, pat, _ = patterns[j]
+            for _ in range(x[j]):
+                selected.append((bar_len, dict(pat)))
+    return selected
+
+
+def _enumerate_patterns(
+    bar_len: float,
+    lengths: list[float],
+    kerf: float,
+    _max_patterns: int = 5000,
+) -> list[dict[float, int]]:
+    """Enumerate feasible cutting patterns for a bar via bounded DFS.
+
+    Returns only maximal patterns (where no additional part fits).
+    """
+    patterns: list[dict[float, int]] = []
+
+    def _dfs(idx: int, remaining: float, current: dict[float, int],
+             n_parts: int) -> None:
+        if len(patterns) >= _max_patterns:
+            return
+        is_maximal = True
+        for i in range(idx, len(lengths)):
+            l = lengths[i]
+            needed = l + (kerf if n_parts > 0 else 0)
+            if remaining >= needed:
+                is_maximal = False
+                max_count = int((remaining - l) // (l + kerf)) + 1 if l + kerf > 0 else 1
+                for c in range(max_count, 0, -1):
+                    total_needed = c * l + (c - 1) * kerf
+                    if n_parts > 0:
+                        total_needed += kerf
+                    if remaining >= total_needed:
+                        current[l] = current.get(l, 0) + c
+                        _dfs(i + 1, remaining - total_needed, current,
+                             n_parts + c)
+                        current[l] -= c
+                        if current[l] == 0:
+                            del current[l]
+                        if len(patterns) >= _max_patterns:
+                            return
+        if is_maximal and current:
+            patterns.append(dict(current))
+
+    _dfs(0, bar_len, {}, 0)
+    return patterns
+
+
+def _optimize_1d_bfd(
+    teile: list[tuple[str, float, int]],
+    vorrat: list[StangenVorrat],
+    kerf: float = 3.0,
+    defekte: dict[int, dict[int, list]] | None = None,
+) -> OptimierungsErgebnis:
+    """Best-Fit-Decreasing fallback for 1D (handles defects)."""
     einzelteile: list[tuple[str, float]] = []
     for label, laenge, anzahl in teile:
         einzelteile.extend((label, laenge) for _ in range(anzahl))
