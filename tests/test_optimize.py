@@ -142,6 +142,22 @@ class TestOptimize1D:
         )
         assert erg.fehlende_teile == ["A"]
 
+    def test_rest_gebuendelt_wenige_muster(self):
+        """ZMS: minimale Stangenzahl, Verschnitt auf einer Stange, wenige Muster."""
+        teile = [("kurz", 291.3, 36), ("lang", 375.5, 72), ("mittel", 307.4, 72)]
+        erg = optimize_1d(teile, [StangenVorrat(1, 2000.0, 31)], 3.2)
+        assert not erg.fehlende_teile
+        assert len(erg.schnittplaene) == 31
+        anzahl = {}
+        for p in erg.schnittplaene:
+            for t in p.platzierungen:
+                anzahl[t.teil_label] = anzahl.get(t.teil_label, 0) + 1
+        assert anzahl == {"kurz": 36, "lang": 72, "mittel": 72}
+        muster = {tuple(sorted(t.laenge for t in p.platzierungen))
+                  for p in erg.schnittplaene}
+        assert len(muster) <= 4
+        assert max(x[0] for p in erg.schnittplaene for x in p.reste) > 860
+
 
 @pytest.mark.parametrize("optimize", [optimize_1d, optimize_1d_ga])
 class TestDefekt1DPositionen:

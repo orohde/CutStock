@@ -99,6 +99,7 @@ def optimize_1d(
     vorrat: list[StangenVorrat],
     kerf: float = 3.0,
     defekte: dict[int, dict[int, list]] | None = None,
+    refine_zeit: float = 1.0,
 ) -> OptimierungsErgebnis:
     """1D cutting-stock optimization (pattern-based, ILP-optimal).
 
@@ -108,6 +109,9 @@ def optimize_1d(
       2. ILP (Integer Linear Programming) via scipy – select the
          optimal set of patterns that minimizes total bars used.
          Falls back to greedy selection if scipy is unavailable.
+         With the same bars, a second ILP then bundles the waste on one
+         bar and minimizes the distinct patterns (`_ilp_refine`, given
+         `refine_zeit` seconds per stage).
       3. Assign labels to the chosen patterns and build Schnittplan.
 
     Falls back to Best-Fit-Decreasing for any remaining demand and
@@ -153,7 +157,8 @@ def optimize_1d(
     if _HAS_SCIPY and all_patterns:
         try:
             ilp_result = _ilp_select(
-                all_patterns, demand, bar_counts, distinct_lengths, bar_types)
+                all_patterns, demand, bar_counts, distinct_lengths, bar_types,
+                kerf, refine_zeit)
             if ilp_result:
                 selected = ilp_result
                 for bar_len, pat in selected:
@@ -269,6 +274,8 @@ def _ilp_select(
     bar_supply: dict[float, int],
     distinct_lengths: list[float],
     bar_types: dict[float, list],
+    kerf: float = 3.0,
+    refine_zeit: float = 1.0,
 ) -> list[tuple[float, dict[float, int]]]:
     """Select patterns via ILP (Integer Linear Programming) to minimize bars."""
     n = len(patterns)
@@ -294,13 +301,127 @@ def _ilp_select(
         return []
 
     x = np.round(res.x).astype(int)
+    rest_j = -1
+    # The refinement only looks at the patterns of the solution plus the
+    # best-filled ones; with all patterns the solver doesn't finish in time.
+    cand = sorted(set(np.argsort([-p[2] for p in patterns],
+                                 kind="stable")[:_ILP_REFINE_PATTERNS])
+                  | set(np.flatnonzero(x)))
+    try:
+        refined = _ilp_refine([patterns[j] for j in cand], demand,
+                              bar_supply, distinct_lengths, bar_len_keys,
+                              x[cand], kerf, refine_zeit)
+        if refined is not None:
+            x = np.zeros(n, dtype=int)
+            x[cand] = refined[0]
+            rest_j = cand[refined[1]]
+    except Exception:
+        pass
+
     selected = []
     for j in range(n):
-        if x[j] > 0:
-            bar_len, pat, _ = patterns[j]
-            for _ in range(x[j]):
-                selected.append((bar_len, dict(pat)))
+        bar_len, pat, _ = patterns[j]
+        for _ in range(x[j] - (1 if j == rest_j else 0)):
+            selected.append((bar_len, dict(pat)))
+    # The remnant bar goes last: labels are assigned in bar order, so the
+    # surplus slots (parts nobody ordered) end up empty on this bar.
+    if rest_j >= 0:
+        bar_len, pat, _ = patterns[rest_j]
+        selected.append((bar_len, dict(pat)))
     return selected
+
+
+_ILP_REFINE_PATTERNS = 300
+
+
+def _ilp_refine(patterns, demand, bar_supply, distinct_lengths, bar_len_keys,
+                x0, kerf, zeit):
+    """Improve a minimal-bar ILP solution for the workshop.
+
+    Keeps the number of bars and the material of `x0`, then
+      1. collects all waste on one bar (longest reusable remnant) and
+      2. uses as few distinct patterns as possible (less re-measuring).
+
+    Variables: x (bars per pattern), y (pattern used), z (pattern of the
+    remnant bar), s (surplus parts per length, left empty on that bar),
+    u (surplus that doesn't fit there, left empty on the bars before it).
+    The patterns are maximal, so a solution with fewer bars than the
+    patterns can hold always produces surplus.
+    Returns (x, index of the remnant bar's pattern) or None.
+    """
+    from scipy.sparse import lil_matrix
+
+    n, m = len(patterns), len(distinct_lengths)
+    nv = 3 * n + 2 * m
+    X, Y, Z, S, U = 0, n, 2 * n, 3 * n, 3 * n + m
+    bars0 = int(x0.sum())
+    material0 = sum(patterns[j][0] * x0[j] for j in range(n))
+
+    # remnant of the rest bar = free length of its pattern + surplus parts
+    rest_obj = np.zeros(nv)
+    for j, (bl, _, ratio) in enumerate(patterns):
+        rest_obj[Z + j] = bl * (1 - ratio)
+    for i, l in enumerate(distinct_lengths):
+        rest_obj[S + i] = l + kerf
+
+    A = lil_matrix((m * 2 + n * 2 + 3 + len(bar_len_keys), nv))
+    lb, ub = [], []
+    r = 0
+    for i, l in enumerate(distinct_lengths):
+        # parts produced = demand + surplus
+        for j, (_, pat, _) in enumerate(patterns):
+            if pat.get(l):
+                A[r, X + j] = pat[l]
+        A[r, S + i] = -1
+        A[r, U + i] = -1
+        lb.append(demand[l]); ub.append(demand[l]); r += 1
+        # surplus only on the remnant bar
+        A[r, S + i] = 1
+        for j, (_, pat, _) in enumerate(patterns):
+            if pat.get(l):
+                A[r, Z + j] = -pat[l]
+        lb.append(-np.inf); ub.append(0); r += 1
+    for j in range(n):
+        A[r, Z + j] = 1; A[r, X + j] = -1          # z <= x
+        lb.append(-np.inf); ub.append(0); r += 1
+        A[r, X + j] = 1; A[r, Y + j] = -bars0      # x > 0 -> y = 1
+        lb.append(-np.inf); ub.append(0); r += 1
+    for j in range(n):
+        A[r, Z + j] = 1                             # exactly one remnant bar
+        A[r + 1, X + j] = 1                         # no more bars
+        A[r + 2, X + j] = patterns[j][0]            # no more material
+    lb += [1, 0, 0]; ub += [1, bars0, material0 + 1e-6]; r += 3
+    for bl in bar_len_keys:
+        for j, (pbl, _, _) in enumerate(patterns):
+            if pbl == bl:
+                A[r, X + j] = 1
+        lb.append(0); ub.append(bar_supply[bl]); r += 1
+
+    integrality = np.ones(nv)
+    upper = np.concatenate([np.full(n, bars0), np.ones(2 * n),
+                            np.full(2 * m, np.inf)])
+    bounds = Bounds(np.zeros(nv), upper)
+    opts = {"time_limit": zeit}  # per stage
+
+    def _solve(c, cons):
+        res = milp(c, constraints=cons, integrality=integrality,
+                   bounds=bounds, options=opts)
+        return None if res.x is None else np.round(res.x).astype(int)
+
+    base = LinearConstraint(A.tocsr(), lb, ub)
+    v = _solve(-rest_obj, [base])
+    if v is None:
+        return None
+    rest_max = float(rest_obj @ v)
+
+    # Same remnant (0.5 mm tolerance), fewest patterns
+    c = np.zeros(nv)
+    c[Y:Y + n] = 1
+    keep = LinearConstraint(rest_obj.reshape(1, -1), rest_max - 0.5, np.inf)
+    v2 = _solve(c, [base, keep])
+    if v2 is not None:
+        v = v2
+    return v[X:X + n], int(np.argmax(v[Z:Z + n]))
 
 
 def _enumerate_patterns(
@@ -777,6 +898,7 @@ _GA_ELITE_RATIO = 0.1
 # Safety net: after this many seconds the search stops and returns the
 # best plan found so far (never worse than the seeded start solution).
 _GA_TIME_LIMIT = 10.0
+_GA_REFINE_TIME = 4.0  # seconds per ILP refinement stage, see _ilp_refine
 
 
 def optimize_1d_ga(
@@ -978,9 +1100,15 @@ def optimize_1d_ga(
         laenge = sum(sp.lager_laenge for sp in r.schnittplaene)
         quadrate = sum(x[0] * x[0] for sp in r.schnittplaene
                        for x in sp.reste if x)
-        return (len(r.fehlende_teile), round(laenge, 6), -round(quadrate, 3))
+        muster = len({(sp.lager_laenge,
+                       tuple(sorted(p.laenge for p in sp.platzierungen)))
+                      for sp in r.schnittplaene})
+        return (len(r.fehlende_teile), round(laenge, 6), -round(quadrate, 3),
+                muster)
 
-    return min((ga_result, optimize_1d(teile, vorrat, kerf, defekte)),
+    # (with more solver time for the refinement than "fast" gets)
+    return min((ga_result, optimize_1d(teile, vorrat, kerf, defekte,
+                                       refine_zeit=_GA_REFINE_TIME)),
                key=_guete)
 
 
