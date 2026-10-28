@@ -35,10 +35,14 @@ jobs:
             catthehacker/ubuntu:act-latest \
             docker compose -p cutstock -f docker-compose.yml -f docker-compose.override.yml up -d
 
+      # Der Server braucht nach dem Start einige Sekunden – bis zu 60 s warten
       - name: Verify
         run: |
-          sleep 3
-          docker exec cutstock python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/')" || exit 1
+          for i in $(seq 1 30); do
+            docker exec cutstock python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/')" 2>/dev/null && break
+            [ "$i" -eq 30 ] && exit 1
+            sleep 2
+          done
           test "$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' cutstock)" = "cutstock"
 
       # Nur die letzten drei Versionen für ein Zurückrollen behalten
