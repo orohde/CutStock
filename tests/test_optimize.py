@@ -368,6 +368,18 @@ class TestGenetisch:
         assert not wenig.fehlende_teile
         assert _plaene(wenig) == _plaene(viel)
 
+    def test_1d_nie_schlechter_als_schnell_reste_gebuendelt(self):
+        """Bei viel Lager keine Extra-Stangen; Reste auf wenige Stangen gebündelt."""
+        teile = [("kurz", 291.3, 36), ("lang", 375.5, 72), ("mittel", 307.4, 72)]
+        vorrat = [StangenVorrat(1, 2000.0, 200)]
+        schnell = optimize_1d(teile, vorrat, 3.2)
+        ga = optimize_1d_ga(teile, vorrat, 3.2)
+        assert not ga.fehlende_teile
+        assert len(ga.schnittplaene) <= len(schnell.schnittplaene)
+        laengster = lambda r: max((x[0] for p in r.schnittplaene for x in p.reste if x),
+                                  default=0)
+        assert laengster(ga) >= laengster(schnell)
+
     def test_1d_defekt_macht_teil_unmoeglich(self):
         """Ein Defekt teilt die Stange auch im genetischen Algorithmus."""
         defekte = {1: {1: [Defekt(einzelstueck_id=1, position=500, laenge=100)]}}

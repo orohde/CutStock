@@ -788,10 +788,13 @@ def optimize_1d_ga(
     """1D cutting stock with a genetic algorithm.
 
     Chromosome = permutation of the part order; placement itself is
-    deterministic first-fit per permutation, so the GA only searches
-    the ordering. Fitness = total placed length. The FFD ordering is
-    seeded into the initial population, so the GA can never end up
-    worse than plain FFD.
+    deterministic best-fit per permutation, so the GA only searches
+    the ordering. Fitness, compared in this order: total placed length,
+    then as little bar length used as possible, then remnants
+    concentrated on few bars (sum of squared remnant lengths) – with the
+    same waste, a few long reusable offcuts beat many short scraps. The
+    FFD ordering is seeded into the initial population, so the GA can
+    never end up worse than plain FFD.
 
     Note: random.Random(42) makes runs reproducible – two runs on the
     same input return the same plan, unless the search hits
@@ -831,7 +834,7 @@ def optimize_1d_ga(
     for bar_i, bl in enumerate(_expand_bars()):
         _gruppen.setdefault(bl, []).append(bar_i)
 
-    def evaluate(perm: list[int]) -> float:
+    def evaluate(perm: list[int]) -> tuple[float, float, float]:
         # Entries [index, rest, part count, length], sorted by index
         aktiv = sorted([idxs[0], bl, 0, bl] for bl, idxs in _gruppen.items())
         naechste = dict.fromkeys(_gruppen, 1)
@@ -858,7 +861,12 @@ def optimize_1d_ga(
                 best_st[1] -= bed
                 best_st[2] += 1
                 genutzt += teil_laenge
-        return genutzt
+        # Rounded so float noise from a different summation order never
+        # decides between two otherwise equal plans
+        verbraucht = sum(st[3] for st in aktiv if st[2] > 0)
+        rest_quadrate = sum(st[1] * st[1] for st in aktiv if st[2] > 0)
+        return (round(genutzt, 6), -round(verbraucht, 6),
+                round(rest_quadrate, 3))
 
     def crossover(p1: list[int], p2: list[int]) -> list[int]:
         # Order crossover (OX): copy a random slice from parent 1,
@@ -961,7 +969,19 @@ def optimize_1d_ga(
         else:
             fehlend.append(label)
 
-    return _build_1d_result_segments(verfuegbar, fehlend, kerf)
+    ga_result = _build_1d_result_segments(verfuegbar, fehlend, kerf)
+
+    # "Thorough" must never be worse than the default algorithm (best-fit
+    # plus ILP pattern selection): compare both with the GA's own order of
+    # goals and return the better plan.
+    def _guete(r):
+        laenge = sum(sp.lager_laenge for sp in r.schnittplaene)
+        quadrate = sum(x[0] * x[0] for sp in r.schnittplaene
+                       for x in sp.reste if x)
+        return (len(r.fehlende_teile), round(laenge, 6), -round(quadrate, 3))
+
+    return min((ga_result, optimize_1d(teile, vorrat, kerf, defekte)),
+               key=_guete)
 
 
 def optimize_2d_ga(
