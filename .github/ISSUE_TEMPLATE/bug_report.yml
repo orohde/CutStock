@@ -1,0 +1,68 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! English or German is fine.
+        Please don't report security vulnerabilities here -- see [SECURITY.md](https://github.com/orohde/CutStock/blob/master/SECURITY.md).
+
+  - type: input
+    id: version
+    attributes:
+      label: CutStock version
+      description: Shown under Settings -> Version (e.g. 2026.10.46)
+      placeholder: "2026.10.46"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: variant
+    attributes:
+      label: Variant
+      options:
+        - Desktop app (macOS)
+        - Desktop app (Windows)
+        - Docker / web app
+        - Run from source
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: OS and browser
+      placeholder: "macOS 26.1, Safari 26"
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open project ...
+        2. Click "Optimize" ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+
+  - type: textarea
+    id: attachments
+    attributes:
+      label: Screenshots, logs, project export
+      description: |
+        Screenshots or error messages help a lot. For optimization problems, a project
+        exported as JSON makes the bug reproducible. Remove anything you don't want to share.
