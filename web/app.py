@@ -577,6 +577,7 @@ def _out_to_ergebnis(data: OptimizeResult) -> OptimierungsErgebnis:
                 lagerstueck_id=sp.lagerstueck_id,
                 lager_laenge=sp.lager_laenge,
                 lager_breite=sp.lager_breite,
+                stueck_nr=sp.stueck_nr,
                 platzierungen=[
                     Platzierung(
                         teil_label=p.teil_label,

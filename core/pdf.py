@@ -1,18 +1,22 @@
 """PDF-Export der Schnittpläne mit reportlab.
 
 Kompaktes Layout:
-  - Seite 1: Stückliste + ggf. erste Schnittplane
+  - Seite 1: Teileliste (je Teil eine Zeile mit Anzahl) + Materialbedarf
+  - Gleiche Schnittmuster werden zusammengefasst ("10 × Stange 2000 mm"),
+    Stücke mit Defekt bleiben einzeln, weil es auf das konkrete Stück ankommt
   - Platten: so viele wie möglich pro Seite (proportional skaliert)
-  - Stangen: 2 Spalten, ~5 pro Spalte = ~10 pro Seite
+  - Stangen: volle Seitenbreite, darunter die Schnittliste des Musters
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 
 from core.optimize import OptimierungsErgebnis, Schnittplan
@@ -48,6 +52,75 @@ class _PageCursor:
         self.y -= height
 
 
+@dataclass
+class _Muster:
+    """Ein Schnittmuster und wie oft es geschnitten wird."""
+    plan: Schnittplan
+    anzahl: int = 1
+    folge: list[str] = field(default_factory=list)
+
+
+def _fmt(v: float) -> str:
+    """Maß ohne überflüssige Nachkommastelle: 2000, 375.5."""
+    return f"{v:.1f}".rstrip("0").rstrip(".")
+
+
+def _latin1(txt: str) -> str:
+    # Helvetica (Latin-1) has no "→" – substitute it, and defensively
+    # replace any other non-Latin-1 char
+    return txt.replace("→", "»").encode("latin-1", "replace").decode("latin-1")
+
+
+def _fit_size(text: str, font: str, size: float, min_size: float,
+              max_w: float) -> float | None:
+    """Größte Schriftgröße ≤ size, bei der text in max_w passt (sonst None)."""
+    while size >= min_size:
+        if stringWidth(text, font, size) <= max_w:
+            return size
+        size -= 0.5
+    return None
+
+
+def _muster_bilden(plaene: list[Schnittplan], folgen: list[list[str]],
+                   is_1d: bool) -> list[_Muster]:
+    """Identische Schnittpläne zusammenfassen (Reihenfolge des ersten Auftretens)."""
+    muster: list[_Muster] = []
+    nach_key: dict[tuple, _Muster] = {}
+    for i, plan in enumerate(plaene):
+        folge = folgen[i] if i < len(folgen) else []
+        if plan.defekte:
+            # Stück mit Defekt ist nicht austauschbar – einzeln aufführen
+            muster.append(_Muster(plan, 1, folge))
+            continue
+        if is_1d:
+            teile = tuple(sorted((p.teil_label, round(p.laenge, 1))
+                                 for p in plan.platzierungen))
+        else:
+            teile = tuple((p.teil_label, round(p.laenge, 1), round(p.breite, 1),
+                           round(p.x, 1), round(p.y, 1), p.gedreht)
+                          for p in plan.platzierungen)
+        key = (round(plan.lager_laenge, 1), round(plan.lager_breite, 1),
+               teile, tuple(folge))
+        if key in nach_key:
+            nach_key[key].anzahl += 1
+        else:
+            m = _Muster(plan, 1, folge)
+            nach_key[key] = m
+            muster.append(m)
+    return muster
+
+
+def _muster_titel(m: _Muster, art: str) -> str:
+    plan = m.plan
+    mass = _fmt(plan.lager_laenge)
+    if plan.lager_breite > 0:
+        mass += f" x {_fmt(plan.lager_breite)}"
+    if plan.defekte:
+        nr = f" #{plan.stueck_nr}" if plan.stueck_nr else ""
+        return f"{art}{nr} – {mass} mm (mit Defekt)"
+    return f"{m.anzahl} × {art} {mass} mm"
+
+
 def export_pdf(
     ergebnis: OptimierungsErgebnis,
     path: str | Path,
@@ -67,15 +140,15 @@ def export_pdf(
 
     cur = _PageCursor(c)
     _draw_header(c, cur, ergebnis, projekt_name, material_name, saegeblatt_name)
-    _draw_stueckliste(c, cur, ergebnis, farb_map)
+    _draw_stueckliste(c, cur, ergebnis, farb_map, is_1d)
 
     cur.advance(10)
 
+    muster = _muster_bilden(ergebnis.schnittplaene, schnittfolgen or [], is_1d)
     if is_1d:
-        _draw_1d_plans(c, cur, ergebnis.schnittplaene, farb_map)
+        _draw_1d_plans(c, cur, muster, farb_map)
     else:
-        _draw_2d_plans(c, cur, ergebnis.schnittplaene, farb_map,
-                       schnittfolgen or [], schnittfolge_titel)
+        _draw_2d_plans(c, cur, muster, farb_map, schnittfolge_titel)
 
     c.save()
 
@@ -104,36 +177,63 @@ def _draw_header(c: canvas.Canvas, cur: _PageCursor,
 
     c.setStrokeColor(colors.grey)
     c.line(MARGIN, cur.y, PAGE_W - MARGIN, cur.y)
-    cur.advance(8)
+    cur.advance(14)
 
 
 def _draw_stueckliste(c: canvas.Canvas, cur: _PageCursor,
-                      erg: OptimierungsErgebnis, farb_map: dict):
-    c.setFont("Helvetica-Bold", 9)
-    c.drawString(MARGIN, cur.y, "#")
-    c.drawString(MARGIN + 20, cur.y, "Label")
-    c.drawString(MARGIN + 160, cur.y, "Länge")
-    c.drawString(MARGIN + 220, cur.y, "Breite")
-    c.drawString(MARGIN + 280, cur.y, "Lager")
-    cur.advance(12)
-
-    c.setFont("Helvetica", 9)
-    nr = 1
+                      erg: OptimierungsErgebnis, farb_map: dict, is_1d: bool):
+    # Je Teil (Label + Maß) eine Zeile mit der Anzahl
+    teile: dict[tuple[str, float, float], int] = {}
     for plan in erg.schnittplaene:
         for p in plan.platzierungen:
-            cur.need(14)
-            farbe = farb_map.get(p.teil_label, colors.grey)
-            c.setFillColor(farbe)
-            c.rect(MARGIN, cur.y - 2, 10, 10, fill=1, stroke=0)
-            c.setFillColor(colors.black)
-            c.drawString(MARGIN + 13, cur.y, str(nr))
-            c.drawString(MARGIN + 20, cur.y, p.teil_label)
-            c.drawString(MARGIN + 160, cur.y, f"{p.laenge:.1f}")
-            if p.breite > 0:
-                c.drawString(MARGIN + 220, cur.y, f"{p.breite:.1f}")
-            c.drawString(MARGIN + 280, cur.y, f"#{plan.lagerstueck_id}")
-            cur.advance(13)
-            nr += 1
+            key = (p.teil_label, round(p.laenge, 1), round(p.breite, 1))
+            teile[key] = teile.get(key, 0) + 1
+
+    # Spaltenbreiten nach dem längsten Label, Zahlen rechtsbündig
+    label_w = max([stringWidth("Teil", "Helvetica-Bold", 9)]
+                  + [stringWidth(k[0], "Helvetica", 9) for k in teile])
+    x_label = MARGIN + 14
+    x_laenge = x_label + label_w + 50
+    x_breite = x_laenge + 60
+    x_anzahl = (x_laenge if is_1d else x_breite) + 60
+
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(x_label, cur.y, "Teil")
+    c.drawRightString(x_laenge, cur.y, "Länge")
+    if not is_1d:
+        c.drawRightString(x_breite, cur.y, "Breite")
+    c.drawRightString(x_anzahl, cur.y, "Anzahl")
+    cur.advance(13)
+
+    c.setFont("Helvetica", 9)
+    for (label, laenge, breite), anzahl in sorted(teile.items()):
+        cur.need(13)
+        c.setFillColor(farb_map.get(label, colors.grey))
+        c.rect(MARGIN, cur.y - 2, 10, 10, fill=1, stroke=0)
+        c.setFillColor(colors.black)
+        c.drawString(x_label, cur.y, label)
+        c.drawRightString(x_laenge, cur.y, _fmt(laenge))
+        if not is_1d:
+            c.drawRightString(x_breite, cur.y, _fmt(breite))
+        c.drawRightString(x_anzahl, cur.y, str(anzahl))
+        cur.advance(13)
+
+    # Materialbedarf: Lagerstücke nach Maß zusammengefasst
+    bedarf: dict[tuple[float, float], int] = {}
+    for plan in erg.schnittplaene:
+        key = (plan.lager_laenge, plan.lager_breite)
+        bedarf[key] = bedarf.get(key, 0) + 1
+    teile_txt = ",   ".join(
+        f"{n} × {_fmt(l)}{' x ' + _fmt(b) if b > 0 else ''} mm"
+        for (l, b), n in sorted(bedarf.items(), reverse=True))
+    cur.advance(4)
+    cur.need(13)
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(MARGIN, cur.y, "Materialbedarf:")
+    c.setFont("Helvetica", 9)
+    c.drawString(MARGIN + stringWidth("Materialbedarf: ", "Helvetica-Bold", 9),
+                 cur.y, teile_txt)
+    cur.advance(13)
 
 
 # =====================================================================
@@ -141,11 +241,11 @@ def _draw_stueckliste(c: canvas.Canvas, cur: _PageCursor,
 # =====================================================================
 
 def _draw_2d_plans(c: canvas.Canvas, cur: _PageCursor,
-                   plaene: list[Schnittplan], farb_map: dict,
-                   schnittfolgen: list[list[str]] | None = None,
+                   muster: list[_Muster], farb_map: dict,
                    schnittfolge_titel: str = "Schnittfolge"):
     gap = 8
-    for idx, plan in enumerate(plaene):
+    for m in muster:
+        plan = m.plan
         ratio = plan.lager_breite / plan.lager_laenge if plan.lager_laenge > 0 else 0.5
         draw_w = USABLE_W
         draw_h = draw_w * ratio
@@ -160,10 +260,11 @@ def _draw_2d_plans(c: canvas.Canvas, cur: _PageCursor,
 
         # Titel
         c.setFont("Helvetica-Bold", 9)
-        c.drawString(MARGIN, cur.y,
-                     f"Lagerstück #{plan.lagerstueck_id} – "
-                     f"{plan.lager_laenge:.0f} x {plan.lager_breite:.0f} mm  "
-                     f"(Verschnitt: {plan.verschnitt_prozent:.1f}%)")
+        titel = _muster_titel(m, "Platte")
+        c.drawString(MARGIN, cur.y, titel)
+        c.setFont("Helvetica", 9)
+        c.drawString(MARGIN + stringWidth(titel + "   ", "Helvetica-Bold", 9),
+                     cur.y, f"Verschnitt: {plan.verschnitt_prozent:.1f}%")
         cur.advance(14)
 
         _draw_2d_rect(c, plan, farb_map, MARGIN, cur.y - draw_h, draw_w, draw_h)
@@ -172,8 +273,7 @@ def _draw_2d_plans(c: canvas.Canvas, cur: _PageCursor,
         # Cutting sequence (numbered steps) in 2 columns below the plan;
         # steps come pre-formatted from the frontend so PDF and web UI
         # always show the identical decomposition
-        folge = (schnittfolgen or [])
-        steps = folge[idx] if idx < len(folge) else []
+        steps = m.folge
         if steps:
             cur.need(12)
             c.setFont("Helvetica-Bold", 8)
@@ -188,12 +288,8 @@ def _draw_2d_plans(c: canvas.Canvas, cur: _PageCursor,
                 for col in range(2):
                     i = r + col * half
                     if i < len(steps):
-                        # Helvetica (Latin-1) has no "→" – substitute it,
-                        # and defensively replace any other non-Latin-1 char
-                        txt = steps[i].replace("→", "»")
-                        txt = txt.encode("latin-1", "replace").decode("latin-1")
                         c.drawString(MARGIN + col * col_w, cur.y,
-                                     f"{i + 1}. {txt}")
+                                     f"{i + 1}. {_latin1(steps[i])}")
                 cur.advance(9.5)
             cur.advance(gap)
 
@@ -225,51 +321,88 @@ def _draw_2d_rect(c: canvas.Canvas, plan: Schnittplan, farb_map: dict,
         c.setLineWidth(0.3)
         c.rect(x, y, rw, rh, fill=1, stroke=1)
 
+        # Beschriftung nur, wenn sie ins Teil passt (sonst schrumpfen/weglassen)
         c.setFillColor(colors.black)
-        c.setFont("Helvetica-Bold", font_size)
-        c.drawCentredString(x + rw / 2, y + rh / 2 + font_size * 0.3,
-                            p.teil_label)
-        c.setFont("Helvetica", max(5, font_size - 2))
         dim = f"{p.laenge:.0f}x{p.breite:.0f}"
         if p.gedreht:
             dim += " ↻"
-        c.drawCentredString(x + rw / 2, y + rh / 2 - font_size * 0.7, dim)
+        lbl_size = _fit_size(p.teil_label, "Helvetica-Bold", font_size, 5, rw - 2)
+        dim_size = _fit_size(dim, "Helvetica", max(5, font_size - 2), 5, rw - 2)
+        if lbl_size and dim_size and rh >= lbl_size + dim_size + 2:
+            c.setFont("Helvetica-Bold", lbl_size)
+            c.drawCentredString(x + rw / 2, y + rh / 2 + lbl_size * 0.3,
+                                p.teil_label)
+            c.setFont("Helvetica", dim_size)
+            c.drawCentredString(x + rw / 2, y + rh / 2 - lbl_size * 0.7, dim)
+        elif lbl_size and rh >= lbl_size + 1:
+            c.setFont("Helvetica-Bold", lbl_size)
+            c.drawCentredString(x + rw / 2, y + rh / 2 - lbl_size * 0.35,
+                                p.teil_label)
+        elif dim_size and rh >= dim_size + 1:
+            c.setFont("Helvetica", dim_size)
+            c.drawCentredString(x + rw / 2, y + rh / 2 - dim_size * 0.35, dim)
 
 
 # =====================================================================
-# 1D Stangen – 2 Spalten, ~5 pro Spalte
+# 1D Stangen – volle Breite, ein Block je Schnittmuster
 # =====================================================================
+
+def _schnittliste_zeilen(plan: Schnittplan, max_w: float) -> list[str]:
+    """'2 × Label (375.5 mm)   ·   …   ·   Rest 19 mm', auf max_w umbrochen."""
+    anzahl: dict[tuple[str, float], int] = {}
+    for p in plan.platzierungen:
+        key = (p.teil_label, round(p.laenge, 1))
+        anzahl[key] = anzahl.get(key, 0) + 1
+    teile = [f"{n} × {label} ({_fmt(laenge)} mm)"
+             for (label, laenge), n in anzahl.items()]
+    rest = sum(r[0] for r in plan.reste if r)
+    if rest > 0:
+        teile.append(f"Rest {_fmt(rest)} mm")
+
+    sep = "   ·   "
+    zeilen: list[str] = []
+    zeile = ""
+    for t in teile:
+        kandidat = zeile + sep + t if zeile else t
+        if zeile and stringWidth(kandidat, "Helvetica", 8) > max_w:
+            zeilen.append(zeile)
+            zeile = t
+        else:
+            zeile = kandidat
+    if zeile:
+        zeilen.append(zeile)
+    return zeilen
+
 
 def _draw_1d_plans(c: canvas.Canvas, cur: _PageCursor,
-                   plaene: list[Schnittplan], farb_map: dict):
-    col_w = (USABLE_W - 10) / 2  # 10 = gap zwischen Spalten
-    bar_h = 30
-    row_h = bar_h + 20  # Platz für Titel + Balken
-    col = 0  # 0 = links, 1 = rechts
-    row_start_y = cur.y
+                   muster: list[_Muster], farb_map: dict):
+    bar_w = USABLE_W
+    bar_h = 26
+    zeile_h = 10
+    gap = 14
 
-    for plan in plaene:
-        if col == 0:
-            cur.need(row_h)
-            row_start_y = cur.y
+    for m in muster:
+        plan = m.plan
+        zeilen = _schnittliste_zeilen(plan, bar_w)
+        cur.need(6 + bar_h + 4 + len(zeilen) * zeile_h)
 
-        ox = MARGIN + col * (col_w + 10)
-        top_y = row_start_y
+        # Titel: "10 × Stange 2000 mm   Verschnitt: 1.0%"
+        titel = _muster_titel(m, "Stange")
+        c.setFillColor(colors.black)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(MARGIN, cur.y, titel)
+        c.setFont("Helvetica", 9)
+        c.drawString(MARGIN + stringWidth(titel + "   ", "Helvetica-Bold", 9),
+                     cur.y, f"Verschnitt: {plan.verschnitt_prozent:.1f}%")
 
-        # Titel
-        c.setFont("Helvetica-Bold", 8)
-        c.drawString(ox, top_y,
-                     f"#{plan.lagerstueck_id} – {plan.lager_laenge:.0f} mm  "
-                     f"({plan.verschnitt_prozent:.1f}%)")
-
-        bar_y = top_y - 14 - bar_h
-        scale = col_w / plan.lager_laenge if plan.lager_laenge > 0 else 1
+        ox = MARGIN
+        bar_y = cur.y - 6 - bar_h
+        scale = bar_w / plan.lager_laenge if plan.lager_laenge > 0 else 1
 
         c.setStrokeColor(colors.black)
         c.setLineWidth(0.8)
         c.rect(ox, bar_y, plan.lager_laenge * scale, bar_h, fill=0)
 
-        c.setFont("Helvetica", 7)
         for p in plan.platzierungen:
             x = ox + p.x * scale
             w = p.laenge * scale
@@ -279,12 +412,20 @@ def _draw_1d_plans(c: canvas.Canvas, cur: _PageCursor,
             c.setLineWidth(0.3)
             c.rect(x, bar_y + 1, w, bar_h - 2, fill=1, stroke=1)
 
+            # Label + Länge, wenn sie ins Teil passen; sonst nur die Länge
             c.setFillColor(colors.black)
-            c.setFont("Helvetica-Bold", 7)
-            c.drawCentredString(x + w / 2, bar_y + bar_h / 2 + 2, p.teil_label)
-            c.setFont("Helvetica", 6)
-            c.drawCentredString(x + w / 2, bar_y + bar_h / 2 - 8,
-                                f"{p.laenge:.0f}")
+            mitte = bar_y + bar_h / 2
+            laenge_txt = _fmt(p.laenge)
+            lbl_size = _fit_size(p.teil_label, "Helvetica-Bold", 7.5, 5, w - 3)
+            len_size = _fit_size(laenge_txt, "Helvetica", 7, 5, w - 2)
+            if lbl_size and len_size:
+                c.setFont("Helvetica-Bold", lbl_size)
+                c.drawCentredString(x + w / 2, mitte + 2, p.teil_label)
+                c.setFont("Helvetica", len_size)
+                c.drawCentredString(x + w / 2, mitte - 8, laenge_txt)
+            elif len_size:
+                c.setFont("Helvetica", len_size)
+                c.drawCentredString(x + w / 2, mitte - len_size * 0.35, laenge_txt)
 
         # Defekte rot schraffiert (werden als Abfall herausgeschnitten)
         for d in plan.defekte:
@@ -305,13 +446,11 @@ def _draw_1d_plans(c: canvas.Canvas, cur: _PageCursor,
                 i += step
             c.restoreState()
 
-        if col == 1:
-            cur.y = row_start_y
-            cur.advance(row_h)
-            col = 0
-        else:
-            col = 1
-
-    if col == 1:
-        cur.y = row_start_y
-        cur.advance(row_h)
+        # Schnittliste unter dem Balken
+        c.setFillColor(colors.black)
+        c.setFont("Helvetica", 8)
+        cur.y = bar_y - 4 - 8
+        for z in zeilen:
+            c.drawString(MARGIN, cur.y, z)
+            cur.advance(zeile_h)
+        cur.advance(gap)
