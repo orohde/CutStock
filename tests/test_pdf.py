@@ -60,3 +60,16 @@ def test_export_erzeugt_pdf(tmp_path):
     pfad = tmp_path / "plan.pdf"
     export_pdf(erg, pfad, "Test", is_1d=True)
     assert pfad.read_bytes().startswith(b"%PDF")
+
+
+def test_export_mit_materialbild(tmp_path):
+    from io import BytesIO
+    from PIL import Image
+    png = BytesIO()
+    Image.new("RGB", (40, 30), "grey").save(png, "PNG")
+    erg = OptimierungsErgebnis([_stange(375.5)] * 2)
+    for bild in (png.getvalue(), b"kein bild"):  # unlesbares Bild wird übersprungen
+        pfad = tmp_path / "plan.pdf"
+        export_pdf(erg, pfad, "Test", material_name="Profil", is_1d=True,
+                   material_bild=bild)
+        assert pfad.read_bytes().startswith(b"%PDF")

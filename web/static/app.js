@@ -3342,6 +3342,7 @@ function initEvents() {
             ergebnis: State.optimizationResult,
             projekt_name: projSel?.selectedOptions[0]?.text || '',
             material_name: matSel?.selectedOptions[0]?.text || '',
+            material_id: matId || 0,
             saegeblatt_name: bladeSel?.selectedOptions[0]?.text || '',
             is_1d: is1D,
             schnittfolgen,

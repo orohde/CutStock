@@ -2,6 +2,7 @@
 
 Kompaktes Layout:
   - Seite 1: Teileliste (je Teil eine Zeile mit Anzahl) + Materialbedarf
+    (Lager-Nr. wie auf den Lager-Etiketten, Materialname und -bild)
   - Gleiche Schnittmuster werden zusammengefasst ("10 × Stange 2000 mm"),
     Stücke mit Defekt bleiben einzeln, weil es auf das konkrete Stück ankommt
   - Platten: so viele wie möglich pro Seite (proportional skaliert)
@@ -11,12 +12,14 @@ Kompaktes Layout:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from io import BytesIO
 from pathlib import Path
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
 from reportlab.pdfbase.pdfmetrics import stringWidth
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 from core.optimize import OptimierungsErgebnis, Schnittplan
@@ -130,6 +133,7 @@ def export_pdf(
     is_1d: bool = False,
     schnittfolgen: list[list[str]] | None = None,
     schnittfolge_titel: str = "Schnittfolge",
+    material_bild: bytes = b"",
 ):
     c = canvas.Canvas(str(path), pagesize=landscape(A4))
     c.setTitle(f"CutStock – {projekt_name}")
@@ -141,6 +145,7 @@ def export_pdf(
     cur = _PageCursor(c)
     _draw_header(c, cur, ergebnis, projekt_name, material_name, saegeblatt_name)
     _draw_stueckliste(c, cur, ergebnis, farb_map, is_1d)
+    _draw_materialbedarf(c, cur, ergebnis, material_name, material_bild)
 
     cur.advance(10)
 
@@ -218,22 +223,51 @@ def _draw_stueckliste(c: canvas.Canvas, cur: _PageCursor,
         c.drawRightString(x_anzahl, cur.y, str(anzahl))
         cur.advance(13)
 
-    # Materialbedarf: Lagerstücke nach Maß zusammengefasst
-    bedarf: dict[tuple[float, float], int] = {}
+
+def _draw_materialbedarf(c: canvas.Canvas, cur: _PageCursor,
+                         erg: OptimierungsErgebnis, material: str, bild: bytes):
+    # Je Lagerbestand (#ID wie auf den Lager-Etiketten) die benötigte Anzahl
+    bedarf: dict[tuple[int, float, float], int] = {}
     for plan in erg.schnittplaene:
-        key = (plan.lager_laenge, plan.lager_breite)
+        key = (plan.lagerstueck_id, plan.lager_laenge, plan.lager_breite)
         bedarf[key] = bedarf.get(key, 0) + 1
-    teile_txt = ",   ".join(
-        f"{n} × {_fmt(l)}{' x ' + _fmt(b) if b > 0 else ''} mm"
-        for (l, b), n in sorted(bedarf.items(), reverse=True))
-    cur.advance(4)
-    cur.need(13)
+
+    img, img_w, img_h = None, 0.0, 0.0
+    if bild:
+        try:
+            img = ImageReader(BytesIO(bild))
+            iw, ih = img.getSize()
+            f = min(30 * mm / iw, 22 * mm / ih)
+            img_w, img_h = iw * f, ih * f
+        except Exception:
+            img = None  # unlesbares Bild: ohne Bild weiter
+
+    text_h = 12 * (len(bedarf) + (1 if material else 0))
+    cur.advance(8)
+    cur.need(13 + max(img_h, text_h))
+    c.setFillColor(colors.black)
     c.setFont("Helvetica-Bold", 9)
-    c.drawString(MARGIN, cur.y, "Materialbedarf:")
+    c.drawString(MARGIN, cur.y, "Materialbedarf")
+    cur.advance(14)
+
+    oben = cur.y + 8  # Oberkante der ersten Textzeile
+    x = MARGIN
+    if img:
+        c.drawImage(img, MARGIN, oben - img_h, img_w, img_h, mask="auto")
+        x += img_w + 8
+
+    if material:
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(x, cur.y, material)
+        cur.advance(12)
     c.setFont("Helvetica", 9)
-    c.drawString(MARGIN + stringWidth("Materialbedarf: ", "Helvetica-Bold", 9),
-                 cur.y, teile_txt)
-    cur.advance(13)
+    for (lid, laenge, breite), n in sorted(bedarf.items()):
+        mass = _fmt(laenge) + (f" x {_fmt(breite)}" if breite > 0 else "")
+        c.drawString(x, cur.y, f"#{lid}")
+        c.drawRightString(x + 60, cur.y, f"{n} ×")
+        c.drawString(x + 64, cur.y, f"{mass} mm")
+        cur.advance(12)
+    cur.y = min(cur.y, oben - img_h - 4)
 
 
 # =====================================================================

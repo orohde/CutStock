@@ -409,6 +409,7 @@ class PdfRequest(BaseModel):
     ergebnis: OptimizeResult
     projekt_name: str = ""
     material_name: str = ""
+    material_id: int = 0  # für das Materialbild im PDF
     saegeblatt_name: str = ""
     is_1d: bool = False
     # Vorformatierte Schnittfolge je Schnittplan (vom Frontend berechnet,
@@ -1383,6 +1384,8 @@ def generate_pdf(req: PdfRequest):
             is_1d=req.is_1d,
             schnittfolgen=req.schnittfolgen,
             schnittfolge_titel=req.schnittfolge_titel,
+            material_bild=(get_db().get_material_image(req.material_id) or b""
+                           if req.material_id else b""),
         )
         return FileResponse(
             tmp_path,
