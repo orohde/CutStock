@@ -460,6 +460,7 @@ class SchnittplanOut(BaseModel):
     verbraucht: bool = False
     stueck_code: str = ""  # Aufschrift des Stücks, z.B. "AP4040-07"
     lagerort: str = ""
+    ist_rest: bool = False  # Stück ist ein Rest (sonst ganze Stange/Platte)
     reste_stuecke: list[RestStueckOut] = []   # eingebuchte Reste (nach dem Anfangen)
 
 
@@ -1877,6 +1878,8 @@ def _plan_to_out(plan: GespeicherterPlan) -> OptimizeResult:
                                          breite=ls.breite, lagerort=stueck_ort(lid, nr)))
         return out
 
+    rest_zeilen = {ls.id for ls in db.list_lagerstuecke(plan.material_id) if ls.ist_rest}
+
     gesamt, genutzt = 0.0, 0.0
     for b in plan.bretter:
         if is_1d:
@@ -1906,6 +1909,9 @@ def _plan_to_out(plan: GespeicherterPlan) -> OptimizeResult:
                 verbraucht=b.verbraucht,
                 stueck_code=stueck_code(kuerzel, b.stueck_nr),
                 lagerort=brett_ort(b),
+                # Verbrauchte Lagerzeilen sind evtl. gelöscht → Schnappschuss fragen
+                ist_rest=(b.lagerstueck_id in rest_zeilen
+                          or bool((b.verbrauchtes_stueck or {}).get("ist_rest"))),
                 reste_stuecke=reste(b),
             )
             for b in plan.bretter],
@@ -2481,17 +2487,30 @@ WEB_EXTRA_TRANSLATIONS = {
     "sammel.locked": {"de": "{n} Stück in angefangenem Plan", "en": "{n} pcs in a started plan", "fr": "{n} pièces dans un plan commencé", "it": "{n} pezzi in un piano iniziato"},
     "sammel.compare": {"de": "Vergleichen", "en": "Compare", "fr": "Comparer", "it": "Confronta"},
     "sammel.compare_result": {"de": "Getrennt: {sep} · Gemeinsam: {tog}", "en": "Separately: {sep} · Combined: {tog}", "fr": "Séparément : {sep} · Ensemble : {tog}", "it": "Separati: {sep} · Insieme: {tog}"},
-    "sammel.saved": {"de": "{menge} gespart ({pct} %)", "en": "{menge} saved ({pct} %)", "fr": "{menge} économisés ({pct} %)", "it": "{menge} risparmiati ({pct} %)"},
-    "sammel.no_saving": {"de": "keine Ersparnis", "en": "no saving", "fr": "aucune économie", "it": "nessun risparmio"},
     "sammel.compare_missing": {
         "de": "Es fehlt Material – der Vergleich ist nur bedingt aussagekräftig.",
         "en": "Material is missing – the comparison is only indicative.",
         "fr": "Il manque du matériau – la comparaison n’est qu’indicative.",
         "it": "Manca materiale – il confronto è solo indicativo.",
     },
-    "sammel.bars": {"de": "{n} Stangen", "en": "{n} bars", "fr": "{n} barres", "it": "{n} barre"},
-    "sammel.of_which_rests": {"de": "davon {n} Reste", "en": "{n} of them offcuts", "fr": "dont {n} chutes", "it": "di cui {n} ritagli"},
-    "sammel.boards": {"de": "{n} Platten", "en": "{n} boards", "fr": "{n} panneaux", "it": "{n} pannelli"},
+    "sammel.bar_one": {"de": "1 ganze Stange", "en": "1 full bar", "fr": "1 barre entière", "it": "1 barra intera"},
+    "sammel.bar_n": {"de": "{n} ganze Stangen", "en": "{n} full bars", "fr": "{n} barres entières", "it": "{n} barre intere"},
+    "sammel.board_one": {"de": "1 ganze Platte", "en": "1 full board", "fr": "1 panneau entier", "it": "1 pannello intero"},
+    "sammel.board_n": {"de": "{n} ganze Platten", "en": "{n} full boards", "fr": "{n} panneaux entiers", "it": "{n} pannelli interi"},
+    "sammel.rest_one": {"de": "1 Rest", "en": "1 offcut", "fr": "1 chute", "it": "1 ritaglio"},
+    "sammel.rest_n": {"de": "{n} Reste", "en": "{n} offcuts", "fr": "{n} chutes", "it": "{n} ritagli"},
+    "sammel.fewer": {"de": "Gemeinsam: {what} weniger", "en": "Combined: {what} fewer", "fr": "Ensemble : {what} de moins", "it": "Insieme: {what} in meno"},
+    "sammel.no_fewer_bars": {"de": "Gemeinsam: keine ganze Stange weniger", "en": "Combined: no fewer full bars", "fr": "Ensemble : pas moins de barres entières", "it": "Insieme: nessuna barra intera in meno"},
+    "sammel.no_fewer_boards": {"de": "Gemeinsam: keine ganze Platte weniger", "en": "Combined: no fewer full boards", "fr": "Ensemble : pas moins de panneaux entiers", "it": "Insieme: nessun pannello intero in meno"},
+    "bar.title": {"de": "Stange {n}", "en": "Bar {n}", "fr": "Barre {n}", "it": "Barra {n}"},
+    "bar.whole": {"de": "ganze Stange", "en": "full bar", "fr": "barre entière", "it": "barra intera"},
+    "bar.rest": {"de": "Rest", "en": "offcut", "fr": "chute", "it": "ritaglio"},
+    "bar.one_part": {"de": "1 Teil", "en": "1 part", "fr": "1 pièce", "it": "1 pezzo"},
+    "bar.n_parts": {"de": "{n} Teile", "en": "{n} parts", "fr": "{n} pièces", "it": "{n} pezzi"},
+    "bar.left": {"de": "übrig {menge}", "en": "{menge} left", "fr": "reste {menge}", "it": "avanzo {menge}"},
+    "bar.to_stock": {"de": "zurück ins Lager", "en": "back to stock", "fr": "retour en stock", "it": "torna in magazzino"},
+    "bar.to_waste": {"de": "Abfall", "en": "waste", "fr": "déchet", "it": "scarto"},
+    "bar.no_left": {"de": "kein Rest", "en": "no offcut", "fr": "aucune chute", "it": "nessun ritaglio"},
     "sammel.select_projects": {"de": "Bitte mindestens ein Projekt auswählen.", "en": "Please select at least one project.", "fr": "Veuillez choisir au moins un projet.", "it": "Seleziona almeno un progetto."},
     "sammel.confirm_replace": {
         "de": "Die Einzelpläne von {names} sind noch nicht angefangen und werden durch den Sammelplan ersetzt.",

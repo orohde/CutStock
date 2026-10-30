@@ -949,7 +949,7 @@ function renderSammelPanel() {
         </tr></thead><tbody class="fd-table__body">${rows}</tbody></table>
         <div class="toolbar">
             <button id="btn-sammel-compare" class="fd-button" type="button">${escHtml(t('sammel.compare'))}</button>
-            <span id="sammel-compare" class="sammel-compare">${sammelVergleichHtml(is1D)}</span>
+            <div id="sammel-compare" class="sammel-compare">${sammelVergleichHtml(is1D)}</div>
         </div>`;
     el.querySelectorAll('.sammel-check').forEach(cb => cb.addEventListener('change', () => {
         const pid = parseInt(cb.closest('tr').dataset.pid);
@@ -974,20 +974,21 @@ function sammelRequest() {
 function sammelVergleichHtml(is1D) {
     const v = State.sammel?.vergleich;
     if (!v) return '';
-    const anz = n => t(is1D ? 'sammel.bars' : 'sammel.boards', { n });
-    // Reste getrennt nennen: „Reste zuerst“ braucht gewollt mehr (kurze) Stücke
-    const teil = (n, reste, menge) => `${anz(n)}${reste ? ', ' + t('sammel.of_which_rests', { n: reste }) : ''}`
-        + ` (${formatMenge(menge, is1D)})`;
-    const getrennt = teil(v.getrennt_bretter, v.getrennt_reste, v.getrennt_menge);
-    const gemeinsam = teil(v.gemeinsam_bretter, v.gemeinsam_reste, v.gemeinsam_menge);
-    const diff = v.getrennt_menge - v.gemeinsam_menge;
-    const pct = v.getrennt_menge > 0 ? Math.round(diff / v.getrennt_menge * 100) : 0;
-    const saving = diff > 0
-        ? `<span class="sammel-saving">→ ${escHtml(t('sammel.saved', { menge: formatMenge(diff, is1D), pct }))}</span>`
-        : `<span>→ ${escHtml(t('sammel.no_saving'))}</span>`;
+    const ganz = (n) => t(is1D ? (n === 1 ? 'sammel.bar_one' : 'sammel.bar_n')
+                               : (n === 1 ? 'sammel.board_one' : 'sammel.board_n'), { n });
+    const rest = (n) => t(n === 1 ? 'sammel.rest_one' : 'sammel.rest_n', { n });
+    const teil = (ganze, reste) => ganz(ganze) + (reste ? ' + ' + rest(reste) : '');
+    const gG = v.getrennt_bretter - v.getrennt_reste, gR = v.getrennt_reste;
+    const zG = v.gemeinsam_bretter - v.gemeinsam_reste, zR = v.gemeinsam_reste;
+    // Ganze Stangen/Platten zählen: Reste liegen ohnehin im Lager
+    const weniger = gG > zG ? ganz(gG - zG) : (gG === zG && gR > zR ? rest(gR - zR) : '');
+    const fazit = weniger
+        ? `<span class="sammel-saving">${escHtml(t('sammel.fewer', { what: weniger }))}</span>`
+        : `<span>${escHtml(t(is1D ? 'sammel.no_fewer_bars' : 'sammel.no_fewer_boards'))}</span>`;
     const missing = v.fehlende_getrennt || v.fehlende_gemeinsam
         ? `<div class="sammel-note">&#9888; ${escHtml(t('sammel.compare_missing'))}</div>` : '';
-    return `${escHtml(t('sammel.compare_result', { sep: getrennt, tog: gemeinsam }))} ${saving}${missing}`;
+    return `${fazit}<div class="sammel-note">${escHtml(t('sammel.compare_result',
+        { sep: teil(gG, gR), tog: teil(zG, zR) }))}</div>${missing}`;
 }
 
 async function compareSammel() {
@@ -1241,6 +1242,13 @@ function renderOptResults({ quiet = false } = {}) {
                     `<li data-plan-index="${i}"${s.cutIndex != null ? ` data-cut-index="${s.cutIndex}"` : ''}${s.pieceIndex != null ? ` data-piece-index="${s.pieceIndex}"` : ''}>${s.html}</li>`
                 ).join('')}</ol>
             </details>` : '';
+            if (is1D) return `<div class="cut-plan-card">
+                ${barHeadHtml(plan, i, mat)}
+                <div class="plan-piece-info" data-plan-index="${i}">${planPieceInfo(plan)}</div>
+                <canvas class="cut-plan-canvas" data-plan-index="${i}"
+                    style="width:100%;height:${canvasHeight}px"></canvas>
+                ${seqHtml}
+            </div>`;
             return `<div class="cut-plan-card">
                 <div class="plan-header">
                     <strong>${t('opt.preview')} ${i + 1}</strong>
@@ -1694,7 +1702,7 @@ function drawCutPlan(canvas, plan, material) {
     // Trefferflächen der einzelnen Stücke für Klick-zum-Abhaken sammeln
     const hits = [];
     if (is1D) {
-        draw1D(ctx, canvasW, canvasH, plan, colorMap, hits);
+        draw1D(ctx, canvasW, canvasH, plan, colorMap, hits, material?.besaeumung || 0);
     } else {
         draw2D(ctx, canvasW, canvasH, plan, colorMap, hits);
     }
@@ -2036,6 +2044,22 @@ function printRestLabels(plan) {
 }
 
 // "Nimm AP4040-07 · 640 mm · Regal 2" bzw. nach dem Anfangen "Reste beschriften: …"
+// Kopf einer Stange: was man in die Hand nimmt, wie viele Teile, wohin der Rest geht
+function barHeadHtml(plan, i, mat) {
+    const art = plan.ist_rest ? t('bar.rest') : t('bar.whole');
+    const n = plan.platzierungen.length;
+    const minL = mat?.rest_min_laenge ?? 0;
+    const reste = (plan.reste || []).map(r => r[0]).filter(l => l > 0.5);
+    const restText = reste.length
+        ? reste.map(l => `${t('bar.left', { menge: formatDim(Math.round(l)) })} → ${t(l >= minL ? 'bar.to_stock' : 'bar.to_waste')}`).join(', ')
+        : t('bar.no_left');
+    return `<div class="plan-header bar-head">
+        <strong>${escHtml(t('bar.title', { n: i + 1 }))} · ${escHtml(art)} ${formatDim(plan.lager_laenge + 2 * (mat?.besaeumung || 0))}</strong>
+        <span>${escHtml(n === 1 ? t('bar.one_part') : t('bar.n_parts', { n }))} · ${escHtml(restText)}</span>
+        <button class="fd-button btn-zoom" data-plan-index="${i}" type="button" title="${escAttr(t('opt.zoom'))}" aria-label="${escAttr(t('opt.zoom'))}">&#128269;</button>
+    </div>`;
+}
+
 function planPieceInfo(plan) {
     const parts = [];
     if (plan.stueck_code) {
@@ -2091,7 +2115,7 @@ function renderSawMode() {
     const total = plans.reduce((s, p) => s + p.platzierungen.length, 0);
     const done = plans.reduce((s, p) => s + p.platzierungen.filter(x => x._done).length, 0);
     document.getElementById('saw-plan-label').textContent =
-        `${t('opt.preview')} ${sawPlanIdx + 1} / ${plans.length}`;
+        `${is1D ? t('bar.title', { n: sawPlanIdx + 1 }) : `${t('opt.preview')} ${sawPlanIdx + 1}`} / ${plans.length}`;
     document.getElementById('saw-progress-text').textContent =
         done >= total ? t('saw.done') : `${done} / ${total}`;
     document.getElementById('saw-progress-fill').style.width =
@@ -2547,7 +2571,7 @@ function draw2D(ctx, canvasW, canvasH, plan, colorMap, hits) {
     ctx.restore();
 }
 
-function draw1D(ctx, canvasW, canvasH, plan, colorMap, hits) {
+function draw1D(ctx, canvasW, canvasH, plan, colorMap, hits, besaeumung = 0) {
     const padding = { left: 20, right: 20, top: 15, bottom: 30 };
     const barH = 50;
     const barY = padding.top;
@@ -2602,18 +2626,27 @@ function draw1D(ctx, canvasW, canvasH, plan, colorMap, hits) {
         ctx.lineWidth = 0.5;
         ctx.strokeRect(px, barY, pw, barH);
 
-        // Label
-        const fontSize = Math.max(9, Math.min(12, pw / 6));
-        ctx.font = `bold ${fontSize}px -apple-system, sans-serif`;
+        // Name und Länge des Teils; passt der Name nicht, ohne Projekt, sonst nur die Länge
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        const textW = ctx.measureText(p.teil_label).width;
-        if (textW < pw - 4) {
+        const text = (str, y, bold) => {
+            ctx.font = `${bold ? 'bold ' : ''}12px -apple-system, sans-serif`;
             ctx.fillStyle = 'rgba(0,0,0,0.4)';
-            ctx.fillText(p.teil_label, px + pw / 2 + 0.5, barY + barH / 2 + 0.5);
+            ctx.fillText(str, px + pw / 2 + 0.5, y + 0.5);
             ctx.fillStyle = '#fff';
-            ctx.fillText(p.teil_label, px + pw / 2, barY + barH / 2);
-        }
+            ctx.fillText(str, px + pw / 2, y);
+        };
+        const fits = (str, bold) => {
+            ctx.font = `${bold ? 'bold ' : ''}12px -apple-system, sans-serif`;
+            return ctx.measureText(str).width < pw - 6;
+        };
+        const name = [p.teil_label, p.teil_label.split(' → ')[0]].find(n => fits(n, true));
+        const len = String(toDisplay(p.laenge));
+        const lenFits = fits(len, false);
+        const mid = barY + barH / 2;
+        if (name && lenFits) { text(name, mid - 8, true); text(len, mid + 9, false); }
+        else if (name) text(name, mid, true);
+        else if (lenFits) text(len, mid, false);
 
         if (hits) hits.push({ x: px, y: barY, w: pw, h: barH, p });
         if (p._done) drawDoneOverlay(ctx, px, barY, pw, barH);
@@ -2642,7 +2675,7 @@ function draw1D(ctx, canvasW, canvasH, plan, colorMap, hits) {
             ctx.strokeRect(rx, barY, rw, barH);
             ctx.setLineDash([]);
 
-            const restText = formatDim(restLen);
+            const restText = formatDim(Math.round(restLen));
             ctx.font = '10px -apple-system, sans-serif';
             const rTextW = ctx.measureText(restText).width;
             if (rTextW < rw - 4) {
@@ -2660,13 +2693,33 @@ function draw1D(ctx, canvasW, canvasH, plan, colorMap, hits) {
         }
     });
 
-    // Dimension label
-    ctx.fillStyle = getComputedStyle(document.documentElement)
+    // Anreißmaße: Schnittstellen ab dem echten Stangenanfang (Ende jedes Teils plus
+    // Besäumung), dazu 0 und die volle Länge. Gezeichnet wird die besäumte Stange.
+    const labelColor = getComputedStyle(document.documentElement)
         .getPropertyValue('--sapContent_LabelColor').trim() || '#6b7280';
+    ctx.fillStyle = labelColor;
+    ctx.strokeStyle = labelColor;
+    ctx.lineWidth = 1;
     ctx.font = '11px -apple-system, sans-serif';
-    ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillText(formatDim(plan.lager_laenge), padding.left + drawW / 2, barY + barH + 6);
+    const marks = [...new Set([0, ...plan.platzierungen.map(p => Math.round(p.x + p.laenge + besaeumung)),
+                               Math.round(plan.lager_laenge + 2 * besaeumung)])].sort((a, b) => a - b);
+    let frei = -Infinity;   // rechter Rand der zuletzt geschriebenen Zahl
+    marks.forEach((m, k) => {
+        const mx = padding.left + Math.min(Math.max(m - besaeumung, 0), plan.lager_laenge) * scale;
+        ctx.beginPath();
+        ctx.moveTo(mx, barY + barH);
+        ctx.lineTo(mx, barY + barH + 4);
+        ctx.stroke();
+        const txt = String(toDisplay(m));
+        const w = ctx.measureText(txt).width;
+        const last = k === marks.length - 1;
+        ctx.textAlign = k === 0 ? 'left' : last ? 'right' : 'center';
+        const left = k === 0 ? mx : last ? mx - w : mx - w / 2;
+        if (left < frei + 6) return;   // überlappt die vorige Zahl
+        ctx.fillText(txt, mx, barY + barH + 6);
+        frei = left + w;
+    });
 }
 
 // ===========================================================================

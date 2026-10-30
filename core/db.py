@@ -1348,6 +1348,7 @@ class Database:
             if row:
                 snapshot = {
                     "nr": row["nr"], "notiz": row["notiz"], "lagerort": row["lagerort"],
+                    "ist_rest": ls.ist_rest,
                     "defekte": [
                         {"position": d.position, "position_y": d.position_y,
                          "laenge": d.laenge, "breite": d.breite}
