@@ -109,8 +109,9 @@ CREATE TABLE IF NOT EXISTS saegeblatt (
 );
 
 CREATE TABLE IF NOT EXISTS projekt (
-    id   INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT    NOT NULL
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    name   TEXT    NOT NULL,
+    anzahl INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS einzelstueck (
@@ -211,26 +212,32 @@ class Database:
         self._create_tables()
 
     def _sicherung_vor_migration(self):
-        """Vor dem ersten Start mit gespeicherten Schnittplänen eine Kopie der DB anlegen.
+        """Vor einer Schema-Änderung eine Kopie der DB anlegen (neben der DB).
 
-        Die Migration legt nur neue Tabellen an und ändert keine bestehenden Daten –
-        die Kopie ist reine Vorsicht. Sie entsteht genau einmal, neben der DB.
+        Die Migrationen legen nur Tabellen/Spalten an und ändern keine bestehenden
+        Daten – die Kopie ist reine Vorsicht. Sie entsteht nur, wenn wirklich etwas
+        fehlt, also einmal pro Update: <name>-vor-update-JJJJMMTT-HHMMSS.db
         """
         if not self.path.exists() or self.path.stat().st_size == 0:
-            return
-        sicherung = self.path.with_name(
-            f"{self.path.stem}-vor-schnittplaene{self.path.suffix}")
-        if sicherung.exists():
             return
         try:
             conn = sqlite3.connect(str(self.path))
             try:
                 tabellen = {r[0] for r in conn.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'")}
+                projekt_spalten = {r[1] for r in conn.execute("PRAGMA table_info(projekt)")}
             finally:
                 conn.close()
-            if "projekt" in tabellen and "schnittplan" not in tabellen:
-                import shutil
+            if "projekt" not in tabellen:
+                return  # leere/neue DB, nichts zu sichern
+            if "schnittplan" in tabellen and "anzahl" in projekt_spalten:
+                return  # Schema aktuell
+            import shutil
+            import time
+            sicherung = self.path.with_name(
+                f"{self.path.stem}-vor-update-{time.strftime('%Y%m%d-%H%M%S')}"
+                f"{self.path.suffix}")
+            if not sicherung.exists():
                 shutil.copy2(str(self.path), str(sicherung))
         except (sqlite3.Error, OSError):
             pass  # Sicherung ist optional, der Start darf daran nicht scheitern
@@ -255,6 +262,13 @@ class Database:
                 "ALTER TABLE material ADD COLUMN maserung TEXT NOT NULL DEFAULT 'keine'")
             self.conn.execute(
                 "UPDATE material SET maserung='längs' WHERE drehung_erlaubt=0")
+        proj_cols = {row[1] for row in
+                     self.conn.execute("PRAGMA table_info(projekt)").fetchall()}
+        if "anzahl" not in proj_cols:
+            # Default 1: bestehende Projekte bleiben unverändert; ältere Versionen
+            # ignorieren die Spalte einfach (INSERT ohne anzahl → 1).
+            self.conn.execute(
+                "ALTER TABLE projekt ADD COLUMN anzahl INTEGER NOT NULL DEFAULT 1")
         teil_cols = {row[1] for row in
                      self.conn.execute("PRAGMA table_info(teil)").fetchall()}
         if "maserung" not in teil_cols:
@@ -642,15 +656,22 @@ class Database:
     # ------------------------------------------------------------------
 
     def save_projekt(self, p: Projekt) -> Projekt:
+        p.anzahl = max(1, int(p.anzahl or 1))
         if p.id is None:
             cur = self.conn.execute(
-                "INSERT INTO projekt (name) VALUES (?)", (p.name,)
+                "INSERT INTO projekt (name, anzahl) VALUES (?,?)", (p.name, p.anzahl)
             )
             p.id = cur.lastrowid
         else:
             self.conn.execute(
-                "UPDATE projekt SET name=? WHERE id=?", (p.name, p.id)
+                "UPDATE projekt SET name=?, anzahl=? WHERE id=?", (p.name, p.anzahl, p.id)
             )
+            # Weniger Exemplare: Fortschritt darf die neue Gesamtmenge nicht übersteigen
+            self.conn.execute(
+                """UPDATE teil SET gesaegt_anzahl = MIN(gesaegt_anzahl, stueckzahl * ?),
+                   status = CASE WHEN MIN(gesaegt_anzahl, stueckzahl * ?) >= stueckzahl * ?
+                   THEN 'gesägt' ELSE 'offen' END WHERE projekt_id=?""",
+                (p.anzahl, p.anzahl, p.anzahl, p.id))
         self.conn.commit()
         return p
 
@@ -658,7 +679,7 @@ class Database:
         rows = self.conn.execute("SELECT * FROM projekt ORDER BY name").fetchall()
         projekte = []
         for r in rows:
-            p = Projekt(id=r["id"], name=r["name"])
+            p = Projekt(id=r["id"], name=r["name"], anzahl=r["anzahl"])
             p.teile = self.list_teile(p.id)
             projekte.append(p)
         return projekte
@@ -669,7 +690,7 @@ class Database:
         ).fetchone()
         if not row:
             return None
-        p = Projekt(id=row["id"], name=row["name"])
+        p = Projekt(id=row["id"], name=row["name"], anzahl=row["anzahl"])
         p.teile = self.list_teile(p.id)
         return p
 
@@ -684,8 +705,11 @@ class Database:
     # ------------------------------------------------------------------
 
     def save_teil(self, t: Teil) -> Teil:
-        # Status aus gesaegt_anzahl ableiten
-        if t.gesaegt_anzahl >= t.stueckzahl:
+        row = self.conn.execute(
+            "SELECT anzahl FROM projekt WHERE id=?", (t.projekt_id,)).fetchone()
+        t.exemplare = row["anzahl"] if row else 1
+        # Status aus gesaegt_anzahl ableiten (über alle Exemplare)
+        if t.ist_komplett:
             t.status = TeilStatus.GESAEGT
         elif t.gesaegt_anzahl > 0:
             t.status = TeilStatus.OFFEN  # teilweise
@@ -717,7 +741,9 @@ class Database:
 
     def list_teile(self, projekt_id: int) -> list[Teil]:
         rows = self.conn.execute(
-            "SELECT * FROM teil WHERE projekt_id=? ORDER BY label",
+            """SELECT t.*, p.anzahl AS exemplare FROM teil t
+               JOIN projekt p ON p.id = t.projekt_id
+               WHERE t.projekt_id=? ORDER BY t.label""",
             (projekt_id,),
         ).fetchall()
         return [self._row_to_teil(r) for r in rows]
@@ -737,6 +763,7 @@ class Database:
             gesaegt_anzahl=row["gesaegt_anzahl"],
             maserung=mas,
             status=TeilStatus(row["status"]),
+            exemplare=row["exemplare"] if "exemplare" in row.keys() else 1,
         )
 
     # ------------------------------------------------------------------
@@ -894,10 +921,13 @@ class Database:
     def teil_gesaegt_aendern(self, teil_id: int, delta: int):
         """Fortschritt relativ ändern (nie unter 0, nie über die Stückzahl)."""
         self.conn.execute(
-            """UPDATE teil SET gesaegt_anzahl = MAX(0, MIN(stueckzahl, gesaegt_anzahl + ?))
+            """UPDATE teil SET gesaegt_anzahl = MAX(0, MIN(
+                   stueckzahl * (SELECT anzahl FROM projekt WHERE id = teil.projekt_id),
+                   gesaegt_anzahl + ?))
                WHERE id=?""", (delta, teil_id))
         self.conn.execute(
-            """UPDATE teil SET status = CASE WHEN gesaegt_anzahl >= stueckzahl
+            """UPDATE teil SET status = CASE WHEN gesaegt_anzahl >=
+                   stueckzahl * (SELECT anzahl FROM projekt WHERE id = teil.projekt_id)
                THEN 'gesägt' ELSE 'offen' END WHERE id=?""", (teil_id,))
         self.conn.commit()
 

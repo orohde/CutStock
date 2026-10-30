@@ -151,6 +151,10 @@ TRANSLATIONS = {
         "de": "Projektname:", "en": "Project name:", "fr": "Nom du projet:",
         "it": "Nome progetto:",
     },
+    "proj.copies": {
+        "de": "Anzahl Exemplare:", "en": "Number of copies:",
+        "fr": "Nombre d'exemplaires :", "it": "Numero di esemplari:",
+    },
     "proj.name_hint": {
         "de": "z.B. Regal Wohnzimmer", "en": "e.g. Living room shelf",
         "fr": "p.ex. Étagère salon", "it": "es. Scaffale soggiorno",

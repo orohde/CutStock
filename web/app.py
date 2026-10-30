@@ -327,15 +327,18 @@ class PartOut(BaseModel):
     maserung: str
     status: str
     offen_anzahl: int
+    gesamt_anzahl: int = 0     # stueckzahl × Exemplare des Projekts
 
 
 class ProjectIn(BaseModel):
     name: str
+    anzahl: int = Field(1, ge=1, le=10000)   # Exemplare
 
 
 class ProjectOut(BaseModel):
     id: int
     name: str
+    anzahl: int = 1
     teile: list[PartOut]
     plaene: list[PlanStatusOut] = []
 
@@ -539,6 +542,7 @@ def _teil_to_out(t: Teil) -> PartOut:
         maserung=t.maserung.value,
         status=t.status.value,
         offen_anzahl=t.offen_anzahl,
+        gesamt_anzahl=t.gesamt_anzahl,
     )
 
 
@@ -546,6 +550,7 @@ def _projekt_to_out(p: Projekt) -> ProjectOut:
     return ProjectOut(
         id=p.id,
         name=p.name,
+        anzahl=p.anzahl,
         teile=[_teil_to_out(t) for t in p.teile],
         plaene=[PlanStatusOut(plan_id=r["id"], material_id=r["material_id"],
                               erstellt=r["erstellt"], gesamt=r["gesamt"],
@@ -991,7 +996,7 @@ def get_project(pid: int):
 
 @app.post("/api/projects", response_model=ProjectOut, status_code=201)
 def create_project(data: ProjectIn):
-    p = Projekt(name=data.name)
+    p = Projekt(name=data.name, anzahl=data.anzahl)
     p = get_db().save_projekt(p)
     p.teile = []
     return _projekt_to_out(p)
@@ -1003,8 +1008,9 @@ def update_project(pid: int, data: ProjectIn):
     if not existing:
         raise HTTPException(404, "Project not found")
     existing.name = data.name
+    existing.anzahl = data.anzahl
     get_db().save_projekt(existing)
-    return _projekt_to_out(existing)
+    return _projekt_to_out(get_db().get_projekt(pid))
 
 
 @app.post("/api/projects/{pid}/clone", response_model=ProjectOut, status_code=201)
@@ -1013,7 +1019,7 @@ def clone_project(pid: int):
     existing = db.get_projekt(pid)
     if not existing:
         raise HTTPException(404, "Project not found")
-    clone = Projekt(name=f"{existing.name} (Kopie)")
+    clone = Projekt(name=f"{existing.name} (Kopie)", anzahl=existing.anzahl)
     clone = db.save_projekt(clone)
     for t in db.list_teile(pid):
         ct = Teil(
@@ -1314,7 +1320,7 @@ def _eingabe_hash(projekt: Projekt, material: Material, kerf: float) -> str:
     """
     import hashlib
     import json
-    teile = sorted((t.id, t.laenge, t.breite, t.maserung.value, t.stueckzahl)
+    teile = sorted((t.id, t.laenge, t.breite, t.maserung.value, t.gesamt_anzahl)
                    for t in projekt.teile if t.material_id == material.id)
     raw = json.dumps([teile, material.besaeumung, material.maserung.value, kerf])
     return hashlib.sha1(raw.encode()).hexdigest()

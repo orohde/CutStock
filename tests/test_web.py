@@ -410,6 +410,7 @@ class TestMigrationSchnittplaene:
         # Stand einer älteren Version simulieren: Plan-Tabellen gibt es noch nicht
         for t in ("schnittplan_stueck", "schnittplan_brett", "schnittplan"):
             db.conn.execute(f"DROP TABLE {t}")
+        db.conn.execute("ALTER TABLE projekt DROP COLUMN anzahl")
         db.conn.commit()
         db.close()
 
@@ -418,12 +419,73 @@ class TestMigrationSchnittplaene:
             "SELECT name FROM sqlite_master WHERE type='table'")}
         assert {"schnittplan", "schnittplan_brett", "schnittplan_stueck"} <= tabellen
         assert db.conn.execute("SELECT COUNT(*) FROM material").fetchone()[0] == 1
-        assert db.conn.execute("SELECT COUNT(*) FROM projekt").fetchone()[0] == 1
+        assert [tuple(r) for r in db.conn.execute("SELECT name, anzahl FROM projekt")] == [("P", 1)]
         assert db.conn.execute("SELECT SUM(stueckzahl) FROM lagerstueck").fetchone()[0] == 2
         db.close()
 
-        sicherung = tmp_path / "cutstock-vor-schnittplaene.db"
-        assert sicherung.exists()
+        sicherungen = list(tmp_path.glob("cutstock-vor-update-*.db"))
+        assert len(sicherungen) == 1
+        sicherung = sicherungen[0]
+        Database(path).close()        # aktuelles Schema → keine weitere Sicherung
+        assert len(list(tmp_path.glob("cutstock-vor-update-*.db"))) == 1
         conn = sqlite3.connect(str(sicherung))
         assert conn.execute("SELECT name FROM material").fetchone()[0] == "Alt"
         conn.close()
+
+
+
+# =====================================================================
+# Projekt mehrfach bauen (Anzahl Exemplare)
+# =====================================================================
+
+class TestProjektAnzahl:
+
+    def _setup(self, client, anzahl=3):
+        mid = client.post("/api/materials", json={"name": "Anz", "typ": "Stange"}).json()["id"]
+        client.post("/api/stock", json={"material_id": mid, "laenge": 3000, "stueckzahl": 10})
+        pid = client.post("/api/projects", json={"name": "Hocker", "anzahl": anzahl}).json()["id"]
+        tid = client.post(f"/api/projects/{pid}/parts", json={
+            "label": "Bein", "typ": "Stange", "material_id": mid,
+            "laenge": 450, "stueckzahl": 4}).json()["id"]
+        bid = client.post("/api/blades", json={"name": "B", "schnittbreite": 3}).json()["id"]
+        return mid, pid, tid, bid
+
+    def _teil(self, client, pid):
+        return client.get(f"/api/projects/{pid}").json()["teile"][0]
+
+    def test_mengen_mal_anzahl(self, client):
+        mid, pid, _, bid = self._setup(client, anzahl=3)
+        teil = self._teil(client, pid)
+        assert (teil["stueckzahl"], teil["gesamt_anzahl"], teil["offen_anzahl"]) == (4, 12, 12)
+        plan = client.post("/api/optimize", json={
+            "project_id": pid, "material_id": mid, "blade_id": bid}).json()
+        assert sum(len(sp["platzierungen"]) for sp in plan["schnittplaene"]) == 12
+
+    def test_fortschritt_ueber_alle_exemplare(self, client):
+        mid, pid, _, bid = self._setup(client, anzahl=2)
+        plan = client.post("/api/optimize", json={
+            "project_id": pid, "material_id": mid, "blade_id": bid}).json()
+        res = client.post(f"/api/plans/{plan['plan_id']}/confirm-all").json()
+        assert all(p["gesaegt"] for sp in res["schnittplaene"] for p in sp["platzierungen"])
+        teil = self._teil(client, pid)
+        assert teil["gesaegt_anzahl"] == 8 and teil["status"] == "gesägt"
+
+    def test_anzahl_aendern_macht_plan_veraltet(self, client):
+        mid, pid, _, bid = self._setup(client, anzahl=2)
+        client.post("/api/optimize", json={
+            "project_id": pid, "material_id": mid, "blade_id": bid})
+        client.put(f"/api/projects/{pid}", json={"name": "Hocker", "anzahl": 5})
+        assert client.get(f"/api/projects/{pid}/plans/{mid}").json()["veraltet"]
+        assert self._teil(client, pid)["offen_anzahl"] == 20
+
+    def test_weniger_exemplare_kappt_fortschritt(self, client):
+        mid, pid, tid, bid = self._setup(client, anzahl=3)
+        teil = self._teil(client, pid)
+        client.put(f"/api/parts/{tid}", json={**teil, "gesaegt_anzahl": 10})
+        client.put(f"/api/projects/{pid}", json={"name": "Hocker", "anzahl": 2})
+        teil = self._teil(client, pid)
+        assert teil["gesaegt_anzahl"] == 8 and teil["status"] == "gesägt"
+
+    def test_kopie_uebernimmt_anzahl(self, client):
+        _, pid, _, _ = self._setup(client, anzahl=4)
+        assert client.post(f"/api/projects/{pid}/clone").json()["anzahl"] == 4

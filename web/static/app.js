@@ -528,7 +528,8 @@ async function renderProjects() {
 
     tbody.innerHTML = State.projects.map(p => {
         const selected = p.id === State.selectedProjectId ? ' selected' : '';
-        return `<tr class="fd-table__row ${selected}" data-id="${p.id}"><td class="fd-table__cell">${escHtml(p.name)}${planBadge(p)}</td></tr>`;
+        const copies = p.anzahl > 1 ? ` <span class="proj-copies">×${p.anzahl}</span>` : '';
+        return `<tr class="fd-table__row ${selected}" data-id="${p.id}"><td class="fd-table__cell">${escHtml(p.name)}${copies}${planBadge(p)}</td></tr>`;
     }).join('');
 
     tbody.querySelectorAll('tr[data-id]').forEach(row => {
@@ -588,9 +589,12 @@ async function renderParts() {
         const matName = mat ? mat.name : `#${p.material_id}`;
         const isPlatte = p.typ === 'Platte';
         const grain = isPlatte ? t(GRAIN_KEY[p.maserung] || p.maserung) : '';
-        const pct = p.stueckzahl > 0 ? Math.round((p.gesaegt_anzahl / p.stueckzahl) * 100) : 0;
-        const statusText = `${p.gesaegt_anzahl}/${p.stueckzahl}`;
-        const statusClass = p.gesaegt_anzahl >= p.stueckzahl ? 'status-cut' : 'status-open';
+        // Fortschritt über alle Exemplare des Projekts (gesamt = Stück × Anzahl)
+        const gesamt = p.gesamt_anzahl || p.stueckzahl;
+        const pct = gesamt > 0 ? Math.round((p.gesaegt_anzahl / gesamt) * 100) : 0;
+        const statusText = `${p.gesaegt_anzahl}/${gesamt}`;
+        const statusClass = p.gesaegt_anzahl >= gesamt ? 'status-cut' : 'status-open';
+        const qtyText = gesamt !== p.stueckzahl ? `${p.stueckzahl} <small>(${gesamt})</small>` : p.stueckzahl;
         return `<tr class="fd-table__row ${selected}" data-id="${p.id}">
             <td class="fd-table__cell">${escHtml(p.label)}</td>
             <td class="fd-table__cell">${t(TYP_KEY[p.typ] || p.typ)}</td>
@@ -598,7 +602,7 @@ async function renderParts() {
             <td class="fd-table__cell">${grain}</td>
             <td class="fd-table__cell num">${formatDim(p.laenge)}</td>
             <td class="fd-table__cell num">${isPlatte ? formatDim(p.breite) : ''}</td>
-            <td class="fd-table__cell num">${p.stueckzahl}</td>
+            <td class="fd-table__cell num">${qtyText}</td>
             <td class="fd-table__cell">
                 <div style="display:flex;align-items:center;gap:8px">
                     <div class="progress-bar" style="flex:1;min-width:60px">
@@ -825,7 +829,7 @@ function renderOptResults({ quiet = false } = {}) {
                 <div class="stat-icon">&#9888;</div>
                 <div><div class="stat-value stat-danger">${missing.length}</div>
                 <div class="stat-label">${t('stat.parts_missing')}</div>
-                <div class="stat-sub stat-danger">${escHtml(missing.join(', '))}</div></div>
+                <div class="stat-sub stat-danger">${escHtml(summarizeLabels(missing))}</div></div>
             </div>`
             : `<div class="stat-card">
                 <div class="stat-icon">&#9888;</div>
@@ -945,8 +949,15 @@ function renderOptResults({ quiet = false } = {}) {
     renderPlanInfo();
 
     if (missing.length > 0 && !quiet) {
-        showToast(`${t('opt.missing')}: ${missing.join(', ')}`, 'error');
+        showToast(`${t('opt.missing')}: ${summarizeLabels(missing)}`, 'error');
     }
+}
+
+// Gleiche Labels zusammenfassen: ["A","A","B"] → "A ×2, B"
+function summarizeLabels(labels) {
+    const counts = new Map();
+    labels.forEach(l => counts.set(l, (counts.get(l) || 0) + 1));
+    return [...counts].map(([l, n]) => n > 1 ? `${l} ×${n}` : l).join(', ');
 }
 
 // Kopfzeile des gespeicherten Plans: Stand, Fortschritt, Warnhinweise.
@@ -2436,13 +2447,15 @@ function openDefectDialog(stockId, isPlatte, pieces, defect, onDone) {
 function openProjectDialog(project = null) {
     const isEdit = !!project;
     const title = isEdit ? t('proj.edit') : t('proj.new');
-    const data = project ? { ...project } : {};
+    const data = project ? { ...project } : { anzahl: 1 };
 
     const fields = [
         { key: 'name', label: t('proj.name'), type: 'text', required: true },
+        { key: 'anzahl', label: t('proj.copies'), type: 'number', min: 1, step: 1, required: true },
     ];
 
     openModal(title, fields, data, async (formData) => {
+        formData.anzahl = Math.max(1, parseInt(formData.anzahl) || 1);
         try {
             if (isEdit) {
                 await Api.updateProject(project.id, formData);
@@ -2480,7 +2493,7 @@ async function exportProject() {
     });
 
     const ver = State.versionInfo ? State.versionInfo.version : '';
-    const data = { version: ver, project: proj.name, parts };
+    const data = { version: ver, project: proj.name, copies: proj.anzahl || 1, parts };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -2514,7 +2527,10 @@ async function importProject(file) {
 
     let project;
     try {
-        project = await Api.createProject({ name: data.project || 'Import' });
+        project = await Api.createProject({
+            name: data.project || 'Import',
+            anzahl: Math.max(1, parseInt(data.copies) || 1),
+        });
     } catch { return; }
 
     let imported = 0;

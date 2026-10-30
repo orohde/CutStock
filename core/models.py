@@ -77,6 +77,7 @@ class Saegeblatt:
 class Projekt:
     id: int | None = None
     name: str = ""
+    anzahl: int = 1        # Exemplare: das Projekt wird so oft gebaut
     teile: list[Teil] = field(default_factory=list)
 
 
@@ -93,14 +94,21 @@ class Teil:
     gesaegt_anzahl: int = 0
     maserung: Maserung = Maserung.EGAL
     status: TeilStatus = TeilStatus.OFFEN
+    # Exemplare des Projekts (nicht in der Teil-Tabelle, kommt vom Projekt).
+    # stueckzahl gilt pro Exemplar, gesaegt_anzahl zählt über alle Exemplare.
+    exemplare: int = 1
+
+    @property
+    def gesamt_anzahl(self) -> int:
+        return self.stueckzahl * max(1, self.exemplare)
 
     @property
     def offen_anzahl(self) -> int:
-        return max(0, self.stueckzahl - self.gesaegt_anzahl)
+        return max(0, self.gesamt_anzahl - self.gesaegt_anzahl)
 
     @property
     def ist_komplett(self) -> bool:
-        return self.gesaegt_anzahl >= self.stueckzahl
+        return self.gesaegt_anzahl >= self.gesamt_anzahl
 
 
 @dataclass

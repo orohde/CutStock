@@ -35,6 +35,19 @@ jobs:
             catthehacker/ubuntu:act-latest \
             docker compose -p cutstock -f docker-compose.yml -f docker-compose.override.yml up -d
 
+      # Test-Instanz (Compose-Projekt "CutStock-Test", Port 8422, eigene Daten) mitziehen,
+      # falls auf Unraid angelegt. Ein Fehler hier darf das Live-Deploy nicht scheitern lassen.
+      - name: Deploy Test-Instanz
+        run: |
+          PROJS=/boot/config/plugins/compose.manager/projects
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PROJS:$PROJS:ro" \
+            catthehacker/ubuntu:act-latest \
+            sh -c "cd $PROJS/CutStock-Test 2>/dev/null || exit 0; \
+                   docker compose -p cutstock-test -f docker-compose.yml \
+                   -f docker-compose.override.yml up -d" || true
+
       # Der Server braucht nach dem Start einige Sekunden – bis zu 60 s warten
       - name: Verify
         run: |
