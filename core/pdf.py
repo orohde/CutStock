@@ -2,7 +2,7 @@
 
 Kompaktes Layout:
   - Seite 1: Teileliste (je Teil eine Zeile mit Anzahl) + Materialbedarf
-    (Lager-Nr. wie auf den Lager-Etiketten, Materialname und -bild)
+    (Stück-Codes wie auf den Etiketten, Lagerort, Materialname und -bild)
   - Gleiche Schnittmuster werden zusammengefasst ("10 × Stange 2000 mm"),
     Stücke mit Defekt bleiben einzeln, weil es auf das konkrete Stück ankommt
   - Platten: so viele wie möglich pro Seite (proportional skaliert)
@@ -61,6 +61,7 @@ class _Muster:
     plan: Schnittplan
     anzahl: int = 1
     folge: list[str] = field(default_factory=list)
+    codes: list[str] = field(default_factory=list)   # Stück-Codes aller Exemplare
 
 
 def _fmt(v: float) -> str:
@@ -93,7 +94,7 @@ def _muster_bilden(plaene: list[Schnittplan], folgen: list[list[str]],
         folge = folgen[i] if i < len(folgen) else []
         if plan.defekte:
             # Stück mit Defekt ist nicht austauschbar – einzeln aufführen
-            muster.append(_Muster(plan, 1, folge))
+            muster.append(_Muster(plan, 1, folge, [plan.stueck_code] if plan.stueck_code else []))
             continue
         if is_1d:
             teile = tuple(sorted((p.teil_label, round(p.laenge, 1))
@@ -106,8 +107,10 @@ def _muster_bilden(plaene: list[Schnittplan], folgen: list[list[str]],
                teile, tuple(folge))
         if key in nach_key:
             nach_key[key].anzahl += 1
+            if plan.stueck_code:
+                nach_key[key].codes.append(plan.stueck_code)
         else:
-            m = _Muster(plan, 1, folge)
+            m = _Muster(plan, 1, folge, [plan.stueck_code] if plan.stueck_code else [])
             nach_key[key] = m
             muster.append(m)
     return muster
@@ -118,10 +121,23 @@ def _muster_titel(m: _Muster, art: str) -> str:
     mass = _fmt(plan.lager_laenge)
     if plan.lager_breite > 0:
         mass += f" x {_fmt(plan.lager_breite)}"
+    codes = _codes_text(m.codes)
     if plan.defekte:
-        nr = f" #{plan.stueck_nr}" if plan.stueck_nr else ""
+        nr = f" {codes}" if codes else ""
         return f"{art}{nr} – {mass} mm (mit Defekt)"
-    return f"{m.anzahl} × {art} {mass} mm"
+    return f"{m.anzahl} × {art} {mass} mm" + (f" – {codes}" if codes else "")
+
+
+def _codes_text(codes: list[str], max_n: int = 8) -> str:
+    """Stück-Codes kompakt: "AP4040-01, -02, -05" (gleiches Kürzel nur einmal)."""
+    if not codes:
+        return ""
+    teile, letztes = [], None
+    for code in codes[:max_n]:
+        kuerzel, _, nr = code.rpartition("-")
+        teile.append(f"-{nr}" if kuerzel and kuerzel == letztes else code)
+        letztes = kuerzel or None
+    return ", ".join(teile) + (f" (+{len(codes) - max_n})" if len(codes) > max_n else "")
 
 
 def export_pdf(
@@ -226,11 +242,11 @@ def _draw_stueckliste(c: canvas.Canvas, cur: _PageCursor,
 
 def _draw_materialbedarf(c: canvas.Canvas, cur: _PageCursor,
                          erg: OptimierungsErgebnis, material: str, bild: bytes):
-    # Je Lagerbestand (#ID wie auf den Lager-Etiketten) die benötigte Anzahl
-    bedarf: dict[tuple[int, float, float], int] = {}
+    # Je Format die benötigte Anzahl, dazu die Stück-Codes (wie auf den Etiketten)
+    # und wo sie liegen
+    bedarf: dict[tuple[float, float], list[Schnittplan]] = {}
     for plan in erg.schnittplaene:
-        key = (plan.lagerstueck_id, plan.lager_laenge, plan.lager_breite)
-        bedarf[key] = bedarf.get(key, 0) + 1
+        bedarf.setdefault((plan.lager_laenge, plan.lager_breite), []).append(plan)
 
     img, img_w, img_h = None, 0.0, 0.0
     if bild:
@@ -261,11 +277,15 @@ def _draw_materialbedarf(c: canvas.Canvas, cur: _PageCursor,
         c.drawString(x, cur.y, material)
         cur.advance(12)
     c.setFont("Helvetica", 9)
-    for (lid, laenge, breite), n in sorted(bedarf.items()):
+    for (laenge, breite), plaene in sorted(bedarf.items(), reverse=True):
         mass = _fmt(laenge) + (f" x {_fmt(breite)}" if breite > 0 else "")
-        c.drawString(x, cur.y, f"#{lid}")
-        c.drawRightString(x + 60, cur.y, f"{n} ×")
-        c.drawString(x + 64, cur.y, f"{mass} mm")
+        c.drawRightString(x + 20, cur.y, f"{len(plaene)} ×")
+        c.drawString(x + 24, cur.y, f"{mass} mm")
+        orte = sorted({p.lagerort for p in plaene if p.lagerort})
+        info = _codes_text([p.stueck_code for p in plaene if p.stueck_code])
+        if orte:
+            info += (" · " if info else "") + ", ".join(orte)
+        c.drawString(x + 110, cur.y, info)
         cur.advance(12)
     cur.y = min(cur.y, oben - img_h - 4)
 

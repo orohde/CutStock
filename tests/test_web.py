@@ -231,14 +231,14 @@ class TestEinzelstueckVerbrauch:
         assert pieces[1]["defekt_count"] == 1
         assert res["consumed_piece"] is None
 
-    def test_neue_stuecke_hinter_luecke(self, client):
+    def test_freie_nummer_wird_wiederverwendet(self, client):
         mid, sid = self._setup(client)
         self._mark(client, mid, sid, 2, [500])
         assert sorted(self._pieces(client, sid)) == [1, 3]
         stock = client.get(f"/api/stock?material_id={mid}").json()
         ls = next(s for s in stock if s["id"] == sid)
         client.put(f"/api/stock/{sid}", json={**ls, "stueckzahl": 3})
-        assert sorted(self._pieces(client, sid)) == [1, 3, 4]
+        assert sorted(self._pieces(client, sid)) == [1, 2, 3]
 
     def test_optimierung_nutzt_echte_nummern(self, client):
         mid, sid = self._setup(client, stueckzahl=3)
@@ -489,3 +489,122 @@ class TestProjektAnzahl:
     def test_kopie_uebernimmt_anzahl(self, client):
         _, pid, _, _ = self._setup(client, anzahl=4)
         assert client.post(f"/api/projects/{pid}/clone").json()["anzahl"] == 4
+
+
+# =====================================================================
+# Stück-Codes je Material, Lagerorte, Reste beschriften
+# =====================================================================
+
+class TestStueckCodes:
+
+    def _mat(self, client, name="Alu Profil 40x40 Nut 8", typ="Stange", **kw):
+        r = client.post("/api/materials", json={"name": name, "typ": typ, **kw})
+        assert r.status_code == 201, r.text
+        return r.json()
+
+    def _stock(self, client, mid, laenge, breite=0, n=1):
+        return client.post("/api/stock", json={"material_id": mid, "laenge": laenge,
+                                               "breite": breite, "stueckzahl": n}).json()["id"]
+
+    def _codes(self, client, sid):
+        return [p["code"] for p in client.get(f"/api/stock/{sid}/pieces").json()]
+
+    def test_kuerzel_vorschlag_und_eindeutig(self, client):
+        m = self._mat(client, kuerzel="")
+        assert m["kuerzel"]
+        dup = client.post("/api/materials", json={"name": "Anderes", "typ": "Stange",
+                                                  "kuerzel": m["kuerzel"].lower()})
+        assert dup.status_code == 409
+
+    def test_nummern_je_material_ueber_alle_laengen(self, client):
+        mid = self._mat(client, kuerzel="T40")["id"]
+        a = self._stock(client, mid, 6000, n=2)
+        b = self._stock(client, mid, 800, n=2)
+        assert self._codes(client, a) == ["T40-01", "T40-02"]
+        assert self._codes(client, b) == ["T40-03", "T40-04"]
+        # anderes Material zählt eigenständig
+        mid2 = self._mat(client, name="Zweites", kuerzel="Z2")["id"]
+        assert self._codes(client, self._stock(client, mid2, 1000)) == ["Z2-01"]
+
+    def test_lagerort_vom_material_und_eigener(self, client):
+        mid = self._mat(client, kuerzel="LO", lagerort="Regal 2")["id"]
+        sid = self._stock(client, mid, 3000, n=2)
+        p1, p2 = client.get(f"/api/stock/{sid}/pieces").json()
+        assert p1["lagerort_effektiv"] == "Regal 2"
+        r = client.put(f"/api/pieces/{p2['id']}", json={"notiz": "", "lagerort": "Kiste"}).json()
+        assert r["lagerort"] == "Kiste" and r["lagerort_effektiv"] == "Kiste"
+
+    def test_plan_zeigt_code_und_rest_mit_freier_nummer(self, client):
+        mat = self._mat(client, kuerzel="RS", lagerort="Wand", lagerort_reste="Restekiste",
+                        rest_min_laenge=100)
+        mid = mat["id"]
+        sid = self._stock(client, mid, 3000, n=2)      # RS-01, RS-02
+        pid = client.post("/api/projects", json={"name": "R"}).json()["id"]
+        client.post(f"/api/projects/{pid}/parts", json={
+            "label": "A", "typ": "Stange", "material_id": mid, "laenge": 1000, "stueckzahl": 1})
+        bid = client.post("/api/blades", json={"name": "B", "schnittbreite": 3}).json()["id"]
+        plan = client.post("/api/optimize", json={
+            "project_id": pid, "material_id": mid, "blade_id": bid}).json()
+        brett = plan["schnittplaene"][0]
+        assert brett["stueck_code"] in ("RS-01", "RS-02") and brett["lagerort"] == "Wand"
+        res = client.post(f"/api/plan-pieces/{brett['platzierungen'][0]['id']}",
+                          json={"gesaegt": True}).json()
+        rest = res["plan"]["schnittplaene"][0]["reste_stuecke"]
+        # verbrauchtes Stück gibt seine Nummer frei → der Rest bekommt sie
+        assert [r["code"] for r in rest] == [brett["stueck_code"]]
+        assert rest[0]["lagerort"] == "Restekiste" and rest[0]["laenge"] == 1997
+        # Zurücknehmen: Rest weg, Original wieder mit alter Nummer
+        client.post(f"/api/plan-pieces/{brett['platzierungen'][0]['id']}", json={"gesaegt": False})
+        assert sorted(self._codes(client, sid)) == ["RS-01", "RS-02"]
+        assert len(client.get(f"/api/stock?material_id={mid}").json()) == 1
+
+
+class TestMigrationStueckNummern:
+
+    def test_doppelte_nummern_werden_je_material_eindeutig(self, tmp_path):
+        from core.db import Database
+        from core.models import GespeicherterPlan, Lagerstueck, Material, MaterialTyp, PlanBrett
+        db = Database(tmp_path / "cutstock.db")
+        mid = db.save_material(Material(name="Alt 40x40", typ=MaterialTyp.STANGE)).id
+        lang = db.save_lagerstueck(Lagerstueck(material_id=mid, laenge=6000, stueckzahl=2))
+        kurz = db.save_lagerstueck(Lagerstueck(material_id=mid, laenge=500, stueckzahl=2))
+        pid = db.conn.execute("INSERT INTO projekt (name) VALUES ('P')").lastrowid
+        db.save_plan(GespeicherterPlan(projekt_id=pid, material_id=mid, bretter=[
+            PlanBrett(lagerstueck_id=kurz.id, stueck_nr=3)]))
+        # Zustand bis 2026.10.62: Nummern je Lagerzeile (1, 2 | 1, 2), kein Kürzel
+        db.conn.execute("UPDATE einzelstueck SET nr = nr - 2 WHERE lagerstueck_id=?", (kurz.id,))
+        db.conn.execute("UPDATE schnittplan_brett SET stueck_nr=1")
+        db.conn.execute("UPDATE material SET kuerzel=''")
+        db.conn.commit()
+        db.close()
+
+        db = Database(tmp_path / "cutstock.db")
+        assert db.einzelstueck_nrs_for_lagerstueck(lang.id) == [1, 2]
+        assert db.einzelstueck_nrs_for_lagerstueck(kurz.id) == [3, 4]
+        assert db.get_material(mid).kuerzel == "A4040"
+        # Plan zeigt weiter auf dasselbe physische Stück (früher #1 der kurzen Zeile)
+        assert db.get_plan(pid, mid).bretter[0].stueck_nr == 3
+        db.close()
+
+
+class TestRestErbtCode:
+
+    def test_stange_behaelt_code_ueber_mehrere_schnitte(self, client):
+        mid = client.post("/api/materials", json={"name": "Erbe", "typ": "Stange",
+                                                  "kuerzel": "ER", "rest_min_laenge": 50}).json()["id"]
+        client.post("/api/stock", json={"material_id": mid, "laenge": 900, "stueckzahl": 1})   # ER-01
+        client.post("/api/stock", json={"material_id": mid, "laenge": 3000, "stueckzahl": 1})  # ER-02
+        pid = client.post("/api/projects", json={"name": "E"}).json()["id"]
+        client.post(f"/api/projects/{pid}/parts", json={
+            "label": "A", "typ": "Stange", "material_id": mid, "laenge": 1000, "stueckzahl": 2})
+        bid = client.post("/api/blades", json={"name": "B", "schnittbreite": 3}).json()["id"]
+        plan = client.post("/api/optimize", json={
+            "project_id": pid, "material_id": mid, "blade_id": bid}).json()
+        brett = next(sp for sp in plan["schnittplaene"] if len(sp["platzierungen"]) == 2)
+        assert brett["stueck_code"] == "ER-02"
+        codes = []
+        for st in brett["platzierungen"]:
+            res = client.post(f"/api/plan-pieces/{st['id']}", json={"gesaegt": True}).json()
+            rest = next(sp for sp in res["plan"]["schnittplaene"] if sp["id"] == brett["id"])
+            codes.append([(r["code"], r["laenge"]) for r in rest["reste_stuecke"]])
+        assert codes == [[("ER-02", 1997)], [("ER-02", 994)]]

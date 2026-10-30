@@ -35,6 +35,7 @@ from core.models import (
     Teil,
     TeilStatus,
     drehung_fuer_teil,
+    stueck_code,
 )
 from core.optimize import (
     OptimierungsErgebnis,
@@ -231,6 +232,9 @@ class MaterialIn(BaseModel):
     besaeumung: float = 0.0
     rest_min_laenge: float = 0.0
     rest_min_breite: float = 0.0
+    kuerzel: str = ""          # leer → Vorschlag aus dem Namen
+    lagerort: str = ""
+    lagerort_reste: str = ""
 
 
 class MaterialOut(BaseModel):
@@ -246,6 +250,9 @@ class MaterialOut(BaseModel):
     rest_min_laenge: float
     rest_min_breite: float
     hat_bild: bool = False
+    kuerzel: str = ""
+    lagerort: str = ""
+    lagerort_reste: str = ""
 
 
 class StockIn(BaseModel):
@@ -269,10 +276,14 @@ class EinzelstueckOut(BaseModel):
     nr: int
     notiz: str
     defekt_count: int = 0
+    code: str = ""               # Aufschrift, z.B. "AP4040-07"
+    lagerort: str = ""           # eigener Lagerort (leer = Material)
+    lagerort_effektiv: str = ""  # eigener oder der des Materials
 
 
 class EinzelstueckIn(BaseModel):
     notiz: str = ""
+    lagerort: str = ""
 
 
 class DefectIn(BaseModel):
@@ -361,6 +372,13 @@ class PlatzierungOut(BaseModel):
     gesaegt: bool = False
 
 
+class RestStueckOut(BaseModel):
+    code: str
+    laenge: float
+    breite: float = 0.0
+    lagerort: str = ""
+
+
 class SchnittplanOut(BaseModel):
     lagerstueck_id: int
     lager_laenge: float
@@ -373,6 +391,9 @@ class SchnittplanOut(BaseModel):
     defekte: list[DefectOut] = []
     id: int = 0            # gespeicherter Plan: ID des Bretts
     verbraucht: bool = False
+    stueck_code: str = ""  # Aufschrift des Stücks, z.B. "AP4040-07"
+    lagerort: str = ""
+    reste_stuecke: list[RestStueckOut] = []   # eingebuchte Reste (nach dem Anfangen)
 
 
 class MaterialBedarfOut(BaseModel):
@@ -436,6 +457,7 @@ class MarkPlanRequest(BaseModel):
     reste: list[list[float]] = []
     prev_consumed: bool = False
     prev_rest_ids: list[int] = []
+    prev_rest_nrs: list[int] = []   # Stücknummern der Reste (parallel zu prev_rest_ids)
     # Stücknummer des Plans: genau dieses Einzelstück wird verbraucht. Der
     # Schnappschuss (Nummer, Notiz, Defekte) kommt beim Zurücknehmen zurück.
     stueck_nr: int = 0
@@ -499,6 +521,9 @@ def _material_to_out(m: Material) -> MaterialOut:
         besaeumung=m.besaeumung,
         rest_min_laenge=m.rest_min_laenge,
         rest_min_breite=m.rest_min_breite,
+        kuerzel=m.kuerzel,
+        lagerort=m.lagerort,
+        lagerort_reste=m.lagerort_reste,
         hat_bild=bool(m.bild),
     )
 
@@ -515,6 +540,9 @@ def _material_from_in(data: MaterialIn, mid: int | None = None) -> Material:
         besaeumung=data.besaeumung,
         rest_min_laenge=data.rest_min_laenge,
         rest_min_breite=data.rest_min_breite,
+        kuerzel=data.kuerzel,
+        lagerort=data.lagerort,
+        lagerort_reste=data.lagerort_reste,
     )
 
 
@@ -570,6 +598,8 @@ def _out_to_ergebnis(data: OptimizeResult) -> OptimierungsErgebnis:
                 lager_laenge=sp.lager_laenge,
                 lager_breite=sp.lager_breite,
                 stueck_nr=sp.stueck_nr,
+                stueck_code=sp.stueck_code,
+                lagerort=sp.lagerort,
                 platzierungen=[
                     Platzierung(
                         teil_label=p.teil_label,
@@ -742,7 +772,10 @@ def list_materials():
 @app.post("/api/materials", response_model=MaterialOut, status_code=201)
 def create_material(data: MaterialIn):
     m = _material_from_in(data)
-    m = get_db().save_material(m)
+    try:
+        m = get_db().save_material(m)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     return _material_to_out(m)
 
 
@@ -752,7 +785,10 @@ def update_material(mid: int, data: MaterialIn):
     if not existing:
         raise HTTPException(404, "Material not found")
     m = _material_from_in(data, mid)
-    m = get_db().save_material(m)
+    try:
+        m = get_db().save_material(m)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     return _material_to_out(m)
 
 
@@ -845,17 +881,25 @@ def delete_stock(sid: int):
 # ---------------------------------------------------------------------------
 
 
+def _piece_out(db: Database, e: Einzelstueck, material: Material | None) -> EinzelstueckOut:
+    return EinzelstueckOut(
+        id=e.id, lagerstueck_id=e.lagerstueck_id, nr=e.nr, notiz=e.notiz,
+        defekt_count=len(db.list_defekte(e.id)),
+        code=stueck_code(material.kuerzel if material else "", e.nr),
+        lagerort=e.lagerort,
+        lagerort_effektiv=e.lagerort or (material.lagerort if material else ""))
+
+
+def _material_of_stock(db: Database, sid: int) -> Material | None:
+    ls = db.get_lagerstueck(sid)
+    return db.get_material(ls.material_id) if ls else None
+
+
 @app.get("/api/stock/{sid}/pieces", response_model=list[EinzelstueckOut])
 def list_pieces(sid: int):
     db = get_db()
-    pieces = db.list_einzelstuecke(sid)
-    result = []
-    for e in pieces:
-        cnt = len(db.list_defekte(e.id))
-        result.append(EinzelstueckOut(
-            id=e.id, lagerstueck_id=e.lagerstueck_id,
-            nr=e.nr, notiz=e.notiz, defekt_count=cnt))
-    return result
+    material = _material_of_stock(db, sid)
+    return [_piece_out(db, e, material) for e in db.list_einzelstuecke(sid)]
 
 
 @app.put("/api/pieces/{eid}", response_model=EinzelstueckOut)
@@ -865,11 +909,9 @@ def update_piece(eid: int, data: EinzelstueckIn):
     if not e:
         raise HTTPException(404, "Piece not found")
     e.notiz = data.notiz
+    e.lagerort = data.lagerort
     e = db.save_einzelstueck(e)
-    cnt = len(db.list_defekte(e.id))
-    return EinzelstueckOut(
-        id=e.id, lagerstueck_id=e.lagerstueck_id,
-        nr=e.nr, notiz=e.notiz, defekt_count=cnt)
+    return _piece_out(db, db.get_einzelstueck(eid), _material_of_stock(db, e.lagerstueck_id))
 
 
 # ---------------------------------------------------------------------------
@@ -1354,6 +1396,29 @@ def _plan_to_out(plan: GespeicherterPlan) -> OptimizeResult:
         if not nrs or (b.stueck_nr and b.stueck_nr not in nrs):
             lager_fehlt = True
 
+    kuerzel = material.kuerzel if material else ""
+    mat_ort = material.lagerort if material else ""
+
+    def stueck_ort(lagerstueck_id: int, nr: int) -> str:
+        row = db.conn.execute(
+            "SELECT lagerort FROM einzelstueck WHERE lagerstueck_id=? AND nr=?",
+            (lagerstueck_id, nr)).fetchone()
+        return (row["lagerort"] if row else "") or mat_ort
+
+    def brett_ort(b: PlanBrett) -> str:
+        if b.verbraucht:
+            return (b.verbrauchtes_stueck or {}).get("lagerort") or mat_ort
+        return stueck_ort(b.lagerstueck_id, b.stueck_nr)
+
+    def reste(b: PlanBrett) -> list[RestStueckOut]:
+        out = []
+        for lid, nr in b.rest_ids:
+            ls = db.get_lagerstueck(lid)
+            if ls and nr:
+                out.append(RestStueckOut(code=stueck_code(kuerzel, nr), laenge=ls.laenge,
+                                         breite=ls.breite, lagerort=stueck_ort(lid, nr)))
+        return out
+
     gesamt, genutzt = 0.0, 0.0
     for b in plan.bretter:
         if is_1d:
@@ -1381,6 +1446,9 @@ def _plan_to_out(plan: GespeicherterPlan) -> OptimizeResult:
                                    laenge=d.get("laenge", 0), breite=d.get("breite", 0))
                          for d in b.defekte],
                 verbraucht=b.verbraucht,
+                stueck_code=stueck_code(kuerzel, b.stueck_nr),
+                lagerort=brett_ort(b),
+                reste_stuecke=reste(b),
             )
             for b in plan.bretter],
         fehlende_teile=plan.fehlende_teile,
@@ -1407,12 +1475,14 @@ def _brett_abgleichen(db: Database, plan: GespeicherterPlan, brett: PlanBrett,
         defekte=[[d.get("position", 0), d.get("laenge", 0)] for d in brett.defekte]
         if is_1d else [],
         total_pieces=len(brett.stuecke), reste=brett.reste,
-        prev_consumed=brett.verbraucht, prev_rest_ids=brett.rest_ids,
+        prev_consumed=brett.verbraucht,
+        prev_rest_ids=[r[0] for r in brett.rest_ids],
+        prev_rest_nrs=[r[1] for r in brett.rest_ids],
         stueck_nr=brett.stueck_nr, prev_consumed_piece=brett.verbrauchtes_stueck,
     ))
     alte_id = brett.lagerstueck_id
     brett.verbraucht = res["consumed"]
-    brett.rest_ids = res["rest_ids"]
+    brett.rest_ids = [[rid, nr] for rid, nr in zip(res["rest_ids"], res["rest_nrs"])]
     brett.lagerstueck_id = res["lagerstueck_id"]
     brett.verbrauchtes_stueck = res["consumed_piece"]
     db.save_brett_zustand(brett)
@@ -1507,9 +1577,11 @@ def _mark_plan_core(db: Database, req: MarkPlanRequest) -> dict:
     consumed_piece = req.prev_consumed_piece
     lagerstueck_id = req.lagerstueck_id
     # Zuvor gebuchte Reste immer entfernen und ggf. neu buchen
-    for rid in req.prev_rest_ids:
-        db.lager_verbrauchen(rid)
+    for i, rid in enumerate(req.prev_rest_ids):
+        nr = req.prev_rest_nrs[i] if i < len(req.prev_rest_nrs) else 0
+        db.lager_verbrauchen(rid, stueck_nr=nr)
     rest_ids: list[int] = []
+    rest_nrs: list[int] = []
 
     n_marked = len(req.marked_laengen)
     if n_marked > 0:
@@ -1517,33 +1589,37 @@ def _mark_plan_core(db: Database, req: MarkPlanRequest) -> dict:
             consumed_piece = db.lager_verbrauchen(req.lagerstueck_id,
                                                   stueck_nr=req.stueck_nr)
             consumed = True
+        # Der größte Rest erbt den Code des angesägten Stücks – dessen Etikett
+        # klebt ja noch drauf. Weitere Reste bekommen freie Nummern.
+        erbe_nr = (consumed_piece or {}).get("nr", 0) or req.stueck_nr
         if req.is_1d:
             if req.defekte:
                 rest_vals = _reste_1d_mit_defekten(req)
             else:
                 rest_vals = [req.lager_laenge - sum(req.marked_laengen)
                              - req.kerf * n_marked]
-            for rest_val in rest_vals:
-                if rest_val > 0:
-                    r = db.rest_einbuchen(req.material_id, rest_val)
-                    if r:
-                        rest_ids.append(r.id)
+            reste = [(v, 0.0) for v in rest_vals if v > 0]
         else:
             # 2D: Sobald das Brett angesägt wird, die Reststücke des Plans
             # einbuchen (durchgängige Schnitte). Beim Zurücknehmen aller
             # Markierungen werden sie über prev_rest_ids wieder entfernt.
-            for rest in req.reste:
-                if len(rest) >= 2 and rest[0] > 0 and rest[1] > 0:
-                    r = db.rest_einbuchen(req.material_id, rest[0], rest[1])
-                    if r:
-                        rest_ids.append(r.id)
+            reste = [(r[0], r[1]) for r in req.reste
+                     if len(r) >= 2 and r[0] > 0 and r[1] > 0]
+        for laenge, breite in sorted(reste, key=lambda r: r[0] * max(r[1], 1),
+                                     reverse=True):
+            r = db.rest_einbuchen(req.material_id, laenge, breite, wunsch_nr=erbe_nr)
+            if r:
+                rest_ids.append(r[0].id)
+                rest_nrs.append(r[1])
+                if r[1] == erbe_nr:
+                    erbe_nr = 0
     elif consumed:
         # Alle Markierungen entfernt → Original-Lagerstück zurückbuchen
         lagerstueck_id = _lagerstueck_zurueckbuchen(db, req)
         consumed = False
         consumed_piece = None
 
-    return {"consumed": consumed, "rest_ids": rest_ids,
+    return {"consumed": consumed, "rest_ids": rest_ids, "rest_nrs": rest_nrs,
             "lagerstueck_id": lagerstueck_id, "consumed_piece": consumed_piece}
 
 
@@ -1587,10 +1663,9 @@ def _lagerstueck_zurueckbuchen(db: Database, req: MarkPlanRequest) -> int:
         if ls is None:
             ls = Lagerstueck(material_id=req.material_id, laenge=laenge,
                              breite=breite, stueckzahl=0)
-    ls.stueckzahl += 1
-    ls = db.save_lagerstueck(ls)
+    ls, neue_nr = db.stueck_hinzufuegen(ls)
     if req.prev_consumed_piece:
-        db.einzelstueck_wiederherstellen(ls.id, req.prev_consumed_piece)
+        db.einzelstueck_wiederherstellen(ls.id, neue_nr, req.prev_consumed_piece)
     return ls.id
 
 
@@ -1823,7 +1898,7 @@ WEB_EXTRA_TRANSLATIONS = {
     "defect.select_stock": {"de": "Bitte zuerst ein Lagerstück wählen.", "en": "Please select a stock piece first.", "fr": "Veuillez d'abord sélectionner une pièce.", "it": "Selezionare prima un pezzo."},
     "defect.select_piece": {"de": "Bitte Stücknummer wählen.", "en": "Please select a piece number.", "fr": "Veuillez sélectionner un numéro de pièce.", "it": "Selezionare un numero di pezzo."},
     "piece.title": {"de": "Einzelstücke", "en": "Individual pieces", "fr": "Pièces individuelles", "it": "Pezzi individuali"},
-    "piece.nr": {"de": "Stück #", "en": "Piece #", "fr": "Pièce n°", "it": "Pezzo n."},
+    "piece.nr": {"de": "Stück", "en": "Piece", "fr": "Pièce", "it": "Pezzo"},
     "piece.note": {"de": "Notiz", "en": "Note", "fr": "Note", "it": "Nota"},
     "piece.defects": {"de": "Defekte", "en": "Defects", "fr": "Défauts", "it": "Difetti"},
     "dlg.delete_defect": {"de": "Defekt wirklich entfernen?", "en": "Really delete this defect?", "fr": "Vraiment supprimer ce défaut ?", "it": "Eliminare davvero questo difetto?"},

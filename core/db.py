@@ -24,6 +24,7 @@ from core.models import (
     Saegeblatt,
     Teil,
     TeilStatus,
+    kuerzel_vorschlag,
 )
 
 
@@ -85,7 +86,10 @@ CREATE TABLE IF NOT EXISTS material (
     besaeumung      REAL    NOT NULL DEFAULT 0,
     rest_min_laenge REAL    NOT NULL DEFAULT 0,
     rest_min_breite REAL    NOT NULL DEFAULT 0,
-    bild            BLOB    DEFAULT NULL
+    bild            BLOB    DEFAULT NULL,
+    kuerzel         TEXT    NOT NULL DEFAULT '',
+    lagerort        TEXT    NOT NULL DEFAULT '',
+    lagerort_reste  TEXT    NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS lagerstueck (
@@ -119,6 +123,7 @@ CREATE TABLE IF NOT EXISTS einzelstueck (
     lagerstueck_id  INTEGER NOT NULL REFERENCES lagerstueck(id) ON DELETE CASCADE,
     nr              INTEGER NOT NULL,
     notiz           TEXT    NOT NULL DEFAULT '',
+    lagerort        TEXT    NOT NULL DEFAULT '',
     UNIQUE(lagerstueck_id, nr)
 );
 
@@ -211,6 +216,21 @@ class Database:
         self.conn.row_factory = sqlite3.Row
         self._create_tables()
 
+    # Spalten, die per Migration nachgerüstet werden (für die Sicherung vor dem Update)
+    PFLICHT_SPALTEN = {
+        "projekt": {"anzahl"},
+        "material": {"kuerzel", "lagerort", "lagerort_reste"},
+        "einzelstueck": {"lagerort"},
+    }
+
+    @staticmethod
+    def _spalten_vorhanden(path: Path, tabelle: str) -> set[str]:
+        conn = sqlite3.connect(str(path))
+        try:
+            return {r[1] for r in conn.execute(f"PRAGMA table_info({tabelle})")}
+        finally:
+            conn.close()
+
     def _sicherung_vor_migration(self):
         """Vor einer Schema-Änderung eine Kopie der DB anlegen (neben der DB).
 
@@ -225,12 +245,13 @@ class Database:
             try:
                 tabellen = {r[0] for r in conn.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'")}
-                projekt_spalten = {r[1] for r in conn.execute("PRAGMA table_info(projekt)")}
             finally:
                 conn.close()
             if "projekt" not in tabellen:
                 return  # leere/neue DB, nichts zu sichern
-            if "schnittplan" in tabellen and "anzahl" in projekt_spalten:
+            if "schnittplan" in tabellen and all(
+                    spalten <= self._spalten_vorhanden(self.path, tabelle)
+                    for tabelle, spalten in self.PFLICHT_SPALTEN.items()):
                 return  # Schema aktuell
             import shutil
             import time
@@ -251,6 +272,10 @@ class Database:
         """Spalten nachrüsten die in älteren DB-Versionen fehlen."""
         mat_cols = {row[1] for row in
                     self.conn.execute("PRAGMA table_info(material)").fetchall()}
+        for spalte in ("kuerzel", "lagerort", "lagerort_reste"):
+            if spalte not in mat_cols:
+                self.conn.execute(
+                    f"ALTER TABLE material ADD COLUMN {spalte} TEXT NOT NULL DEFAULT ''")
         if "bild" not in mat_cols:
             self.conn.execute(
                 "ALTER TABLE material ADD COLUMN bild BLOB DEFAULT NULL")
@@ -280,6 +305,61 @@ class Database:
             self.conn.execute(
                 "UPDATE teil SET gesaegt_anzahl = stueckzahl WHERE status = 'gesägt'")
         self._migrate_einzelstuecke()
+        es_cols = {row[1] for row in
+                   self.conn.execute("PRAGMA table_info(einzelstueck)").fetchall()}
+        if "lagerort" not in es_cols:
+            self.conn.execute(
+                "ALTER TABLE einzelstueck ADD COLUMN lagerort TEXT NOT NULL DEFAULT ''")
+        self._migrate_kuerzel()
+        self._migrate_stueck_nummern()
+
+    def _migrate_kuerzel(self):
+        """Materialien ohne Kürzel bekommen einen Vorschlag aus dem Namen."""
+        vergeben = {r[0] for r in self.conn.execute(
+            "SELECT kuerzel FROM material WHERE kuerzel != ''")}
+        for r in self.conn.execute(
+                "SELECT id, name FROM material WHERE kuerzel = '' ORDER BY id").fetchall():
+            k = kuerzel_vorschlag(r["name"], vergeben)
+            vergeben.add(k)
+            self.conn.execute("UPDATE material SET kuerzel=? WHERE id=?", (k, r["id"]))
+
+    def _migrate_stueck_nummern(self):
+        """Stücknummern je Material eindeutig machen (früher: je Lagerzeile).
+
+        Nur doppelte Nummern werden geändert: Das erste Stück (große/lange
+        zuerst) behält seine Nummer, weitere bekommen die kleinsten freien
+        Nummern des Materials. So bleiben möglichst viele Aufschriften gültig –
+        auch wenn eine ältere CutStock-Version zwischendurch wieder pro
+        Lagerzeile nummeriert hat. Noch nicht angefangene Bretter gespeicherter
+        Pläne werden auf die neuen Nummern umgestellt.
+        """
+        doppelt = [r[0] for r in self.conn.execute(
+            """SELECT DISTINCT l.material_id FROM einzelstueck e
+               JOIN lagerstueck l ON l.id = e.lagerstueck_id
+               GROUP BY l.material_id, e.nr HAVING COUNT(*) > 1""")]
+        for mid in doppelt:
+            stuecke = self.conn.execute(
+                """SELECT e.id, e.lagerstueck_id, e.nr FROM einzelstueck e
+                   JOIN lagerstueck l ON l.id = e.lagerstueck_id
+                   WHERE l.material_id=?
+                   ORDER BY l.laenge DESC, l.breite DESC, l.id, e.nr""", (mid,)).fetchall()
+            belegt = {s["nr"] for s in stuecke}
+            gesehen: set[int] = set()
+            naechste = 1
+            for st in stuecke:
+                if st["nr"] not in gesehen:
+                    gesehen.add(st["nr"])
+                    continue
+                while naechste in belegt:
+                    naechste += 1
+                belegt.add(naechste)
+                gesehen.add(naechste)
+                self.conn.execute("UPDATE einzelstueck SET nr=? WHERE id=?",
+                                  (naechste, st["id"]))
+                self.conn.execute(
+                    """UPDATE schnittplan_brett SET stueck_nr=?
+                       WHERE lagerstueck_id=? AND stueck_nr=? AND verbraucht=0""",
+                    (naechste, st["lagerstueck_id"], st["nr"]))
 
     def _migrate_einzelstuecke(self):
         """Einzelstück-Tabelle befüllen, Defekt-FK migrieren."""
@@ -339,17 +419,32 @@ class Database:
     # ------------------------------------------------------------------
 
     def save_material(self, m: Material) -> Material:
+        """Material speichern. Leeres Kürzel → Vorschlag aus dem Namen.
+
+        Raises ValueError, wenn das Kürzel schon ein anderes Material hat.
+        """
+        import re
+        m.kuerzel = re.sub(r"[^A-Z0-9ÄÖÜ]", "", (m.kuerzel or "").upper())[:10]
+        andere = {r[0] for r in self.conn.execute(
+            "SELECT kuerzel FROM material WHERE kuerzel != '' AND id != ?", (m.id or 0,))}
+        if not m.kuerzel:
+            m.kuerzel = kuerzel_vorschlag(m.name, andere)
+        elif m.kuerzel in andere:
+            raise ValueError(f"Kürzel {m.kuerzel} ist schon vergeben")
+        m.lagerort = (m.lagerort or "").strip()
+        m.lagerort_reste = (m.lagerort_reste or "").strip()
         if m.id is None:
             cur = self.conn.execute(
                 """INSERT INTO material
                    (name, typ, dicke, querschnitt_breite, querschnitt_tiefe,
                     drehung_erlaubt, maserung, besaeumung,
-                    rest_min_laenge, rest_min_breite)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    rest_min_laenge, rest_min_breite, kuerzel, lagerort, lagerort_reste)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (m.name, m.typ.value, m.dicke, m.querschnitt_breite,
                  m.querschnitt_tiefe, int(m.maserung == Maserung.KEINE),
                  m.maserung.value, m.besaeumung,
-                 m.rest_min_laenge, m.rest_min_breite),
+                 m.rest_min_laenge, m.rest_min_breite,
+                 m.kuerzel, m.lagerort, m.lagerort_reste),
             )
             m.id = cur.lastrowid
         else:
@@ -357,12 +452,14 @@ class Database:
                 """UPDATE material SET name=?, typ=?, dicke=?,
                    querschnitt_breite=?, querschnitt_tiefe=?,
                    drehung_erlaubt=?, maserung=?, besaeumung=?,
-                   rest_min_laenge=?, rest_min_breite=?
+                   rest_min_laenge=?, rest_min_breite=?,
+                   kuerzel=?, lagerort=?, lagerort_reste=?
                    WHERE id=?""",
                 (m.name, m.typ.value, m.dicke, m.querschnitt_breite,
                  m.querschnitt_tiefe, int(m.maserung == Maserung.KEINE),
                  m.maserung.value, m.besaeumung,
-                 m.rest_min_laenge, m.rest_min_breite, m.id),
+                 m.rest_min_laenge, m.rest_min_breite,
+                 m.kuerzel, m.lagerort, m.lagerort_reste, m.id),
             )
         self.conn.commit()
         return m
@@ -387,6 +484,7 @@ class Database:
         rows = self.conn.execute(
             "SELECT id, name, typ, dicke, querschnitt_breite, querschnitt_tiefe,"
             " drehung_erlaubt, maserung, besaeumung, rest_min_laenge, rest_min_breite,"
+            " kuerzel, lagerort, lagerort_reste,"
             " (bild IS NOT NULL AND length(bild) > 0) AS hat_bild"
             " FROM material ORDER BY name").fetchall()
         return [self._row_to_material(r, hat_bild_col=True) for r in rows]
@@ -412,13 +510,15 @@ class Database:
             rest_min_laenge=row["rest_min_laenge"],
             rest_min_breite=row["rest_min_breite"],
             bild=b"\x01" if (hat_bild_col and row["hat_bild"]) else b"",
+            kuerzel=row["kuerzel"], lagerort=row["lagerort"],
+            lagerort_reste=row["lagerort_reste"],
         )
 
     # ------------------------------------------------------------------
     # Lagerstück
     # ------------------------------------------------------------------
 
-    def save_lagerstueck(self, l: Lagerstueck) -> Lagerstueck:
+    def save_lagerstueck(self, l: Lagerstueck, wunsch_nr: int = 0) -> Lagerstueck:
         if l.id is None:
             cur = self.conn.execute(
                 """INSERT INTO lagerstueck (material_id, laenge, breite, stueckzahl)
@@ -432,7 +532,7 @@ class Database:
                    stueckzahl=? WHERE id=?""",
                 (l.material_id, l.laenge, l.breite, l.stueckzahl, l.id),
             )
-        self._sync_einzelstuecke(l.id, l.stueckzahl)
+        self._sync_einzelstuecke(l.id, l.stueckzahl, wunsch_nr)
         self.conn.commit()
         return l
 
@@ -470,31 +570,49 @@ class Database:
     # Einzelstück
     # ------------------------------------------------------------------
 
-    def _sync_einzelstuecke(self, lagerstueck_id: int, stueckzahl: int):
+    def _sync_einzelstuecke(self, lagerstueck_id: int, stueckzahl: int,
+                            wunsch_nr: int = 0):
         """Einzelstücke an Stückzahl anpassen (anlegen/löschen).
 
-        Nummern sind nicht zwingend lückenlos: Wird ein bestimmtes Stück
-        verbraucht (lager_verbrauchen mit stueck_nr), behalten die übrigen ihre
-        Nummer – sie stehen ja mit Kreide auf dem Material. Neue Stücke bekommen
-        deshalb Nummern hinter der höchsten, beim Verringern fallen die höchsten weg.
+        Nummern sind je Material eindeutig, haben aber Lücken: Ein verbrauchtes
+        Stück gibt seine Nummer frei, die übrigen behalten ihre (sie stehen ja
+        auf dem Material). Neue Stücke bekommen die kleinsten freien Nummern des
+        Materials, beim Verringern fallen die höchsten dieser Lagerzeile weg.
         """
-        nrs = [r["nr"] for r in self.conn.execute(
-            "SELECT nr FROM einzelstueck WHERE lagerstueck_id=? ORDER BY nr",
-            (lagerstueck_id,),
-        ).fetchall()]
-        naechste = (nrs[-1] if nrs else 0) + 1
-        for _ in range(stueckzahl - len(nrs)):
-            self.conn.execute(
-                "INSERT INTO einzelstueck (lagerstueck_id, nr) VALUES (?,?)",
-                (lagerstueck_id, naechste),
-            )
-            naechste += 1
+        nrs = self.einzelstueck_nrs_for_lagerstueck(lagerstueck_id)
+        if stueckzahl > len(nrs):
+            for nr in self.freie_stueck_nrs(lagerstueck_id, stueckzahl - len(nrs), wunsch_nr):
+                self.conn.execute(
+                    "INSERT INTO einzelstueck (lagerstueck_id, nr) VALUES (?,?)",
+                    (lagerstueck_id, nr),
+                )
         for nr in nrs[stueckzahl:] if stueckzahl < len(nrs) else []:
             self.conn.execute(
                 """DELETE FROM einzelstueck
                    WHERE lagerstueck_id=? AND nr=?""",
                 (lagerstueck_id, nr),
             )
+
+    def freie_stueck_nrs(self, lagerstueck_id: int, anzahl: int,
+                         wunsch_nr: int = 0) -> list[int]:
+        """Die kleinsten freien Stücknummern im Material dieser Lagerzeile.
+
+        Ist wunsch_nr frei, kommt sie zuerst (Rest erbt den Code seines Bretts).
+        """
+        belegt = {r[0] for r in self.conn.execute(
+            """SELECT e.nr FROM einzelstueck e
+               JOIN lagerstueck l ON l.id = e.lagerstueck_id
+               WHERE l.material_id = (SELECT material_id FROM lagerstueck WHERE id=?)""",
+            (lagerstueck_id,))}
+        frei, nr = [], 1
+        if wunsch_nr > 0 and wunsch_nr not in belegt and anzahl > 0:
+            frei.append(wunsch_nr)
+            belegt.add(wunsch_nr)
+        while len(frei) < anzahl:
+            if nr not in belegt:
+                frei.append(nr)
+            nr += 1
+        return frei
 
     def einzelstueck_nrs_for_material(self, material_id: int) -> dict[int, list[int]]:
         """Vorhandene Stücknummern je Lagerstück: {lagerstueck_id: [nr, ...]}."""
@@ -516,7 +634,8 @@ class Database:
             (lagerstueck_id,),
         ).fetchall()
         return [Einzelstueck(id=r["id"], lagerstueck_id=r["lagerstueck_id"],
-                             nr=r["nr"], notiz=r["notiz"]) for r in rows]
+                             nr=r["nr"], notiz=r["notiz"], lagerort=r["lagerort"])
+                for r in rows]
 
     def get_einzelstueck(self, eid: int) -> Einzelstueck | None:
         row = self.conn.execute(
@@ -525,12 +644,12 @@ class Database:
         if not row:
             return None
         return Einzelstueck(id=row["id"], lagerstueck_id=row["lagerstueck_id"],
-                            nr=row["nr"], notiz=row["notiz"])
+                            nr=row["nr"], notiz=row["notiz"], lagerort=row["lagerort"])
 
     def save_einzelstueck(self, e: Einzelstueck) -> Einzelstueck:
         self.conn.execute(
-            "UPDATE einzelstueck SET notiz=? WHERE id=?",
-            (e.notiz, e.id),
+            "UPDATE einzelstueck SET notiz=?, lagerort=? WHERE id=?",
+            (e.notiz, (e.lagerort or "").strip(), e.id),
         )
         self.conn.commit()
         return e
@@ -866,7 +985,9 @@ class Database:
                 verschnitt_mm=b["verschnitt_mm"],
                 verschnitt_prozent=b["verschnitt_prozent"],
                 verbraucht=bool(b["verbraucht"]),
-                rest_ids=json.loads(b["rest_ids_json"] or "[]"),
+                # [[lagerstueck_id, stück_nr], ...]; bis 2026.10.62 nur IDs
+                rest_ids=[r if isinstance(r, list) else [r, 0]
+                          for r in json.loads(b["rest_ids_json"] or "[]")],
                 verbrauchtes_stueck=json.loads(b["stueck_json"]) if b["stueck_json"] else None,
             )
             brett.stuecke = [
@@ -963,7 +1084,7 @@ class Database:
             ).fetchone()
             if row:
                 snapshot = {
-                    "nr": row["nr"], "notiz": row["notiz"],
+                    "nr": row["nr"], "notiz": row["notiz"], "lagerort": row["lagerort"],
                     "defekte": [
                         {"position": d.position, "position_y": d.position_y,
                          "laenge": d.laenge, "breite": d.breite}
@@ -978,25 +1099,40 @@ class Database:
             self.save_lagerstueck(ls)
         return snapshot
 
-    def einzelstueck_wiederherstellen(self, lagerstueck_id: int, snapshot: dict):
+    def stueck_hinzufuegen(self, ls: Lagerstueck,
+                           wunsch_nr: int = 0) -> tuple[Lagerstueck, int]:
+        """Stückzahl um 1 erhöhen; liefert die Nummer des neu angelegten Stücks."""
+        vorher = set(self.einzelstueck_nrs_for_lagerstueck(ls.id)) if ls.id else set()
+        ls.stueckzahl += 1
+        ls = self.save_lagerstueck(ls, wunsch_nr)
+        neu = [n for n in self.einzelstueck_nrs_for_lagerstueck(ls.id) if n not in vorher]
+        return ls, (neu[0] if neu else 0)
+
+    def einzelstueck_wiederherstellen(self, lagerstueck_id: int, neue_nr: int,
+                                      snapshot: dict):
         """Ein per lager_verbrauchen verbrauchtes Stück wieder anlegen.
 
-        Erwartet, dass die Stückzahl schon erhöht wurde: Das dabei neu angelegte
-        Stück (höchste Nummer) bekommt Nummer, Notiz und Defekte zurück.
+        Das gerade per stueck_hinzufuegen angelegte Stück (neue_nr) bekommt
+        seine alte Nummer (falls im Material frei), Notiz, Lagerort und Defekte zurück.
         """
-        nrs = self.einzelstueck_nrs_for_lagerstueck(lagerstueck_id)
-        if not nrs:
-            return
         neu = self.conn.execute(
             "SELECT id FROM einzelstueck WHERE lagerstueck_id=? AND nr=?",
-            (lagerstueck_id, nrs[-1]),
+            (lagerstueck_id, neue_nr),
         ).fetchone()
+        if not neu:
+            return
         nr = snapshot.get("nr", 0)
-        if nr and nr not in nrs:
+        frei = nr and not self.conn.execute(
+            """SELECT 1 FROM einzelstueck e JOIN lagerstueck l ON l.id = e.lagerstueck_id
+               WHERE e.nr=? AND e.id != ? AND l.material_id =
+                     (SELECT material_id FROM lagerstueck WHERE id=?)""",
+            (nr, neu["id"], lagerstueck_id)).fetchone()
+        if frei:
             self.conn.execute("UPDATE einzelstueck SET nr=? WHERE id=?",
                               (nr, neu["id"]))
-        self.conn.execute("UPDATE einzelstueck SET notiz=? WHERE id=?",
-                          (snapshot.get("notiz", ""), neu["id"]))
+        self.conn.execute("UPDATE einzelstueck SET notiz=?, lagerort=? WHERE id=?",
+                          (snapshot.get("notiz", ""), snapshot.get("lagerort", ""),
+                           neu["id"]))
         for d in snapshot.get("defekte", []):
             self.conn.execute(
                 """INSERT INTO defekt (einzelstueck_id, position, position_y,
@@ -1012,9 +1148,14 @@ class Database:
             (lagerstueck_id,),
         ).fetchall()]
 
-    def rest_einbuchen(self, material_id: int, laenge: float,
-                       breite: float = 0.0) -> Lagerstueck | None:
-        """Rest als Lagerstück einbuchen. Gleiche Maße werden zusammengefasst."""
+    def rest_einbuchen(self, material_id: int, laenge: float, breite: float = 0.0,
+                       wunsch_nr: int = 0) -> tuple[Lagerstueck, int] | None:
+        """Rest als Lagerstück einbuchen. Gleiche Maße werden zusammengefasst.
+
+        Liefert (Lagerzeile, Stücknummer des neuen Rests) oder None, wenn der
+        Rest unter dem Mindestmaß liegt (= Abfall). Der Rest bekommt den
+        Reste-Lagerort des Materials und, falls frei, die Nummer wunsch_nr.
+        """
         mat = self.get_material(material_id)
         if not mat:
             return None
@@ -1025,14 +1166,17 @@ class Database:
             if laenge < mat.rest_min_laenge or breite < mat.rest_min_breite:
                 return None
         # Bestehendes Lagerstück mit gleichen Maßen suchen
-        for existing in self.list_lagerstuecke(material_id):
-            if (abs(existing.laenge - laenge) < 0.1 and
-                    abs(existing.breite - breite) < 0.1):
-                existing.stueckzahl += 1
-                return self.save_lagerstueck(existing)
-        ls = Lagerstueck(material_id=material_id, laenge=laenge,
-                         breite=breite, stueckzahl=1)
-        return self.save_lagerstueck(ls)
+        ls = next((e for e in self.list_lagerstuecke(material_id)
+                   if abs(e.laenge - laenge) < 0.1 and abs(e.breite - breite) < 0.1),
+                  None) or Lagerstueck(material_id=material_id, laenge=laenge,
+                                       breite=breite, stueckzahl=0)
+        ls, nr = self.stueck_hinzufuegen(ls, wunsch_nr)
+        if mat.lagerort_reste and nr:
+            self.conn.execute(
+                "UPDATE einzelstueck SET lagerort=? WHERE lagerstueck_id=? AND nr=?",
+                (mat.lagerort_reste, ls.id, nr))
+            self.conn.commit()
+        return ls, nr
 
 
 def seed_data(db: Database):

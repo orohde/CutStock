@@ -55,6 +55,14 @@ class Material:
     rest_min_laenge: float = 0.0
     rest_min_breite: float = 0.0
     bild: bytes = b""
+    # Kürzel für Stück-Codes (z.B. "AP4040" → Stück "AP4040-07"), eindeutig
+    kuerzel: str = ""
+    # Standard-Lagerort der Stücke bzw. neu entstehender Reste (Freitext)
+    lagerort: str = ""
+    lagerort_reste: str = ""
+
+    def stueck_code(self, nr: int) -> str:
+        return stueck_code(self.kuerzel, nr)
 
 
 @dataclass
@@ -115,8 +123,9 @@ class Teil:
 class Einzelstueck:
     id: int | None = None
     lagerstueck_id: int = 0
-    nr: int = 1
+    nr: int = 1           # eindeutig je Material, frei gewordene Nummern werden wieder vergeben
     notiz: str = ""
+    lagerort: str = ""    # leer = Lagerort des Materials
 
 
 @dataclass
@@ -159,7 +168,7 @@ class PlanBrett:
     verschnitt_mm: float = 0.0
     verschnitt_prozent: float = 0.0
     verbraucht: bool = False                         # Lagerstück schon ausgetragen
-    rest_ids: list = field(default_factory=list)     # dafür eingebuchte Reste
+    rest_ids: list = field(default_factory=list)     # eingebuchte Reste [[lagerstück_id, nr]]
     verbrauchtes_stueck: dict | None = None          # Schnappschuss fürs Zurückbuchen
     stuecke: list[PlanStueck] = field(default_factory=list)
 
@@ -180,6 +189,36 @@ class GespeicherterPlan:
     geaendert: float = 0.0
     version: int = 1
     bretter: list[PlanBrett] = field(default_factory=list)
+
+
+def stueck_code(kuerzel: str, nr: int) -> str:
+    """Aufschrift eines Einzelstücks, z.B. "AP4040-07"."""
+    if not nr:
+        return ""
+    return f"{kuerzel}-{nr:02d}" if kuerzel else f"#{nr}"
+
+
+def kuerzel_vorschlag(name: str, vergeben: set[str]) -> str:
+    """Kürzel aus dem Materialnamen ableiten, z.B. "Alu Profil 40x80 Nut 8" → "AP4080".
+
+    Abkürzungen in Großbuchstaben bleiben ganz ("MDF 19 mm" → "MDF19"),
+    sonst je Wort der Anfangsbuchstabe. Dazu die Maße (erstes "AxB" bzw. erste Zahl).
+    Bei Kollision wird ein Buchstabe angehängt (B, C, ...).
+    """
+    import re
+    fuellwoerter = {"mm", "cm", "m", "x", "nut", "mit", "und", "für", "fuer", "der", "die", "das"}
+    worte = [w for w in re.findall(r"[A-Za-zÄÖÜäöüß]+", name) if w.lower() not in fuellwoerter]
+    buchst = "".join(w if (w.isupper() and len(w) <= 4) else w[0] for w in worte)
+    buchst = (buchst.upper()
+              .replace("Ä", "AE").replace("Ö", "OE").replace("Ü", "UE").replace("ß", "SS"))[:4]
+    mass = re.search(r"(\d+)\s*[x×]\s*(\d+)", name)
+    zahl = mass.group(1) + mass.group(2) if mass else (re.findall(r"\d+", name) or [""])[0]
+    basis = ((buchst or "M") + zahl)[:10]
+    kandidat, i = basis, 1
+    while kandidat in vergeben:
+        kandidat = basis + chr(ord("A") + i)
+        i += 1
+    return kandidat
 
 
 def drehung_fuer_teil(mat_maserung: Maserung, teil_maserung: Maserung

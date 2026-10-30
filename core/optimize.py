@@ -74,6 +74,8 @@ class Schnittplan:
     verschnitt_mm: float = 0.0       # 1D: mm, 2D: mm² (absolute waste)
     verschnitt_prozent: float = 0.0
     defekte: list = field(default_factory=list)  # Defekt objects, for the PDF
+    stueck_code: str = ""   # label written on the piece, e.g. "AP4040-07" (PDF only)
+    lagerort: str = ""      # storage location (PDF only)
 
 
 @dataclass

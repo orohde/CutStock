@@ -726,6 +726,17 @@ TRANSLATIONS = {
         "fr": "Projet réinitialisé – réoptimisez maintenant",
         "it": "Progetto azzerato – ora riottimizza",
     },
+    "plan.take": {
+        "de": "Nimm", "en": "Take", "fr": "Prendre", "it": "Prendi",
+    },
+    "plan.label_rests": {
+        "de": "Reste beschriften", "en": "Label remnants",
+        "fr": "Étiqueter les chutes", "it": "Etichetta gli sfridi",
+    },
+    "plan.print_rest_labels": {
+        "de": "Rest-Etiketten drucken", "en": "Print remnant labels",
+        "fr": "Imprimer les étiquettes des chutes", "it": "Stampa etichette sfridi",
+    },
     "plan.badge_title": {
         "de": "Gesägt laut gespeicherten Plänen",
         "en": "Cut according to saved plans",
@@ -778,6 +789,48 @@ TRANSLATIONS = {
     "labels.button": {
         "de": "Etiketten", "en": "Labels",
         "fr": "Étiquettes", "it": "Etichette",
+    },
+    "labels.rest": {
+        "de": "Rest", "en": "Remnant", "fr": "Chute", "it": "Sfrido",
+    },
+    "mat.code": {
+        "de": "Kürzel (für Stück-Codes):", "en": "Short code (for piece codes):",
+        "fr": "Code court (pour les codes de pièce) :", "it": "Sigla (per i codici dei pezzi):",
+    },
+    "mat.code_hint": {
+        "de": "leer = automatisch, z.B. AP4040", "en": "empty = automatic, e.g. AP4040",
+        "fr": "vide = automatique, p. ex. AP4040", "it": "vuoto = automatico, es. AP4040",
+    },
+    "mat.location": {
+        "de": "Lagerort:", "en": "Storage location:", "fr": "Emplacement :", "it": "Ubicazione:",
+    },
+    "mat.location_hint": {
+        "de": "z.B. Regal 2 / Fach B", "en": "e.g. Rack 2 / Shelf B",
+        "fr": "p. ex. Étagère 2 / Case B", "it": "es. Scaffale 2 / Ripiano B",
+    },
+    "mat.location_rest": {
+        "de": "Lagerort für Reste:", "en": "Storage location for remnants:",
+        "fr": "Emplacement des chutes :", "it": "Ubicazione degli sfridi:",
+    },
+    "mat.location_rest_hint": {
+        "de": "z.B. Restekiste Alu (leer = wie oben)", "en": "e.g. Aluminium remnant box (empty = as above)",
+        "fr": "p. ex. Bac à chutes alu (vide = comme ci-dessus)", "it": "es. Cassetta sfridi alu (vuoto = come sopra)",
+    },
+    "piece.edit": {
+        "de": "Stück bearbeiten", "en": "Edit piece", "fr": "Modifier la pièce", "it": "Modifica pezzo",
+    },
+    "piece.edit_hint": {
+        "de": "Doppelklick: Notiz und Lagerort bearbeiten",
+        "en": "Double-click: edit note and location",
+        "fr": "Double-clic : modifier la note et l'emplacement",
+        "it": "Doppio clic: modifica nota e ubicazione",
+    },
+    "piece.note": {
+        "de": "Notiz:", "en": "Note:", "fr": "Note :", "it": "Nota:",
+    },
+    "piece.location": {
+        "de": "Lagerort (leer = wie Material):", "en": "Location (empty = as material):",
+        "fr": "Emplacement (vide = comme le matériau) :", "it": "Ubicazione (vuoto = come materiale):",
     },
     "labels.stock": {
         "de": "Lager/Rest", "en": "Stock/Remnant",

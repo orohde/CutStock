@@ -11,7 +11,8 @@ Live-Instanz aussehen (Port 8420, cutstock.rohde.one).
 
 Inhalt: Alu-Profile, Holzbalken/Latten (Stangen) und Holzplatten mit vollen
 Längen/Formaten, Reststücken und einzelnen Defekten, vier Sägeblätter und
-mehrere Projekte, auch mit Teilen aus verschiedenen Materialien.
+mehrere Projekte, auch mit Teilen aus verschiedenen Materialien. Materialien
+haben Kürzel und Lagerorte, Reste liegen in eigenen Restekisten.
 Nur Standardbibliothek – läuft ohne venv.
 """
 
@@ -210,18 +211,50 @@ def leeren(api: Api):
         api.call("DELETE", f"/api/blades/{b['id']}")
 
 
+# Kürzel und Lagerorte (Lagerort, Lagerort für Reste)
+KUERZEL = {
+    "Alu Profil 30x30 Nut 8": "AP30", "Alu Profil 40x40 Nut 8": "AP40",
+    "Alu Profil 40x80 Nut 8": "AP4080", "Alu Profil 20x20 Nut 6": "AP20",
+    "Alu Rechteckrohr 40x20x2": "AR4020", "Alu Flachstange 30x5": "AF30",
+    "Alu Winkel 30x30x3": "AW30", "KVH Fichte 60x120": "KVH12",
+    "KVH Fichte 80x80": "KVH8", "Kantholz Douglasie 100x100": "DG10",
+    "Dachlatte 24x48": "DL", "Rahmenholz 44x68 gehobelt": "RH68",
+    "Leimholz Fichte Kantel 40x60": "LF60", "Eiche Kantholz 50x50": "EK50",
+    "MDF 19 mm": "MDF19", "MDF 8 mm (Rückwände)": "MDF8",
+    "Spanplatte Melamin weiß 19 mm": "SPW19", "Multiplex Birke 18 mm": "MPX18",
+    "OSB/3 18 mm": "OSB18", "Siebdruckplatte 21 mm": "SD21",
+    "Leimholz Eiche 26 mm": "LHE26", "Sperrholz Pappel 10 mm": "SPP10",
+}
+
+
+def lagerorte(name: str, typ: str) -> tuple[str, str]:
+    if name.startswith("Alu"):
+        return "Wandregal Alu", "Restekiste Alu"
+    if typ == STANGE:
+        return "Holzregal Balken", "Restekiste Holz"
+    return "Plattenständer", "Plattenwagen Reste"
+
+
 def einspielen(api: Api):
     mat_ids: dict[str, int] = {}
     n_lager = n_defekte = 0
     for name, (typ, felder, lager, defekte) in MATERIALIEN.items():
-        mid = api.call("POST", "/api/materials", {"name": name, "typ": typ, **felder})["id"]
+        ort, ort_reste = lagerorte(name, typ)
+        mid = api.call("POST", "/api/materials", {
+            "name": name, "typ": typ, "kuerzel": KUERZEL.get(name, ""),
+            "lagerort": ort, "lagerort_reste": ort_reste, **felder})["id"]
         mat_ids[name] = mid
         stock_ids = []
-        for laenge, breite, anzahl in lager:
-            stock_ids.append(api.call("POST", "/api/stock", {
+        for i, (laenge, breite, anzahl) in enumerate(lager):
+            sid = api.call("POST", "/api/stock", {
                 "material_id": mid, "laenge": laenge, "breite": breite,
-                "stueckzahl": anzahl})["id"])
+                "stueckzahl": anzahl})["id"]
+            stock_ids.append(sid)
             n_lager += anzahl
+            if i >= 2:   # kleinere Bestände sind Reste → liegen in der Restekiste
+                for p in api.call("GET", f"/api/stock/{sid}/pieces"):
+                    api.call("PUT", f"/api/pieces/{p['id']}", {"notiz": p["notiz"],
+                                                               "lagerort": ort_reste})
         for idx, nr, pos, pos_y, laenge, breite in defekte:
             stueck = {s["nr"]: s for s in api.call("GET", f"/api/stock/{stock_ids[idx]}/pieces")}
             api.call("POST", f"/api/pieces/{stueck[nr]['id']}/defects", {

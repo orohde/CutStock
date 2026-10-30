@@ -812,3 +812,53 @@ td.expand-toggle:hover { background: rgba(255,255,255,0.05); }
   width: 100%;
   box-sizing: border-box;
 }
+
+/* Stück-Codes und Lagerorte */
+.mat-code,
+.piece-code {
+  font-family: var(--sapFontFamily, inherit);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.mat-code {
+  margin-left: 0.375rem;
+  padding: 0 0.375rem;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  background: var(--sapNeutralBackground, #eaecee);
+  color: var(--sapContent_LabelColor, #556b82);
+}
+
+.piece-cell {
+  padding-left: 2rem;
+}
+
+.piece-location {
+  margin-left: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--sapContent_LabelColor, #556b82);
+}
+
+.plan-piece-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.25rem;
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.875rem;
+}
+
+.plan-piece-info:empty {
+  display: none;
+}
+
+.plan-piece-info .plan-rests {
+  color: var(--sapCriticalTextColor, #aa5808);
+}
+
+.saw-piece-info {
+  align-items: center;
+  margin: 0;
+  padding: 0.5rem 1rem;
+  font-size: 1rem;
+}

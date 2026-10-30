@@ -376,7 +376,7 @@ async function renderMaterials() {
             : '';
         return `<tr class="fd-table__row ${selected}" data-id="${m.id}">
             <td class="fd-table__cell mat-img-col">${imgCell}</td>
-            <td class="fd-table__cell">${escHtml(m.name)}</td>
+            <td class="fd-table__cell">${escHtml(m.name)}${m.kuerzel ? ` <span class="mat-code">${escHtml(m.kuerzel)}</span>` : ''}</td>
             <td class="fd-table__cell">${typLabel}</td>
             <td class="fd-table__cell num">${dims}</td>
             <td class="fd-table__cell">${grain}</td>
@@ -481,13 +481,23 @@ async function renderStock() {
                 const pBadge = p.defekt_count > 0
                     ? ` <span class="defect-badge">${p.defekt_count}</span>` : '';
                 const note = p.notiz ? ` <span class="piece-note">${escHtml(p.notiz)}</span>` : '';
-                return `<tr class="fd-table__row piece-row" data-parent="${stockId}" data-piece-id="${p.id}">
-                    <td class="fd-table__cell num piece-cell" colspan="${isPlatte ? 3 : 2}">
-                        &nbsp;&nbsp;&nbsp;&nbsp;#${p.nr}${note}${pBadge}
+                const ort = p.lagerort_effektiv
+                    ? ` <span class="piece-location">&#128205; ${escHtml(p.lagerort_effektiv)}</span>` : '';
+                return `<tr class="fd-table__row piece-row" data-parent="${stockId}" data-piece-id="${p.id}"
+                        title="${escAttr(t('piece.edit_hint'))}">
+                    <td class="fd-table__cell piece-cell" colspan="${isPlatte ? 3 : 2}">
+                        <span class="piece-code">${escHtml(p.code || '#' + p.nr)}</span>${ort}${note}${pBadge}
                     </td>
                 </tr>`;
             }).join('');
             parentRow.insertAdjacentHTML('afterend', pieceRows);
+            tbody.querySelectorAll(`tr.piece-row[data-parent="${stockId}"]`).forEach(r => {
+                r.addEventListener('dblclick', (ev) => {
+                    ev.stopPropagation();
+                    const piece = pieces.find(x => x.id === parseInt(r.dataset.pieceId));
+                    if (piece) openPieceDialog(piece);
+                });
+            });
         });
     });
 
@@ -497,6 +507,22 @@ async function renderStock() {
             selectStockRow(parseInt(row.dataset.id));
             openStockDialog(State.stock.find(s => s.id === State.selectedStockId));
         });
+    });
+}
+
+// Einzelstück bearbeiten: Notiz und eigener Lagerort (leer = Lagerort des Materials)
+function openPieceDialog(piece) {
+    const mat = getSelectedMaterial();
+    const fields = [
+        { key: 'notiz', label: t('piece.note'), type: 'text' },
+        { key: 'lagerort', label: t('piece.location'), type: 'text',
+          placeholder: mat?.lagerort || t('mat.location_hint') },
+    ];
+    openModal(`${t('piece.edit')} ${piece.code || '#' + piece.nr}`, fields, piece, async (formData) => {
+        try {
+            await Api.updatePiece(piece.id, { notiz: formData.notiz || '', lagerort: formData.lagerort || '' });
+            await renderStock();
+        } catch { /* handled */ }
     });
 }
 
@@ -730,6 +756,9 @@ function applyPlanState(plan) {
         if (!neu) return;
         sp.lagerstueck_id = neu.lagerstueck_id;
         sp.verbraucht = neu.verbraucht;
+        sp.stueck_code = neu.stueck_code;
+        sp.lagerort = neu.lagerort;
+        sp.reste_stuecke = neu.reste_stuecke;
         const st = new Map(neu.platzierungen.map(p => [p.id, p]));
         sp.platzierungen.forEach(p => {
             const n = st.get(p.id);
@@ -740,6 +769,10 @@ function applyPlanState(plan) {
     cur.lager_fehlt = plan.lager_fehlt;
     cur.veraltet = plan.veraltet;
     renderPlanInfo();
+    document.querySelectorAll('.plan-piece-info').forEach(el => {
+        const sp = cur.schnittplaene?.[parseInt(el.dataset.planIndex)];
+        if (sp) el.innerHTML = planPieceInfo(sp);
+    });
 }
 
 // Angezeigten Schnittplan verwerfen (Auswahl passt nicht mehr dazu).
@@ -922,12 +955,13 @@ function renderOptResults({ quiet = false } = {}) {
             return `<div class="cut-plan-card">
                 <div class="plan-header">
                     <strong>${t('opt.preview')} ${i + 1}</strong>
-                    <span>${formatDim(plan.lager_laenge)}${plan.lager_breite ? ' x ' + formatDim(plan.lager_breite) : ''}${plan.stueck_nr ? ' (#' + plan.stueck_nr + ')' : ''}</span>
+                    <span>${formatDim(plan.lager_laenge)}${plan.lager_breite ? ' x ' + formatDim(plan.lager_breite) : ''}</span>
                     <span>${plan.platzierungen.length} ${t('proj.parts')}</span>
                     <span>${t('stat.utilization')}: ${(100 - plan.verschnitt_prozent).toFixed(1)}%</span>
                     <span class="waste">${t('stat.total_waste')}: ${plan.verschnitt_prozent.toFixed(1)}%</span>
                     <button class="fd-button btn-zoom" data-plan-index="${i}" type="button" title="${escAttr(t('opt.zoom'))}" aria-label="${escAttr(t('opt.zoom'))}">&#128269;</button>
                 </div>
+                <div class="plan-piece-info" data-plan-index="${i}">${planPieceInfo(plan)}</div>
                 <canvas class="cut-plan-canvas" data-plan-index="${i}"
                     style="width:100%;height:${canvasHeight}px"></canvas>
                 ${seqHtml}
@@ -1401,6 +1435,12 @@ function closePlanZoom() {
 // piece, linking the remnant shelf to the digital stock list.
 // ---------------------------------------------------------------------------
 
+// Aufschrift eines Einzelstücks, z.B. "AP4040-07" (wie core.models.stueck_code)
+function pieceCode(mat, nr) {
+    if (!nr) return '';
+    return mat?.kuerzel ? `${mat.kuerzel}-${String(nr).padStart(2, '0')}` : `#${nr}`;
+}
+
 function dimText(laenge, breite) {
     return breite > 0
         ? `${toDisplay(laenge)} × ${toDisplay(breite)} ${unitLabel()}`
@@ -1430,24 +1470,55 @@ function printPartLabels() {
 
 // One label per physical stock piece (quantity > 1 → several labels);
 // the #ID is written onto the wood and uniquely identifies the remnant.
-function printStockLabels() {
+async function printStockLabels() {
     const mat = getSelectedMaterial();
     if (!mat) { showToast(t('dlg.select_material'), 'error'); return; }
     if (!State.stock.length) { showToast(t('stock.empty'), 'error'); return; }
 
+    // Ein Etikett je Einzelstück, mit seinem Code (das schreibt man aufs Material)
     const labels = [];
-    State.stock.forEach(s => {
-        for (let n = 0; n < Math.min(s.stueckzahl, 200); n++) {
-            labels.push({
-                title: mat.name,
-                line1: dimText(s.laenge, s.breite),
-                line2: t('labels.stock'),
-                id_text: `#${s.id}`,
-            });
-        }
-    });
+    for (const s of State.stock) {
+        let pieces = [];
+        try { pieces = await Api.getPieces(s.id); } catch { /* ignore */ }
+        pieces.slice(0, 200).forEach(p => labels.push({
+            title: mat.name,
+            line1: dimText(s.laenge, s.breite),
+            line2: p.lagerort_effektiv || t('labels.stock'),
+            id_text: p.code || `#${p.nr}`,
+        }));
+    }
     Api.downloadLabels({ labels, filename: `${t('labels.button')}-${mat.name}` });
 }
+
+// Etiketten für die beim Sägen entstandenen Reste eines Bretts
+function printRestLabels(plan) {
+    const mat = State.materials.find(m => m.id === State.optimizationResult?.material_id);
+    const labels = (plan.reste_stuecke || []).map(r => ({
+        title: mat?.name || '',
+        line1: dimText(r.laenge, r.breite),
+        line2: r.lagerort || t('labels.rest'),
+        id_text: r.code,
+    }));
+    if (!labels.length) return;
+    Api.downloadLabels({ labels, filename: `${t('labels.button')}-${t('labels.rest')}` });
+}
+
+// "Nimm AP4040-07 · 640 mm · Regal 2" bzw. nach dem Anfangen "Reste beschriften: …"
+function planPieceInfo(plan) {
+    const parts = [];
+    if (plan.stueck_code) {
+        const where = plan.lagerort ? ` · &#128205; ${escHtml(plan.lagerort)}` : '';
+        parts.push(`<span class="plan-take">${plan.verbraucht ? '' : escHtml(t('plan.take')) + ' '}<strong>${escHtml(plan.stueck_code)}</strong>${where}</span>`);
+    }
+    const reste = plan.reste_stuecke || [];
+    if (reste.length) {
+        parts.push(`<span class="plan-rests">${escHtml(t('plan.label_rests'))}: ${reste.map(r =>
+            `<strong>${escHtml(r.code)}</strong> ${dimText(r.laenge, r.breite)}${r.lagerort ? ' (' + escHtml(r.lagerort) + ')' : ''}`
+        ).join(', ')}</span>`);
+    }
+    return parts.join('');
+}
+
 
 // ---------------------------------------------------------------------------
 // Workshop mode: full-screen view for a tablet at the saw.
@@ -1510,6 +1581,16 @@ function renderSawMode() {
     canvas.style.width = '100%';
     canvas.style.height = Math.round(ch) + 'px';
     drawCutPlan(canvas, plan, mat);
+
+    // Welches Stück nehmen / welche Reste beschriften
+    const info = document.getElementById('saw-piece-info');
+    if (info) {
+        const hasRests = (plan.reste_stuecke || []).length > 0;
+        info.innerHTML = planPieceInfo(plan) + (hasRests
+            ? ` <button id="saw-rest-labels" class="fd-button fd-button--compact" type="button">${escHtml(t('plan.print_rest_labels'))}</button>`
+            : '');
+        document.getElementById('saw-rest-labels')?.addEventListener('click', () => printRestLabels(plan));
+    }
 
     renderSawPieceList(plan, canvas);
 }
@@ -2181,6 +2262,9 @@ function openMaterialDialog(material = null) {
         { key: 'besaeumung', label: t('mat.trim'), type: 'number', isDimension: true },
         { key: 'rest_min_laenge', label: t('mat.min_rest_l'), type: 'number', isDimension: true },
         { key: 'rest_min_breite', label: t('mat.min_rest_w'), type: 'number', isDimension: true, platteOnly: true },
+        { key: 'kuerzel', label: t('mat.code'), type: 'text', placeholder: t('mat.code_hint') },
+        { key: 'lagerort', label: t('mat.location'), type: 'text', placeholder: t('mat.location_hint') },
+        { key: 'lagerort_reste', label: t('mat.location_rest'), type: 'text', placeholder: t('mat.location_rest_hint') },
     ];
 
     openModal(title, fields, data, async (formData) => {
@@ -2348,7 +2432,7 @@ async function openDefectListDialog(stockId) {
                     ? `<td class="fd-table__cell num">${formatDim(d.position_y)}</td>
                        <td class="fd-table__cell num">${formatDim(d.breite)}</td>` : '';
                 return `<tr class="fd-table__row" data-defect-id="${d.id}">
-                    <td class="fd-table__cell num">#${d.stueck_nr}</td>
+                    <td class="fd-table__cell num">${escHtml(pieceCode(getSelectedMaterial(), d.stueck_nr))}</td>
                     <td class="fd-table__cell num">${formatDim(d.position)}</td>
                     <td class="fd-table__cell num">${formatDim(d.laenge)}</td>
                     ${widthCells}
@@ -2418,7 +2502,7 @@ function openDefectDialog(stockId, isPlatte, pieces, defect, onDone) {
 
     const pieceOptions = pieces.map(p => ({
         value: String(p.id),
-        text: `#${p.nr}${p.notiz ? ' – ' + p.notiz : ''}`,
+        text: `${p.code || '#' + p.nr}${p.notiz ? ' – ' + p.notiz : ''}`,
     }));
 
     const fields = [
