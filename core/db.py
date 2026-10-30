@@ -157,7 +157,8 @@ CREATE TABLE IF NOT EXISTS teil (
     stueckzahl  INTEGER NOT NULL DEFAULT 1,
     gesaegt_anzahl INTEGER NOT NULL DEFAULT 0,
     maserung    TEXT    NOT NULL DEFAULT 'egal',
-    status      TEXT    NOT NULL DEFAULT 'offen' CHECK(status IN ('offen','gesägt'))
+    status      TEXT    NOT NULL DEFAULT 'offen' CHECK(status IN ('offen','gesägt')),
+    vorrat      INTEGER NOT NULL DEFAULT 0
 );
 
 -- Gespeicherte Schnittpläne (ein Plan je Projekt + Material).
@@ -177,6 +178,7 @@ CREATE TABLE IF NOT EXISTS schnittplan (
     erstellt       REAL    NOT NULL DEFAULT 0,
     geaendert      REAL    NOT NULL DEFAULT 0,
     version        INTEGER NOT NULL DEFAULT 1,
+    fuell_alle_reste INTEGER NOT NULL DEFAULT 0,
     UNIQUE(projekt_id, material_id)
 );
 
@@ -207,7 +209,17 @@ CREATE TABLE IF NOT EXISTS schnittplan_stueck (
     x          REAL    NOT NULL DEFAULT 0,
     y          REAL    NOT NULL DEFAULT 0,
     gedreht    INTEGER NOT NULL DEFAULT 0,
-    gesaegt    INTEGER NOT NULL DEFAULT 0
+    gesaegt    INTEGER NOT NULL DEFAULT 0,
+    ist_fuellteil INTEGER NOT NULL DEFAULT 0
+);
+
+-- Füllteile eines Plans: Teile anderer Projekte, die in diesem Plan mitgesägt werden
+CREATE TABLE IF NOT EXISTS schnittplan_fuellteil (
+    schnittplan_id INTEGER NOT NULL REFERENCES schnittplan(id) ON DELETE CASCADE,
+    teil_id        INTEGER NOT NULL REFERENCES teil(id) ON DELETE CASCADE,
+    modus          TEXT    NOT NULL DEFAULT 'auffuellen',   -- 'auffuellen' | 'fest'
+    menge          INTEGER NOT NULL DEFAULT 0,              -- fest: Anzahl; auffüllen: Max (0 = offen)
+    PRIMARY KEY (schnittplan_id, teil_id)
 );
 """
 
@@ -233,6 +245,9 @@ class Database:
     PFLICHT_SPALTEN = {
         "projekt": {"anzahl"},
         "lagerstueck": {"ist_rest"},
+        "teil": {"vorrat"},
+        "schnittplan": {"fuell_alle_reste"},
+        "schnittplan_stueck": {"ist_fuellteil"},
         "material": {"kuerzel", "lagerort", "lagerort_reste"},
         "einzelstueck": {"lagerort"},
     }
@@ -313,6 +328,19 @@ class Database:
         if "maserung" not in teil_cols:
             self.conn.execute(
                 "ALTER TABLE teil ADD COLUMN maserung TEXT NOT NULL DEFAULT 'egal'")
+        if "vorrat" not in teil_cols:
+            self.conn.execute(
+                "ALTER TABLE teil ADD COLUMN vorrat INTEGER NOT NULL DEFAULT 0")
+        sp_cols = {row[1] for row in
+                   self.conn.execute("PRAGMA table_info(schnittplan)").fetchall()}
+        if "fuell_alle_reste" not in sp_cols:
+            self.conn.execute(
+                "ALTER TABLE schnittplan ADD COLUMN fuell_alle_reste INTEGER NOT NULL DEFAULT 0")
+        st_cols = {row[1] for row in
+                   self.conn.execute("PRAGMA table_info(schnittplan_stueck)").fetchall()}
+        if "ist_fuellteil" not in st_cols:
+            self.conn.execute(
+                "ALTER TABLE schnittplan_stueck ADD COLUMN ist_fuellteil INTEGER NOT NULL DEFAULT 0")
         if "gesaegt_anzahl" not in teil_cols:
             self.conn.execute(
                 "ALTER TABLE teil ADD COLUMN gesaegt_anzahl INTEGER NOT NULL DEFAULT 0")
@@ -933,6 +961,7 @@ class Database:
             maserung=mas,
             status=TeilStatus(row["status"]),
             exemplare=row["exemplare"] if "exemplare" in row.keys() else 1,
+            vorrat=row["vorrat"] if "vorrat" in row.keys() else 0,
         )
 
     # ------------------------------------------------------------------
@@ -956,13 +985,18 @@ class Database:
         cur = self.conn.execute(
             """INSERT INTO schnittplan (projekt_id, material_id, saegeblatt_id, kerf,
                algorithmus, eingabe_hash, fehlende_json, bedarf_json, erstellt,
-               geaendert, version) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+               geaendert, version, fuell_alle_reste) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (plan.projekt_id, plan.material_id, plan.saegeblatt_id, plan.kerf,
              plan.algorithmus, plan.eingabe_hash, json.dumps(plan.fehlende_teile),
              json.dumps(plan.materialbedarf), plan.erstellt, plan.geaendert,
-             plan.version),
+             plan.version, int(plan.fuell_alle_reste)),
         )
         plan.id = cur.lastrowid
+        for f in plan.fuellteile:
+            self.conn.execute(
+                """INSERT OR REPLACE INTO schnittplan_fuellteil
+                   (schnittplan_id, teil_id, modus, menge) VALUES (?,?,?,?)""",
+                (plan.id, f["teil_id"], f.get("modus", "auffuellen"), int(f.get("menge") or 0)))
         for pos, b in enumerate(plan.bretter):
             b.schnittplan_id = plan.id
             b.pos = pos
@@ -982,10 +1016,10 @@ class Database:
                 st.brett_id = b.id
                 cur = self.conn.execute(
                     """INSERT INTO schnittplan_stueck (brett_id, teil_id, teil_label,
-                       laenge, breite, x, y, gedreht, gesaegt)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                       laenge, breite, x, y, gedreht, gesaegt, ist_fuellteil)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
                     (st.brett_id, st.teil_id, st.teil_label, st.laenge, st.breite,
-                     st.x, st.y, int(st.gedreht), int(st.gesaegt)),
+                     st.x, st.y, int(st.gedreht), int(st.gesaegt), int(st.ist_fuellteil)),
                 )
                 st.id = cur.lastrowid
         self.conn.commit()
@@ -1021,6 +1055,11 @@ class Database:
             materialbedarf=json.loads(row["bedarf_json"] or "[]"),
             erstellt=row["erstellt"], geaendert=row["geaendert"],
             version=row["version"],
+            fuell_alle_reste=bool(row["fuell_alle_reste"]),
+            fuellteile=[{"teil_id": r["teil_id"], "modus": r["modus"], "menge": r["menge"]}
+                        for r in self.conn.execute(
+                            "SELECT * FROM schnittplan_fuellteil WHERE schnittplan_id=?",
+                            (row["id"],))],
         )
         bretter = self.conn.execute(
             "SELECT * FROM schnittplan_brett WHERE schnittplan_id=? ORDER BY pos",
@@ -1044,7 +1083,8 @@ class Database:
                 PlanStueck(id=s["id"], brett_id=brett.id, teil_id=s["teil_id"],
                            teil_label=s["teil_label"], laenge=s["laenge"],
                            breite=s["breite"], x=s["x"], y=s["y"],
-                           gedreht=bool(s["gedreht"]), gesaegt=bool(s["gesaegt"]))
+                           gedreht=bool(s["gedreht"]), gesaegt=bool(s["gesaegt"]),
+                           ist_fuellteil=bool(s["ist_fuellteil"]))
                 for s in self.conn.execute(
                     "SELECT * FROM schnittplan_stueck WHERE brett_id=? ORDER BY id",
                     (brett.id,)).fetchall()
@@ -1121,6 +1161,45 @@ class Database:
                    stueckzahl * (SELECT anzahl FROM projekt WHERE id = teil.projekt_id)
                THEN 'gesägt' ELSE 'offen' END WHERE id=?""", (teil_id,))
         self.conn.commit()
+
+    def teil_vorrat_aendern(self, teil_id: int, delta: int):
+        """Teile-Vorrat ("Regal") relativ ändern, nie unter 0."""
+        self.conn.execute("UPDATE teil SET vorrat = MAX(0, vorrat + ?) WHERE id=?",
+                          (delta, teil_id))
+        self.conn.commit()
+
+    def vorrat_uebernehmen(self, projekt_id: int, material_id: int) -> int:
+        """Vorrat der Teile eines Projekts (eines Materials) als gesägt übernehmen.
+
+        Je Teil höchstens so viele, wie noch offen sind. Liefert die Anzahl.
+        """
+        n_gesamt = 0
+        for t in self.list_teile(projekt_id):
+            if t.material_id != material_id or t.vorrat <= 0:
+                continue
+            n = min(t.vorrat, t.offen_anzahl)
+            if n <= 0:
+                continue
+            self.conn.execute("UPDATE teil SET vorrat = vorrat - ? WHERE id=?", (n, t.id))
+            self.teil_gesaegt_aendern(t.id, n)
+            n_gesamt += n
+        self.conn.commit()
+        return n_gesamt
+
+    def get_teil(self, teil_id: int) -> Teil | None:
+        row = self.conn.execute(
+            """SELECT t.*, p.anzahl AS exemplare FROM teil t
+               JOIN projekt p ON p.id = t.projekt_id WHERE t.id=?""", (teil_id,)).fetchone()
+        return self._row_to_teil(row) if row else None
+
+    def fuellteil_kandidaten(self, projekt_id: int, material_id: int) -> list[dict]:
+        """Teile desselben Materials aus allen ANDEREN Projekten (auch fertigen)."""
+        rows = self.conn.execute(
+            """SELECT t.*, p.anzahl AS exemplare, p.name AS projekt_name FROM teil t
+               JOIN projekt p ON p.id = t.projekt_id
+               WHERE t.material_id=? AND t.projekt_id != ?
+               ORDER BY p.name, t.label""", (material_id, projekt_id)).fetchall()
+        return [{"teil": self._row_to_teil(r), "projekt": r["projekt_name"]} for r in rows]
 
     def projekt_neu_starten(self, projekt_id: int):
         """Fortschritt aller Teile zurücksetzen und Pläne löschen (Lager bleibt)."""

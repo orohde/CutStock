@@ -222,6 +222,10 @@ const Api = {
     confirmAllPieces: (planId) => fetchJSON(`/api/plans/${planId}/confirm-all`, 'POST'),
     restartProject: (projectId) => fetchJSON(`/api/projects/${projectId}/restart`, 'POST'),
     discardPlan: (planId) => fetchJSON(`/api/plans/${planId}`, 'DELETE'),
+    getFillCandidates: (projectId, materialId) =>
+        fetchJSON(`/api/projects/${projectId}/fill-candidates/${materialId}`),
+    takePartStock: (projectId, materialId) =>
+        fetchJSON(`/api/projects/${projectId}/take-stock/${materialId}`, 'POST'),
 
     async downloadPdf(data) {
         const resp = await fetch(API_BASE + '/api/pdf', {
@@ -675,6 +679,7 @@ async function renderParts() {
                         <div class="progress-fill" style="width:${pct}%"></div>
                     </div>
                     <span class="status-badge ${statusClass}">${statusText}</span>
+                    ${p.vorrat > 0 ? `<span class="stock-badge" title="${escAttr(t('fill.stock_hint'))}">&#128230; ${p.vorrat}</span>` : ''}
                 </div>
             </td>
         </tr>`;
@@ -749,6 +754,7 @@ function renderOptDropdowns() {
 
     // Gespeicherten Plan zur (wiederhergestellten) Auswahl laden – auch, um
     // nach Änderungen an Teilen den Hinweis „veraltet“ aktuell zu halten.
+    updateFillButton();
     loadSavedPlan();
 }
 
@@ -779,6 +785,12 @@ async function loadSavedPlan() {
 // Server-Plan als angezeigtes Ergebnis übernehmen (_done = gesägt-Markierung).
 function adoptPlan(plan) {
     plan._projId = String(plan.projekt_id);
+    State.fillSel = {
+        key: `${plan.projekt_id}:${plan.material_id}`,
+        items: plan.fuellteile || [],
+        alle: !!plan.fuell_alle_reste,
+    };
+    updateFillButton();
     (plan.schnittplaene || []).forEach(sp =>
         sp.platzierungen.forEach(p => { p._done = !!p.gesaegt; }));
     State.optimizationResult = plan;
@@ -868,6 +880,7 @@ function renderOptResults({ quiet = false } = {}) {
     const plans = result.schnittplaene || [];
     const missing = result.fehlende_teile || [];
     const totalParts = plans.reduce((sum, p) => sum + p.platzierungen.length, 0);
+    const fillerCount = plans.reduce((sum, p) => sum + p.platzierungen.filter(x => x.ist_fuellteil).length, 0);
     const waste = result.gesamt_verschnitt_prozent ?? 0;
     const wasteAbs = plans.reduce((sum, p) => sum + (p.verschnitt_mm || 0), 0);
     const utilization = 100 - waste;
@@ -936,7 +949,8 @@ function renderOptResults({ quiet = false } = {}) {
             <div class="stat-card">
                 <div class="stat-icon">&#9998;</div>
                 <div><div class="stat-value">${totalParts}</div>
-                <div class="stat-label">${t('stat.parts_placed')}</div></div>
+                <div class="stat-label">${t('stat.parts_placed')}</div>
+                ${fillerCount ? `<div class="stat-sub">${escHtml(t('fill.of_which', { n: fillerCount }))}</div>` : ''}</div>
             </div>
             ${missingCard}
             ${bedarfCard}
@@ -1050,10 +1064,17 @@ function renderPlanInfo() {
     const warn = [];
     if (result.veraltet) warn.push(t('plan.outdated'));
     if (result.lager_fehlt) warn.push(t('plan.stock_missing'));
+    const vorrat = result.vorrat_verfuegbar || [];
+    const vorratHtml = vorrat.length
+        ? `<span class="plan-stock">&#128230; ${escHtml(t('fill.from_shelf'))}: ${escHtml(vorrat.map(v => `${v.label} ×${v.anzahl}`).join(', '))}
+            <button id="btn-take-stock" class="fd-button fd-button--compact" type="button">${escHtml(t('fill.take'))}</button></span>`
+        : '';
     el.innerHTML = `
         <span>${escHtml(t('plan.saved', { date: when }))}</span>
         <span class="plan-progress">${escHtml(t('plan.progress', { done, total }))}</span>
-        ${warn.map(w => `<span class="plan-warning">&#9888; ${escHtml(w)}</span>`).join('')}`;
+        ${warn.map(w => `<span class="plan-warning">&#9888; ${escHtml(w)}</span>`).join('')}
+        ${vorratHtml}`;
+    document.getElementById('btn-take-stock')?.addEventListener('click', takePartStock);
     el.classList.remove('hidden');
     const restartBtn = document.getElementById('btn-restart');
     if (restartBtn) restartBtn.classList.toggle('fd-button--emphasized', total > 0 && done >= total);
@@ -1417,6 +1438,121 @@ async function confirmAllPieces() {
     showToast(t('opt.done'), 'info');
 }
 
+// ---------------------------------------------------------------------------
+// Füllteile: Teile anderer Projekte (gleiches Material) im aktuellen Plan mitsägen
+// ---------------------------------------------------------------------------
+
+function currentFillKey() {
+    return `${document.getElementById('opt-project')?.value}:${document.getElementById('opt-material')?.value}`;
+}
+
+// Füllteil-Auswahl für den Optimierungs-Request (nur wenn sie zur Auswahl passt)
+function fillRequest(projId, matId) {
+    const sel = State.fillSel;
+    if (!sel || sel.key !== `${projId}:${matId}`) return {};
+    return { fuellteile: sel.items, fuell_alle_reste: sel.alle };
+}
+
+function updateFillButton() {
+    const btn = document.getElementById('btn-fill');
+    if (!btn) return;
+    const n = State.fillSel?.key === currentFillKey() ? (State.fillSel.items || []).length : 0;
+    btn.textContent = n ? `${t('fill.button').replace('…', '')} (${n})` : t('fill.button');
+}
+
+async function openFillDialog() {
+    const projId = parseInt(document.getElementById('opt-project')?.value);
+    const matId = parseInt(document.getElementById('opt-material')?.value);
+    if (!projId || !matId) return;
+    const mat = State.materials.find(m => m.id === matId);
+    const is1D = mat?.typ === 'Stange';
+    let kandidaten = [];
+    try { kandidaten = await Api.getFillCandidates(projId, matId); } catch { return; }
+
+    const key = `${projId}:${matId}`;
+    const sel = State.fillSel?.key === key ? State.fillSel : { key, items: [], alle: false };
+    const gewaehlt = new Map(sel.items.map(f => [f.teil_id, f]));
+
+    const overlay = document.getElementById('modal-overlay');
+    const body = document.getElementById('modal-body');
+    const saveBtn = document.getElementById('modal-save');
+    document.getElementById('modal-title').textContent = t('fill.title');
+    saveBtn.style.display = '';
+    saveBtn.textContent = t('btn.save');
+
+    const hint = is1D ? t('fill.hint_1d') : t('fill.hint_2d');
+    const rows = kandidaten.map(k => {
+        const f = gewaehlt.get(k.teil_id);
+        const modus = f?.modus || (is1D ? 'auffuellen' : 'fest');
+        return `<tr class="fd-table__row" data-teil="${k.teil_id}">
+            <td class="fd-table__cell"><input type="checkbox" class="cs-checkbox fill-check"${f ? ' checked' : ''}></td>
+            <td class="fd-table__cell">${escHtml(k.label)}</td>
+            <td class="fd-table__cell">${escHtml(k.projekt)}</td>
+            <td class="fd-table__cell num">${dimText(k.laenge, k.breite)}</td>
+            <td class="fd-table__cell num">${k.offen}</td>
+            <td class="fd-table__cell num">${k.vorrat || ''}</td>
+            <td class="fd-table__cell">
+                <select class="cs-select fill-mode"${is1D ? '' : ' disabled'}>
+                    <option value="auffuellen"${modus === 'auffuellen' ? ' selected' : ''}>${escHtml(t('fill.mode_fill'))}</option>
+                    <option value="fest"${modus === 'fest' ? ' selected' : ''}>${escHtml(t('fill.mode_fixed'))}</option>
+                </select>
+            </td>
+            <td class="fd-table__cell"><input type="number" class="fill-qty" min="0" step="1" style="width:5rem"
+                value="${f?.menge || ''}" placeholder="${escAttr(modus === 'fest' ? '' : t('fill.qty_max'))}"></td>
+        </tr>`;
+    }).join('');
+    body.innerHTML = kandidaten.length ? `
+        <p class="saw-hint" style="margin-bottom:.5rem">${escHtml(hint)}</p>
+        ${is1D ? `<label class="opt-check" style="margin-bottom:.5rem"><input type="checkbox" id="fill-all-rests" class="cs-checkbox"${sel.alle ? ' checked' : ''}>
+            <span>${escHtml(t('fill.all_rests'))}</span></label>` : ''}
+        <div class="fill-table-wrap"><table class="fd-table fill-table"><thead class="fd-table__header"><tr class="fd-table__row">
+            <th class="fd-table__cell"></th>
+            <th class="fd-table__cell">${escHtml(t('fill.part'))}</th>
+            <th class="fd-table__cell">${escHtml(t('fill.project'))}</th>
+            <th class="fd-table__cell">${escHtml(t('fill.size'))}</th>
+            <th class="fd-table__cell">${escHtml(t('fill.open'))}</th>
+            <th class="fd-table__cell">${escHtml(t('fill.stock'))}</th>
+            <th class="fd-table__cell">${escHtml(t('fill.mode'))}</th>
+            <th class="fd-table__cell">${escHtml(t('fill.qty'))}</th>
+        </tr></thead><tbody>${rows}</tbody></table></div>`
+        : `<p class="empty-state">${escHtml(t('fill.none'))}</p>`;
+
+    // Menge eintippen hakt das Teil automatisch an
+    body.querySelectorAll('tr[data-teil]').forEach(tr => {
+        tr.querySelector('.fill-qty')?.addEventListener('input', () => {
+            tr.querySelector('.fill-check').checked = true;
+        });
+    });
+
+    overlay.classList.remove('hidden');
+    overlay.classList.add('active');
+    saveBtn.onclick = () => {
+        const items = [];
+        body.querySelectorAll('tr[data-teil]').forEach(tr => {
+            if (!tr.querySelector('.fill-check').checked) return;
+            const modus = is1D ? tr.querySelector('.fill-mode').value : 'fest';
+            const menge = Math.max(0, parseInt(tr.querySelector('.fill-qty').value) || 0);
+            if (modus === 'fest' && menge <= 0) return;
+            items.push({ teil_id: parseInt(tr.dataset.teil), modus, menge });
+        });
+        State.fillSel = { key, items, alle: !!document.getElementById('fill-all-rests')?.checked };
+        closeModal();
+        updateFillButton();
+        showToast(t('fill.saved_hint'), 'info');
+    };
+}
+
+// Teile-Vorrat des angezeigten Projekts übernehmen und neu optimieren
+async function takePartStock() {
+    const result = State.optimizationResult;
+    if (!result?.plan_id) return;
+    try { await Api.takePartStock(result.projekt_id, result.material_id); } catch { return; }
+    try { State.projects = await Api.getProjects(); } catch { /* ignore */ }
+    renderProjects();
+    showToast(t('fill.taken'), 'info');
+    document.getElementById('btn-optimize')?.click();
+}
+
 // „Plan verwerfen": Plan löschen und reservierte Bretter freigeben.
 // Bereits Gesägtes (Fortschritt, Lagerbuchungen) bleibt, wie es ist.
 async function discardPlan() {
@@ -1682,6 +1818,23 @@ function renderSawPieceList(plan, canvas) {
             togglePieceSawn(canvas, p);  // also refreshes workshop mode at the end
         });
     });
+}
+
+// Schraffur für Füllteile (Teile anderer Projekte, die ins Regal gehen)
+function drawFillerHatch(ctx, x, y, w, h) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.lineWidth = 2;
+    for (let d = -h; d < w; d += 8) {
+        ctx.beginPath();
+        ctx.moveTo(x + d, y + h);
+        ctx.lineTo(x + d + h, y);
+        ctx.stroke();
+    }
+    ctx.restore();
 }
 
 // Halbtransparente Abdeckung + grüner Haken auf einem gesägten Stück
@@ -1959,6 +2112,7 @@ function draw2D(ctx, canvasW, canvasH, plan, colorMap, hits) {
 
         ctx.fillStyle = colorMap[p.teil_label] || PART_COLORS[0];
         ctx.fillRect(px, py, pw, ph);
+        if (p.ist_fuellteil) drawFillerHatch(ctx, px, py, pw, ph);
 
         ctx.strokeStyle = 'rgba(0,0,0,0.3)';
         ctx.lineWidth = 0.5;
@@ -2104,6 +2258,7 @@ function draw1D(ctx, canvasW, canvasH, plan, colorMap, hits) {
 
         ctx.fillStyle = colorMap[p.teil_label] || PART_COLORS[0];
         ctx.fillRect(px, barY, pw, barH);
+        if (p.ist_fuellteil) drawFillerHatch(ctx, px, barY, pw, barH);
 
         ctx.strokeStyle = 'rgba(0,0,0,0.3)';
         ctx.lineWidth = 0.5;
@@ -3526,6 +3681,7 @@ function initEvents() {
                 blade_id: bladeId,
                 algorithm: algo,
                 reste_zuerst: !!document.getElementById('opt-rests-first')?.checked,
+                ...fillRequest(projId, matId),
             }));
             renderOptResults();
             try { State.projects = await Api.getProjects(); renderProjects(); } catch { /* ignore */ }
@@ -3542,6 +3698,10 @@ function initEvents() {
         if (!State.optimizationResult) return;
         openConfirmDialog(t('opt.confirm_msg'), () => confirmAllPieces());
     });
+
+    document.getElementById('btn-fill')?.addEventListener('click', () => openFillDialog());
+    ['opt-project', 'opt-material'].forEach(id =>
+        document.getElementById(id)?.addEventListener('change', () => updateFillButton()));
 
     document.getElementById('btn-discard-plan')?.addEventListener('click', () => {
         if (!State.optimizationResult) return;

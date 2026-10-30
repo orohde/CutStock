@@ -1783,3 +1783,38 @@ def _build_2d_result(platten, fehlend, kerf=3.0):
         ergebnis.gesamt_verschnitt_prozent = round(
             (1 - gesamt_genutzt / gesamt_flaeche) * 100, 1)
     return ergebnis
+
+
+def fuelle_rest_1d(rest: float, kerf: float,
+                   kandidaten: list[tuple[object, float, int]]) -> list[object]:
+    """Einen Stangenrest möglichst voll mit Füllteilen belegen (beschränkter Rucksack).
+
+    rest: freie Länge ab der Schnittfuge nach dem letzten Teil.
+    kandidaten: (Schlüssel, Länge, maximale Anzahl). Jedes Teil braucht seine Länge
+    plus eine Fuge; die Fuge des letzten Teils darf über das Stangenende hinausgehen.
+    Liefert die Schlüssel der gewählten Teile (Länge absteigend), maximiert die
+    belegte Länge. Rechnet in ganzen Millimetern.
+    """
+    kap = int(rest + kerf + 1e-6)
+    if kap <= 0:
+        return []
+    items: list[tuple[object, int, float]] = []
+    for key, laenge, maximal in kandidaten:
+        w = int(math.ceil(laenge + kerf - 1e-6))
+        if w <= 0 or w > kap or maximal <= 0:
+            continue
+        items.extend([(key, w, laenge)] * min(maximal, kap // w))
+    if not items:
+        return []
+    # best[c] = max. belegte Länge bei Kapazität c, wahl[c] = (Item-Index, vorige Kap.)
+    best = [0.0] * (kap + 1)
+    wahl: list[list[int]] = [[] for _ in range(kap + 1)]
+    for i, (_, w, laenge) in enumerate(items):
+        for c in range(kap, w - 1, -1):
+            if best[c - w] + laenge > best[c] + 1e-9:
+                best[c] = best[c - w] + laenge
+                wahl[c] = wahl[c - w] + [i]
+    c_best = max(range(kap + 1), key=lambda c: best[c])
+    gewaehlt = [items[i] for i in wahl[c_best]]
+    gewaehlt.sort(key=lambda it: it[2], reverse=True)
+    return [it[0] for it in gewaehlt]

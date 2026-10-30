@@ -685,3 +685,83 @@ class TestReservierungUndResteZuerst:
                     json={"gesaegt": True})
         stock = client.get(f"/api/stock?material_id={mid}").json()
         assert [(s["laenge"], s["ist_rest"]) for s in stock] == [(1997, True)]
+
+
+# =====================================================================
+# Füllteile aus anderen Projekten + Teile-Vorrat
+# =====================================================================
+
+class TestFuellteile:
+
+    def _setup(self, client, rest_min=0):
+        mid = client.post("/api/materials", json={"name": "Schiene", "typ": "Stange",
+                                                  "rest_min_laenge": rest_min}).json()["id"]
+        client.post("/api/stock", json={"material_id": mid, "laenge": 2000, "stueckzahl": 10})
+        bid = client.post("/api/blades", json={"name": "B", "schnittbreite": 3}).json()["id"]
+        haupt = client.post("/api/projects", json={"name": "Haupt"}).json()["id"]
+        # 7 × 253 + 6 Fugen = 1789 → 211 mm Rest je Stange; 4 Stangen
+        client.post(f"/api/projects/{haupt}/parts", json={
+            "label": "S253", "typ": "Stange", "material_id": mid, "laenge": 253, "stueckzahl": 28})
+        anderes = client.post("/api/projects", json={"name": "Anderes"}).json()["id"]
+        fid = client.post(f"/api/projects/{anderes}/parts", json={
+            "label": "K200", "typ": "Stange", "material_id": mid, "laenge": 200, "stueckzahl": 2}).json()["id"]
+        return mid, bid, haupt, anderes, fid
+
+    def _opt(self, client, pid, mid, bid, **kw):
+        r = client.post("/api/optimize", json={"project_id": pid, "material_id": mid,
+                                               "blade_id": bid, **kw})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    def _fuell(self, plan):
+        return [p for sp in plan["schnittplaene"] for p in sp["platzierungen"] if p["ist_fuellteil"]]
+
+    def test_kandidaten_aus_anderen_projekten(self, client):
+        mid, _, haupt, _, fid = self._setup(client)
+        k = client.get(f"/api/projects/{haupt}/fill-candidates/{mid}").json()
+        assert [(x["teil_id"], x["projekt"]) for x in k] == [(fid, "Anderes")]
+
+    def test_auffuellen_braucht_kein_zusaetzliches_material(self, client):
+        mid, bid, haupt, _, fid = self._setup(client)
+        ohne = self._opt(client, haupt, mid, bid)
+        mit = self._opt(client, haupt, mid, bid,
+                        fuellteile=[{"teil_id": fid, "modus": "auffuellen", "menge": 0}])
+        assert len(mit["schnittplaene"]) == len(ohne["schnittplaene"])
+        fuell = self._fuell(mit)
+        assert len(fuell) == len(mit["schnittplaene"])          # je Stange ein 200er
+        assert fuell[0]["teil_label"] == "K200 → Anderes"
+        # Obergrenze wird eingehalten, Auswahl bleibt beim Neuberechnen erhalten
+        mit = self._opt(client, haupt, mid, bid,
+                        fuellteile=[{"teil_id": fid, "modus": "auffuellen", "menge": 2}])
+        assert len(self._fuell(mit)) == 2
+        assert len(self._fuell(self._opt(client, haupt, mid, bid))) == 2
+        assert mit["fuellteile"][0]["teil_id"] == fid
+
+    def test_nur_abfall_laesst_verwertbare_reste_in_ruhe(self, client):
+        mid, bid, haupt, _, fid = self._setup(client, rest_min=200)   # 211 mm Rest = verwertbar
+        f = [{"teil_id": fid, "modus": "auffuellen", "menge": 0}]
+        assert self._fuell(self._opt(client, haupt, mid, bid, fuellteile=f)) == []
+        assert self._fuell(self._opt(client, haupt, mid, bid, fuellteile=f,
+                                     fuell_alle_reste=True))
+
+    def test_gesaegtes_fuellteil_geht_in_vorrat_und_wird_uebernommen(self, client):
+        mid, bid, haupt, anderes, fid = self._setup(client)
+        plan = self._opt(client, haupt, mid, bid,
+                         fuellteile=[{"teil_id": fid, "modus": "auffuellen", "menge": 1}])
+        st = self._fuell(plan)[0]
+        res = client.post(f"/api/plan-pieces/{st['id']}", json={"gesaegt": True}).json()
+        assert res["teil"]["vorrat"] == 1 and res["teil"]["gesaegt_anzahl"] == 0
+        haupt_teil = client.get(f"/api/projects/{haupt}").json()["teile"][0]
+        assert haupt_teil["gesaegt_anzahl"] == 0                  # Hauptprojekt unberührt
+        # Das andere Projekt sieht den Vorrat im Plan und übernimmt ihn
+        plan_b = self._opt(client, anderes, mid, bid)
+        assert plan_b["vorrat_verfuegbar"] == [{"teil_id": fid, "label": "K200", "anzahl": 1}]
+        teil = client.post(f"/api/projects/{anderes}/take-stock/{mid}").json()["teile"][0]
+        assert (teil["gesaegt_anzahl"], teil["vorrat"]) == (1, 0)
+
+    def test_feste_menge(self, client):
+        mid, bid, haupt, _, fid = self._setup(client)
+        plan = self._opt(client, haupt, mid, bid,
+                         fuellteile=[{"teil_id": fid, "modus": "fest", "menge": 5}])
+        assert len(self._fuell(plan)) == 5
+        assert plan["fehlende_teile"] == []

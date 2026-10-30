@@ -47,6 +47,7 @@ from core.optimize import (
     optimize_2d,
     optimize_2d_ga,
     optimize_2d_nested,
+    fuelle_rest_1d,
 )
 from core.pdf import export_pdf
 from ui.i18n import LANGUAGES, TRANSLATIONS
@@ -364,6 +365,7 @@ class PartOut(BaseModel):
     status: str
     offen_anzahl: int
     gesamt_anzahl: int = 0     # stueckzahl × Exemplare des Projekts
+    vorrat: int = 0            # fertige Teile im Regal (z.B. als Füllteil entstanden)
 
 
 class ProjectIn(BaseModel):
@@ -379,12 +381,32 @@ class ProjectOut(BaseModel):
     plaene: list[PlanStatusOut] = []
 
 
+class FuellKandidatOut(BaseModel):
+    teil_id: int
+    label: str
+    projekt: str
+    projekt_id: int
+    laenge: float
+    breite: float = 0.0
+    offen: int = 0
+    vorrat: int = 0
+
+
+class FuellteilIn(BaseModel):
+    teil_id: int
+    modus: str = "auffuellen"   # "auffuellen" (passt in die Reste) | "fest" (genau menge)
+    menge: int = 0              # fest: Anzahl; auffüllen: Obergrenze (0 = unbegrenzt)
+
+
 class OptimizeRequest(BaseModel):
     project_id: int
     material_id: int
     blade_id: int
     algorithm: str = "greedy"
     reste_zuerst: bool = False   # erst nur Reste verplanen, dann ganze Stücke
+    # Füllteile aus anderen Projekten; None = Auswahl des bisherigen Plans behalten
+    fuellteile: Optional[list[FuellteilIn]] = None
+    fuell_alle_reste: Optional[bool] = None   # auch verwertbare Reste füllen
 
 
 class PlatzierungOut(BaseModel):
@@ -396,6 +418,7 @@ class PlatzierungOut(BaseModel):
     gedreht: bool
     id: int = 0            # gespeicherter Plan: ID des Plan-Stücks
     gesaegt: bool = False
+    ist_fuellteil: bool = False   # Teil eines anderen Projekts → geht in dessen Vorrat
 
 
 class RestStueckOut(BaseModel):
@@ -443,6 +466,9 @@ class OptimizeResult(BaseModel):
     version: int = 0
     veraltet: bool = False      # Teile/Material/Sägeblatt seit der Berechnung geändert
     lager_fehlt: bool = False   # eingeplante, noch unbenutzte Lagerstücke fehlen
+    fuellteile: list[dict] = []          # Auswahl [{teil_id, modus, menge}]
+    fuell_alle_reste: bool = False
+    vorrat_verfuegbar: list[dict] = []   # eigene Teile mit Vorrat: [{teil_id, label, anzahl}]
 
 
 class PlanStatusOut(BaseModel):
@@ -600,6 +626,7 @@ def _teil_to_out(t: Teil) -> PartOut:
         status=t.status.value,
         offen_anzahl=t.offen_anzahl,
         gesamt_anzahl=t.gesamt_anzahl,
+        vorrat=t.vorrat,
     )
 
 
@@ -1242,8 +1269,12 @@ def run_optimization(req: OptimizeRequest):
         raise HTTPException(404, "Saw blade not found")
 
     is_1d = material.typ == MaterialTyp.STANGE
-    behalten = _angefangene_bretter(get_db().get_plan(req.project_id, req.material_id),
-                                    is_1d)
+    alt = get_db().get_plan(req.project_id, req.material_id)
+    fuell_auswahl = ([f.model_dump() for f in req.fuellteile] if req.fuellteile is not None
+                     else (alt.fuellteile if alt else []))
+    fuell_alle = (req.fuell_alle_reste if req.fuell_alle_reste is not None
+                  else (alt.fuell_alle_reste if alt else False))
+    behalten = _angefangene_bretter(alt, is_1d)
     schon_geplant: dict[int, int] = {}
     for b in behalten:
         for st in b.stuecke:
@@ -1257,8 +1288,27 @@ def run_optimization(req: OptimizeRequest):
     if not teile:
         if behalten:
             return _plan_speichern(projekt, material, blade, req.algorithm, behalten,
-                                   [], [])
+                                   [], [], fuell_auswahl, fuell_alle)
         raise HTTPException(400, "No open parts for this material")
+
+    # Füllteile: Teile anderer Projekte desselben Materials. Im Plan heißen sie
+    # "Label → Projekt", damit sie unterscheidbar sind (der Optimizer kennt nur Labels).
+    fuell_fest: list[Teil] = []
+    fuell_auf: list[tuple[Teil, int]] = []
+    for f in fuell_auswahl:
+        t = get_db().get_teil(f["teil_id"])
+        if not t or t.material_id != material.id or t.projekt_id == projekt.id:
+            continue
+        herkunft = get_db().get_projekt(t.projekt_id)
+        ft = replace(t, label=f"{t.label} → {herkunft.name if herkunft else '?'}")
+        if f.get("modus") == "fest":
+            if int(f.get("menge") or 0) > 0:
+                fuell_fest.append(ft)
+                offen[ft.id] = int(f["menge"])
+        elif is_1d:
+            fuell_auf.append((ft, int(f.get("menge") or 0)))
+    teile = teile + fuell_fest
+    fuell_ids = {t.id for t in fuell_fest} | {t.id for t, _ in fuell_auf}
 
     db = get_db()
     kerf = blade.schnittbreite
@@ -1331,12 +1381,17 @@ def run_optimization(req: OptimizeRequest):
             sp.stueck_nr = nrs[sp.stueck_nr - 1]
 
     neue = _ergebnis_to_bretter(ergebnis, defekte_map, teile, offen)
+    for b in neue:
+        for st in b.stuecke:
+            st.ist_fuellteil = st.teil_id in fuell_ids
+    if fuell_auf:
+        _reste_auffuellen(neue, fuell_auf, kerf, material, fuell_alle)
     bedarf = []
     if ergebnis.fehlende_teile:
         bedarf = [m.model_dump() for m in _berechne_materialbedarf(
             ergebnis.fehlende_teile, teile, vorrat_alle, material, kerf)]
     return _plan_speichern(projekt, material, blade, req.algorithm, behalten + neue,
-                           ergebnis.fehlende_teile, bedarf)
+                           ergebnis.fehlende_teile, bedarf, fuell_auswahl, fuell_alle)
 
 
 # ---------------------------------------------------------------------------
@@ -1429,16 +1484,51 @@ def _eingabe_hash(projekt: Projekt, material: Material, kerf: float) -> str:
     return hashlib.sha1(raw.encode()).hexdigest()
 
 
-def _plan_speichern(projekt, material, blade, algorithmus, bretter, fehlende, bedarf
-                    ) -> OptimizeResult:
+def _plan_speichern(projekt, material, blade, algorithmus, bretter, fehlende, bedarf,
+                    fuellteile=(), fuell_alle_reste=False) -> OptimizeResult:
     db = get_db()
     plan = GespeicherterPlan(
         projekt_id=projekt.id, material_id=material.id, saegeblatt_id=blade.id,
         kerf=blade.schnittbreite, algorithmus=algorithmus,
         eingabe_hash=_eingabe_hash(projekt, material, blade.schnittbreite),
         fehlende_teile=list(fehlende), materialbedarf=list(bedarf), bretter=bretter,
+        fuellteile=list(fuellteile), fuell_alle_reste=bool(fuell_alle_reste),
     )
     return _plan_to_out(db.save_plan(plan))
+
+
+def _reste_auffuellen(bretter: list[PlanBrett], auffuellen: list[tuple[Teil, int]],
+                      kerf: float, material: Material, alle_reste: bool):
+    """Den Rest am Ende jeder Stange mit Füllteilen belegen (Durchgang 2, nur 1D).
+
+    Standard: nur echter Abfall, also Reste unter dem Mindest-Restmaß. Hat das
+    Material kein Mindest-Restmaß, gilt jeder Rest als auffüllbar. Stangen mit
+    Defekten bleiben außen vor (ihre freien Stücke liegen nicht am Ende).
+    """
+    rest_min = material.rest_min_laenge
+    vorrat = {t.id: (m if m > 0 else 10 ** 6) for t, m in auffuellen}
+    nach_id = {t.id: t for t, _ in auffuellen}
+    for b in bretter:
+        if b.defekte or not b.stuecke:
+            continue
+        ende = max(st.x + st.laenge for st in b.stuecke)
+        start = ende + kerf
+        rest = b.lager_laenge - start
+        if rest <= 0 or not (alle_reste or rest_min <= 0 or rest < rest_min):
+            continue
+        kandidaten = [(tid, nach_id[tid].laenge, n) for tid, n in vorrat.items() if n > 0]
+        pos = start
+        for tid in fuelle_rest_1d(rest, kerf, kandidaten):
+            t = nach_id[tid]
+            b.stuecke.append(PlanStueck(teil_id=tid, teil_label=t.label, laenge=t.laenge,
+                                        x=pos, ist_fuellteil=True))
+            pos += t.laenge + kerf
+            vorrat[tid] -= 1
+        genutzt = sum(st.laenge for st in b.stuecke)
+        b.verschnitt_mm = max(0.0, b.lager_laenge - genutzt - kerf * (len(b.stuecke) - 1))
+        b.verschnitt_prozent = round(b.verschnitt_mm / b.lager_laenge * 100, 1)
+        rest_neu = b.lager_laenge - (max(st.x + st.laenge for st in b.stuecke) + kerf)
+        b.reste = [[rest_neu]] if rest_neu > 0 else []
 
 
 def _plan_to_out(plan: GespeicherterPlan) -> OptimizeResult:
@@ -1497,7 +1587,7 @@ def _plan_to_out(plan: GespeicherterPlan) -> OptimizeResult:
                 platzierungen=[
                     PlatzierungOut(id=st.id, teil_label=st.teil_label, laenge=st.laenge,
                                    breite=st.breite, x=st.x, y=st.y, gedreht=st.gedreht,
-                                   gesaegt=st.gesaegt)
+                                   gesaegt=st.gesaegt, ist_fuellteil=st.ist_fuellteil)
                     for st in b.stuecke],
                 reste=b.reste, verschnitt_mm=b.verschnitt_mm,
                 verschnitt_prozent=b.verschnitt_prozent,
@@ -1521,6 +1611,12 @@ def _plan_to_out(plan: GespeicherterPlan) -> OptimizeResult:
         veraltet=(projekt is None or material is None or
                   _eingabe_hash(projekt, material, plan.kerf) != plan.eingabe_hash),
         lager_fehlt=lager_fehlt,
+        fuellteile=plan.fuellteile,
+        fuell_alle_reste=plan.fuell_alle_reste,
+        vorrat_verfuegbar=[
+            {"teil_id": t.id, "label": t.label, "anzahl": min(t.vorrat, t.offen_anzahl)}
+            for t in (projekt.teile if projekt else [])
+            if t.material_id == plan.material_id and t.vorrat > 0 and t.offen_anzahl > 0],
     )
 
 
@@ -1585,11 +1681,11 @@ def set_piece_sawn(sid: int, data: PieceSawnIn):
         stueck.gesaegt = data.gesaegt
         db.set_stueck_gesaegt(sid, data.gesaegt)
         if stueck.teil_id:
-            db.teil_gesaegt_aendern(stueck.teil_id, 1 if data.gesaegt else -1)
+            _gesaegt_buchen(db, stueck, 1 if data.gesaegt else -1)
         _brett_abgleichen(db, plan, brett, _plan_is_1d(db, plan))
         db.plan_geaendert(plan.id)
     if stueck.teil_id:
-        t = next((t for t in db.list_teile(plan.projekt_id) if t.id == stueck.teil_id), None)
+        t = db.get_teil(stueck.teil_id)
         teil = _teil_to_out(t) if t else None
     return PieceSawnOut(plan=_plan_to_out(db.get_plan_by_id(plan.id)), teil=teil)
 
@@ -1601,6 +1697,35 @@ def discard_plan(plan_id: int):
     if not db.get_plan_by_id(plan_id):
         raise HTTPException(404, "Plan not found")
     db.delete_plan(plan_id)
+
+
+def _gesaegt_buchen(db: Database, st: PlanStueck, delta: int):
+    """Gesägtes Stück verbuchen: Füllteile gehen in den Vorrat ihres Teils ("Regal"),
+    alle anderen zählen als Fortschritt des Projekts."""
+    if st.ist_fuellteil:
+        db.teil_vorrat_aendern(st.teil_id, delta)
+    else:
+        db.teil_gesaegt_aendern(st.teil_id, delta)
+
+
+@app.get("/api/projects/{pid}/fill-candidates/{mid}", response_model=list[FuellKandidatOut])
+def fill_candidates(pid: int, mid: int):
+    """Mögliche Füllteile: Teile desselben Materials aus allen anderen Projekten."""
+    return [FuellKandidatOut(teil_id=k["teil"].id, label=k["teil"].label, projekt=k["projekt"],
+                             projekt_id=k["teil"].projekt_id, laenge=k["teil"].laenge,
+                             breite=k["teil"].breite, offen=k["teil"].offen_anzahl,
+                             vorrat=k["teil"].vorrat)
+            for k in get_db().fuellteil_kandidaten(pid, mid)]
+
+
+@app.post("/api/projects/{pid}/take-stock/{mid}", response_model=ProjectOut)
+def take_part_stock(pid: int, mid: int):
+    """Teile-Vorrat ("Regal") dieses Projekts/Materials als gesägt übernehmen."""
+    db = get_db()
+    if not db.get_projekt(pid):
+        raise HTTPException(404, "Project not found")
+    db.vorrat_uebernehmen(pid, mid)
+    return _projekt_to_out(db.get_projekt(pid))
 
 
 @app.post("/api/plans/{plan_id}/confirm-all", response_model=OptimizeResult)
@@ -1619,7 +1744,7 @@ def confirm_all_pieces(plan_id: int):
             st.gesaegt = True
             db.set_stueck_gesaegt(st.id, True)
             if st.teil_id:
-                db.teil_gesaegt_aendern(st.teil_id, 1)
+                _gesaegt_buchen(db, st, 1)
         _brett_abgleichen(db, plan, brett, is_1d)
     db.plan_geaendert(plan.id)
     return _plan_to_out(db.get_plan_by_id(plan.id))

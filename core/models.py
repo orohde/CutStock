@@ -106,6 +106,9 @@ class Teil:
     # Exemplare des Projekts (nicht in der Teil-Tabelle, kommt vom Projekt).
     # stueckzahl gilt pro Exemplar, gesaegt_anzahl zählt über alle Exemplare.
     exemplare: int = 1
+    # Fertig gesägte Teile auf Vorrat ("Regal"), z.B. als Füllteil eines anderen
+    # Projekts entstanden. Wird nur über eigene Methoden geändert, nicht per save_teil.
+    vorrat: int = 0
 
     @property
     def gesamt_anzahl(self) -> int:
@@ -152,6 +155,7 @@ class PlanStueck:
     y: float = 0.0
     gedreht: bool = False
     gesaegt: bool = False
+    ist_fuellteil: bool = False   # Teil eines anderen Projekts, gesägt geht in dessen Vorrat
 
 
 @dataclass
@@ -190,6 +194,9 @@ class GespeicherterPlan:
     geaendert: float = 0.0
     version: int = 1
     bretter: list[PlanBrett] = field(default_factory=list)
+    # Füllteile aus anderen Projekten: [{"teil_id", "modus": "auffuellen"|"fest", "menge"}]
+    fuellteile: list = field(default_factory=list)
+    fuell_alle_reste: bool = False   # auch verwertbare Reste auffüllen (sonst nur Abfall)
 
 
 def stueck_code(kuerzel: str, nr: int) -> str:
