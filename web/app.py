@@ -403,6 +403,10 @@ class MarkPlanRequest(BaseModel):
     reste: list[list[float]] = []
     prev_consumed: bool = False
     prev_rest_ids: list[int] = []
+    # Stücknummer des Plans: genau dieses Einzelstück wird verbraucht. Der
+    # Schnappschuss (Nummer, Notiz, Defekte) kommt beim Zurücknehmen zurück.
+    stueck_nr: int = 0
+    prev_consumed_piece: dict | None = None
 
 
 class PdfRequest(BaseModel):
@@ -1171,6 +1175,15 @@ def run_optimization(req: OptimizeRequest):
     is_1d = material.typ == MaterialTyp.STANGE
 
     defekte_map = get_db().list_defekte_for_material(req.material_id)
+    # Der Optimizer zählt die Kopien eines Lagerstücks lückenlos 1..anzahl,
+    # echte Stücknummern können Lücken haben (verbrauchte Stücke). Defekte auf
+    # die laufende Nummer umschlüsseln und das Ergebnis danach zurückübersetzen.
+    nrs_map = get_db().einzelstueck_nrs_for_material(req.material_id)
+    defekte_lauf = {
+        lid: {i + 1: by_nr[nr] for i, nr in enumerate(nrs_map.get(lid, []))
+              if nr in by_nr}
+        for lid, by_nr in defekte_map.items()
+    }
 
     if is_1d:
         besaeumung = material.besaeumung
@@ -1182,9 +1195,9 @@ def run_optimization(req: OptimizeRequest):
         ]
 
         if req.algorithm == "ga":
-            ergebnis = optimize_1d_ga(teil_tuples, stock, kerf, defekte_map)
+            ergebnis = optimize_1d_ga(teil_tuples, stock, kerf, defekte_lauf)
         else:
-            ergebnis = optimize_1d(teil_tuples, stock, kerf, defekte_map)
+            ergebnis = optimize_1d(teil_tuples, stock, kerf, defekte_lauf)
     else:
         besaeumung = material.besaeumung
         teil_tuples = [(t.label, t.laenge, t.breite, t.offen_anzahl) for t in teile]
@@ -1207,13 +1220,18 @@ def run_optimization(req: OptimizeRequest):
 
         if req.algorithm == "ga":
             ergebnis = optimize_2d_ga(teil_tuples, stock, kerf, drehung_erlaubt,
-                                       teil_drehung, defekte_map)
+                                       teil_drehung, defekte_lauf)
         elif req.algorithm == "nested":
             ergebnis = optimize_2d_nested(teil_tuples, stock, kerf, drehung_erlaubt,
-                                           teil_drehung, defekte_map)
+                                           teil_drehung, defekte_lauf)
         else:
             ergebnis = optimize_2d(teil_tuples, stock, kerf, drehung_erlaubt,
-                                    teil_drehung, defekte_map)
+                                    teil_drehung, defekte_lauf)
+
+    for sp in ergebnis.schnittplaene:
+        nrs = nrs_map.get(sp.lagerstueck_id, [])
+        if 0 < sp.stueck_nr <= len(nrs):
+            sp.stueck_nr = nrs[sp.stueck_nr - 1]
 
     result = _ergebnis_to_out(ergebnis, defekte_map)
     if ergebnis.fehlende_teile:
@@ -1243,7 +1261,7 @@ def confirm_optimization(req: ConfirmRequest):
     label_counts: dict[str, int] = {}
     for sp in req.schnittplaene:
         # Consume the stock piece
-        get_db().lager_verbrauchen(sp.lagerstueck_id)
+        get_db().lager_verbrauchen(sp.lagerstueck_id, stueck_nr=sp.stueck_nr)
 
         for rest in sp.reste:
             if is_1d:
@@ -1279,6 +1297,7 @@ def mark_plan(req: MarkPlanRequest):
     """
     db = get_db()
     consumed = req.prev_consumed
+    consumed_piece = req.prev_consumed_piece
     lagerstueck_id = req.lagerstueck_id
     # Zuvor gebuchte Reste immer entfernen und ggf. neu buchen
     for rid in req.prev_rest_ids:
@@ -1288,7 +1307,8 @@ def mark_plan(req: MarkPlanRequest):
     n_marked = len(req.marked_laengen)
     if n_marked > 0:
         if not consumed:
-            db.lager_verbrauchen(req.lagerstueck_id)
+            consumed_piece = db.lager_verbrauchen(req.lagerstueck_id,
+                                                  stueck_nr=req.stueck_nr)
             consumed = True
         if req.is_1d:
             if req.defekte:
@@ -1314,8 +1334,10 @@ def mark_plan(req: MarkPlanRequest):
         # Alle Markierungen entfernt → Original-Lagerstück zurückbuchen
         lagerstueck_id = _lagerstueck_zurueckbuchen(db, req)
         consumed = False
+        consumed_piece = None
 
-    return {"consumed": consumed, "rest_ids": rest_ids, "lagerstueck_id": lagerstueck_id}
+    return {"consumed": consumed, "rest_ids": rest_ids,
+            "lagerstueck_id": lagerstueck_id, "consumed_piece": consumed_piece}
 
 
 def _reste_1d_mit_defekten(req: MarkPlanRequest) -> list[float]:
@@ -1359,7 +1381,10 @@ def _lagerstueck_zurueckbuchen(db: Database, req: MarkPlanRequest) -> int:
             ls = Lagerstueck(material_id=req.material_id, laenge=laenge,
                              breite=breite, stueckzahl=0)
     ls.stueckzahl += 1
-    return db.save_lagerstueck(ls).id
+    ls = db.save_lagerstueck(ls)
+    if req.prev_consumed_piece:
+        db.einzelstueck_wiederherstellen(ls.id, req.prev_consumed_piece)
+    return ls.id
 
 
 # ---------------------------------------------------------------------------

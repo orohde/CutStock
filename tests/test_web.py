@@ -173,3 +173,81 @@ class TestMarkPlanUndo:
         self._mark(client, mid, res["lagerstueck_id"], True, 3000, 0, [], True,
                    res["rest_ids"])
         assert self._stock(client, mid) == [(3000, 0, 1)]
+
+
+# =====================================================================
+# Verbrauch trifft das Einzelstück aus dem Plan (nicht das mit der höchsten Nr.)
+# =====================================================================
+
+class TestEinzelstueckVerbrauch:
+
+    def _setup(self, client, typ="Platte", stueckzahl=3):
+        mid = client.post("/api/materials", json={
+            "name": f"ES {typ}", "typ": typ}).json()["id"]
+        sid = client.post("/api/stock", json={
+            "material_id": mid, "laenge": 2000,
+            "breite": 1000 if typ == "Platte" else 0,
+            "stueckzahl": stueckzahl}).json()["id"]
+        return mid, sid
+
+    def _pieces(self, client, sid):
+        return {p["nr"]: p for p in client.get(f"/api/stock/{sid}/pieces").json()}
+
+    def _defect(self, client, sid, nr, pos=100, pos_y=100):
+        eid = self._pieces(client, sid)[nr]["id"]
+        client.post(f"/api/pieces/{eid}/defects",
+                    json={"position": pos, "position_y": pos_y,
+                          "laenge": 50, "breite": 50})
+
+    def _mark(self, client, mid, sid, nr, marked, consumed=False, piece=None,
+              rest_ids=()):
+        return client.post("/api/optimize/mark-plan", json={
+            "material_id": mid, "lagerstueck_id": sid, "is_1d": False,
+            "lager_laenge": 2000, "lager_breite": 1000, "kerf": 3,
+            "marked_laengen": marked, "prev_consumed": consumed,
+            "prev_rest_ids": list(rest_ids), "stueck_nr": nr,
+            "prev_consumed_piece": piece}).json()
+
+    def test_verbraucht_plan_stueck_und_nimmt_zurueck(self, client):
+        mid, sid = self._setup(client)
+        self._defect(client, sid, 1)
+        client.put(f"/api/pieces/{self._pieces(client, sid)[1]['id']}",
+                   json={"notiz": "Ast"})
+
+        res = self._mark(client, mid, sid, 1, [500])
+        assert sorted(self._pieces(client, sid)) == [2, 3]
+        assert res["consumed_piece"]["nr"] == 1
+
+        res = self._mark(client, mid, res["lagerstueck_id"], 1, [], True,
+                         res["consumed_piece"], res["rest_ids"])
+        pieces = self._pieces(client, sid)
+        assert sorted(pieces) == [1, 2, 3]
+        assert pieces[1]["notiz"] == "Ast"
+        assert pieces[1]["defekt_count"] == 1
+        assert res["consumed_piece"] is None
+
+    def test_neue_stuecke_hinter_luecke(self, client):
+        mid, sid = self._setup(client)
+        self._mark(client, mid, sid, 2, [500])
+        assert sorted(self._pieces(client, sid)) == [1, 3]
+        stock = client.get(f"/api/stock?material_id={mid}").json()
+        ls = next(s for s in stock if s["id"] == sid)
+        client.put(f"/api/stock/{sid}", json={**ls, "stueckzahl": 3})
+        assert sorted(self._pieces(client, sid)) == [1, 3, 4]
+
+    def test_optimierung_nutzt_echte_nummern(self, client):
+        mid, sid = self._setup(client, stueckzahl=3)
+        self._defect(client, sid, 3, pos=1940, pos_y=940)   # Ecke, Teil passt
+        self._mark(client, mid, sid, 1, [500])        # #1 weg, Rest: 2, 3
+        pid = client.post("/api/projects", json={"name": "ES"}).json()["id"]
+        client.post(f"/api/projects/{pid}/parts", json={
+            "label": "A", "material_id": mid, "laenge": 1900,
+            "breite": 900, "stueckzahl": 2})
+        bid = client.post("/api/blades", json={"name": "B"}).json()["id"]
+        res = client.post("/api/optimize", json={
+            "project_id": pid, "material_id": mid, "blade_id": bid}).json()
+        plaene = [p for p in res["schnittplaene"] if p["lagerstueck_id"] == sid]
+        assert sorted(p["stueck_nr"] for p in plaene) == [2, 3]
+        p3 = next(p for p in plaene if p["stueck_nr"] == 3)
+        p2 = next(p for p in plaene if p["stueck_nr"] == 2)
+        assert len(p3["defekte"]) == 1 and p2["defekte"] == []

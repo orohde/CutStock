@@ -1241,8 +1241,11 @@ async function reconcilePlanStock(plan) {
             reste: plan.reste || [],
             prev_consumed: plan._consumed || false,
             prev_rest_ids: plan._restIds || [],
+            stueck_nr: plan.stueck_nr || 0,
+            prev_consumed_piece: plan._consumedPiece || null,
         });
         plan._consumed = res.consumed;
+        plan._consumedPiece = res.consumed_piece || null;
         plan._restIds = res.rest_ids || [];
         // Beim Zurückbuchen kann die Lagerzeile eine neue ID bekommen haben –
         // alle Pläne, die noch auf die alte zeigen, mitziehen.

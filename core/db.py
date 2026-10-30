@@ -377,25 +377,44 @@ class Database:
     # ------------------------------------------------------------------
 
     def _sync_einzelstuecke(self, lagerstueck_id: int, stueckzahl: int):
-        """Einzelstücke an Stückzahl anpassen (anlegen/löschen)."""
-        existing = self.conn.execute(
+        """Einzelstücke an Stückzahl anpassen (anlegen/löschen).
+
+        Nummern sind nicht zwingend lückenlos: Wird ein bestimmtes Stück
+        verbraucht (lager_verbrauchen mit stueck_nr), behalten die übrigen ihre
+        Nummer – sie stehen ja mit Kreide auf dem Material. Neue Stücke bekommen
+        deshalb Nummern hinter der höchsten, beim Verringern fallen die höchsten weg.
+        """
+        nrs = [r["nr"] for r in self.conn.execute(
             "SELECT nr FROM einzelstueck WHERE lagerstueck_id=? ORDER BY nr",
             (lagerstueck_id,),
+        ).fetchall()]
+        naechste = (nrs[-1] if nrs else 0) + 1
+        for _ in range(stueckzahl - len(nrs)):
+            self.conn.execute(
+                "INSERT INTO einzelstueck (lagerstueck_id, nr) VALUES (?,?)",
+                (lagerstueck_id, naechste),
+            )
+            naechste += 1
+        for nr in nrs[stueckzahl:] if stueckzahl < len(nrs) else []:
+            self.conn.execute(
+                """DELETE FROM einzelstueck
+                   WHERE lagerstueck_id=? AND nr=?""",
+                (lagerstueck_id, nr),
+            )
+
+    def einzelstueck_nrs_for_material(self, material_id: int) -> dict[int, list[int]]:
+        """Vorhandene Stücknummern je Lagerstück: {lagerstueck_id: [nr, ...]}."""
+        rows = self.conn.execute(
+            """SELECT e.lagerstueck_id, e.nr FROM einzelstueck e
+               JOIN lagerstueck l ON e.lagerstueck_id = l.id
+               WHERE l.material_id = ?
+               ORDER BY e.lagerstueck_id, e.nr""",
+            (material_id,),
         ).fetchall()
-        existing_nrs = {r["nr"] for r in existing}
-        for nr in range(1, stueckzahl + 1):
-            if nr not in existing_nrs:
-                self.conn.execute(
-                    "INSERT INTO einzelstueck (lagerstueck_id, nr) VALUES (?,?)",
-                    (lagerstueck_id, nr),
-                )
-        for nr in existing_nrs:
-            if nr > stueckzahl:
-                self.conn.execute(
-                    """DELETE FROM einzelstueck
-                       WHERE lagerstueck_id=? AND nr=?""",
-                    (lagerstueck_id, nr),
-                )
+        result: dict[int, list[int]] = {}
+        for r in rows:
+            result.setdefault(r["lagerstueck_id"], []).append(r["nr"])
+        return result
 
     def list_einzelstuecke(self, lagerstueck_id: int) -> list[Einzelstueck]:
         rows = self.conn.execute(
@@ -643,16 +662,74 @@ class Database:
     # Lager-Operationen für den Optimierungslauf
     # ------------------------------------------------------------------
 
-    def lager_verbrauchen(self, lagerstueck_id: int, anzahl: int = 1):
-        """Stückzahl reduzieren, bei 0 löschen."""
+    def lager_verbrauchen(self, lagerstueck_id: int, anzahl: int = 1,
+                          stueck_nr: int = 0) -> dict | None:
+        """Stückzahl reduzieren, bei 0 löschen.
+
+        Mit stueck_nr wird genau dieses Einzelstück verbraucht (samt Defekten),
+        sonst das mit der höchsten Nummer. Liefert dann einen Schnappschuss
+        {nr, notiz, defekte}, mit dem einzelstueck_wiederherstellen es beim
+        Zurücknehmen wieder anlegt.
+        """
         ls = self.get_lagerstueck(lagerstueck_id)
         if not ls:
-            return
+            return None
+        snapshot = None
+        if stueck_nr:
+            row = self.conn.execute(
+                "SELECT * FROM einzelstueck WHERE lagerstueck_id=? AND nr=?",
+                (lagerstueck_id, stueck_nr),
+            ).fetchone()
+            if row:
+                snapshot = {
+                    "nr": row["nr"], "notiz": row["notiz"],
+                    "defekte": [
+                        {"position": d.position, "position_y": d.position_y,
+                         "laenge": d.laenge, "breite": d.breite}
+                        for d in self.list_defekte(row["id"])],
+                }
+                self.conn.execute("DELETE FROM einzelstueck WHERE id=?", (row["id"],))
+                anzahl = 1
         ls.stueckzahl -= anzahl
         if ls.stueckzahl <= 0:
             self.delete_lagerstueck(lagerstueck_id)
         else:
             self.save_lagerstueck(ls)
+        return snapshot
+
+    def einzelstueck_wiederherstellen(self, lagerstueck_id: int, snapshot: dict):
+        """Ein per lager_verbrauchen verbrauchtes Stück wieder anlegen.
+
+        Erwartet, dass die Stückzahl schon erhöht wurde: Das dabei neu angelegte
+        Stück (höchste Nummer) bekommt Nummer, Notiz und Defekte zurück.
+        """
+        nrs = self.einzelstueck_nrs_for_lagerstueck(lagerstueck_id)
+        if not nrs:
+            return
+        neu = self.conn.execute(
+            "SELECT id FROM einzelstueck WHERE lagerstueck_id=? AND nr=?",
+            (lagerstueck_id, nrs[-1]),
+        ).fetchone()
+        nr = snapshot.get("nr", 0)
+        if nr and nr not in nrs:
+            self.conn.execute("UPDATE einzelstueck SET nr=? WHERE id=?",
+                              (nr, neu["id"]))
+        self.conn.execute("UPDATE einzelstueck SET notiz=? WHERE id=?",
+                          (snapshot.get("notiz", ""), neu["id"]))
+        for d in snapshot.get("defekte", []):
+            self.conn.execute(
+                """INSERT INTO defekt (einzelstueck_id, position, position_y,
+                   laenge, breite) VALUES (?,?,?,?,?)""",
+                (neu["id"], d.get("position", 0), d.get("position_y", 0),
+                 d.get("laenge", 0), d.get("breite", 0)),
+            )
+        self.conn.commit()
+
+    def einzelstueck_nrs_for_lagerstueck(self, lagerstueck_id: int) -> list[int]:
+        return [r["nr"] for r in self.conn.execute(
+            "SELECT nr FROM einzelstueck WHERE lagerstueck_id=? ORDER BY nr",
+            (lagerstueck_id,),
+        ).fetchall()]
 
     def rest_einbuchen(self, material_id: int, laenge: float,
                        breite: float = 0.0) -> Lagerstueck | None:
