@@ -73,3 +73,14 @@ def test_export_mit_materialbild(tmp_path):
         export_pdf(erg, pfad, "Test", material_name="Profil", is_1d=True,
                    material_bild=bild)
         assert pfad.read_bytes().startswith(b"%PDF")
+
+
+def test_sammelplan_nach_projekt_gruppiert(tmp_path):
+    pl = [Platzierung("Seite → Tisch", 695), Platzierung("Seite → Regal", 600, x=698)]
+    erg = OptimierungsErgebnis([Schnittplan(1, 2000, platzierungen=pl, reste=[(699,)])])
+    pfad = tmp_path / "sammel.pdf"
+    export_pdf(erg, pfad, "Sammelplan Alu", is_1d=True, nach_projekt=True)
+    pdf = pfad.read_bytes()
+    assert pdf.startswith(b"%PDF")
+    # Pfeil ist nicht in Helvetica – wird ersetzt statt als Kästchen gedruckt
+    assert _schnittliste_zeilen(erg.schnittplaene[0], 1000)[0].startswith("1 × Seite » Tisch")

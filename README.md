@@ -135,7 +135,7 @@ If waste remains at the end of a bar, CutStock can fill it with parts from other
 
 ### Combined Plan
 
-If the same material is used in several projects, it can be optimized together: in the Optimization tab choose "Optimize by: Material (combined plan)", select the material and tick the projects. "Compare" shows how much material this saves over separate plans. Each part in the plan shows its project ("Side → Shelf"); ticked parts count as progress of that project. Unstarted single plans of these projects are replaced; parts lying uncut in a started plan stay there.
+If the same material is used in several projects, it can be optimized together: in the Optimization tab choose "Optimize by: Material (combined plan)", select the material and tick the projects. "Compare" shows how much material this saves over separate plans. Each part in the plan shows its project ("Side → Shelf"); ticked parts count as progress of that project. Unstarted single plans of these projects are replaced; parts lying uncut in a started plan stay there. Each project gets its own colour in the plan (legend with piece counts in the statistics), the PDF lists parts grouped by project, and the Projects tab marks participating projects with a "Combined plan" badge.
 
 ### Optimization -- Panels
 

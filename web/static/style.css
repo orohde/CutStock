@@ -965,3 +965,6 @@ td.expand-toggle:hover { background: rgba(255,255,255,0.05); }
 .sammel-compare { font-weight: 600; }
 .sammel-compare .sammel-saving { color: var(--sapPositiveColor, #256f3a); }
 .sammel-hint { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+.sammel-legend { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; }
+.sammel-legend > span { display: inline-flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
+.sammel-legend .saw-dot { width: 0.7rem; height: 0.7rem; display: inline-block; }

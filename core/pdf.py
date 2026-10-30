@@ -150,17 +150,24 @@ def export_pdf(
     schnittfolgen: list[list[str]] | None = None,
     schnittfolge_titel: str = "Schnittfolge",
     material_bild: bytes = b"",
+    nach_projekt: bool = False,
 ):
     c = canvas.Canvas(str(path), pagesize=landscape(A4))
     c.setTitle(f"CutStock – {projekt_name}")
 
     labels = sorted({p.teil_label for sp in ergebnis.schnittplaene
                      for p in sp.platzierungen})
-    farb_map = {label: FARBEN[i % len(FARBEN)] for i, label in enumerate(labels)}
+    if nach_projekt:
+        # Sammelplan: eine Farbe je Projekt, damit die Teile im richtigen Stapel landen
+        projekte = sorted({_projekt_von(label) for label in labels})
+        projekt_farbe = {pr: FARBEN[i % len(FARBEN)] for i, pr in enumerate(projekte)}
+        farb_map = {label: projekt_farbe[_projekt_von(label)] for label in labels}
+    else:
+        farb_map = {label: FARBEN[i % len(FARBEN)] for i, label in enumerate(labels)}
 
     cur = _PageCursor(c)
     _draw_header(c, cur, ergebnis, projekt_name, material_name, saegeblatt_name)
-    _draw_stueckliste(c, cur, ergebnis, farb_map, is_1d)
+    _draw_stueckliste(c, cur, ergebnis, farb_map, is_1d, projekt_name)
     _draw_materialbedarf(c, cur, ergebnis, material_name, material_bild)
 
     cur.advance(10)
@@ -201,8 +208,18 @@ def _draw_header(c: canvas.Canvas, cur: _PageCursor,
     cur.advance(14)
 
 
+def _projekt_von(label: str) -> str:
+    """Projekt aus „Label → Projekt“ (Sammelplan, Füllteile), sonst ''."""
+    return label.split(" → ", 1)[1] if " → " in label else ""
+
+
+def _teil_von(label: str) -> str:
+    return label.split(" → ", 1)[0]
+
+
 def _draw_stueckliste(c: canvas.Canvas, cur: _PageCursor,
-                      erg: OptimierungsErgebnis, farb_map: dict, is_1d: bool):
+                      erg: OptimierungsErgebnis, farb_map: dict, is_1d: bool,
+                      projekt_name: str = ""):
     # Je Teil (Label + Maß) eine Zeile mit der Anzahl
     teile: dict[tuple[str, float, float], int] = {}
     for plan in erg.schnittplaene:
@@ -210,9 +227,15 @@ def _draw_stueckliste(c: canvas.Canvas, cur: _PageCursor,
             key = (p.teil_label, round(p.laenge, 1), round(p.breite, 1))
             teile[key] = teile.get(key, 0) + 1
 
+    # Teile aus anderen Projekten (Sammelplan, Füllteile) nach Projekt gruppieren;
+    # das Projekt steht dann als Zwischenüberschrift statt hinter jedem Label
+    gruppiert = any(_projekt_von(k[0]) for k in teile)
+    def anzeige(label: str) -> str:
+        return _latin1(_teil_von(label) if gruppiert else label)
+
     # Spaltenbreiten nach dem längsten Label, Zahlen rechtsbündig
     label_w = max([stringWidth("Teil", "Helvetica-Bold", 9)]
-                  + [stringWidth(k[0], "Helvetica", 9) for k in teile])
+                  + [stringWidth(anzeige(k[0]), "Helvetica", 9) for k in teile])
     x_label = MARGIN + 14
     x_laenge = x_label + label_w + 50
     x_breite = x_laenge + 60
@@ -226,13 +249,27 @@ def _draw_stueckliste(c: canvas.Canvas, cur: _PageCursor,
     c.drawRightString(x_anzahl, cur.y, "Anzahl")
     cur.advance(13)
 
+    def projekt(key) -> str:
+        return _projekt_von(key[0]) or projekt_name
+
     c.setFont("Helvetica", 9)
-    for (label, laenge, breite), anzahl in sorted(teile.items()):
+    gruppe = None
+    for key, anzahl in sorted(teile.items(), key=lambda kv: (projekt(kv[0]), kv[0])):
+        label, laenge, breite = key
+        if gruppiert and projekt(key) != gruppe:
+            gruppe = projekt(key)
+            summe = sum(n for k, n in teile.items() if projekt(k) == gruppe)
+            cur.need(28)
+            cur.advance(3)
+            c.setFont("Helvetica-Bold", 9)
+            c.drawString(MARGIN, cur.y, _latin1(f"{gruppe or '–'}  ({summe})"))
+            c.setFont("Helvetica", 9)
+            cur.advance(13)
         cur.need(13)
         c.setFillColor(farb_map.get(label, colors.grey))
         c.rect(MARGIN, cur.y - 2, 10, 10, fill=1, stroke=0)
         c.setFillColor(colors.black)
-        c.drawString(x_label, cur.y, label)
+        c.drawString(x_label, cur.y, anzeige(label))
         c.drawRightString(x_laenge, cur.y, _fmt(laenge))
         if not is_1d:
             c.drawRightString(x_breite, cur.y, _fmt(breite))
@@ -380,18 +417,17 @@ def _draw_2d_rect(c: canvas.Canvas, plan: Schnittplan, farb_map: dict,
         dim = f"{p.laenge:.0f}x{p.breite:.0f}"
         if p.gedreht:
             dim += " ↻"
-        lbl_size = _fit_size(p.teil_label, "Helvetica-Bold", font_size, 5, rw - 2)
+        lbl = _latin1(p.teil_label)
+        lbl_size = _fit_size(lbl, "Helvetica-Bold", font_size, 5, rw - 2)
         dim_size = _fit_size(dim, "Helvetica", max(5, font_size - 2), 5, rw - 2)
         if lbl_size and dim_size and rh >= lbl_size + dim_size + 2:
             c.setFont("Helvetica-Bold", lbl_size)
-            c.drawCentredString(x + rw / 2, y + rh / 2 + lbl_size * 0.3,
-                                p.teil_label)
+            c.drawCentredString(x + rw / 2, y + rh / 2 + lbl_size * 0.3, lbl)
             c.setFont("Helvetica", dim_size)
             c.drawCentredString(x + rw / 2, y + rh / 2 - lbl_size * 0.7, dim)
         elif lbl_size and rh >= lbl_size + 1:
             c.setFont("Helvetica-Bold", lbl_size)
-            c.drawCentredString(x + rw / 2, y + rh / 2 - lbl_size * 0.35,
-                                p.teil_label)
+            c.drawCentredString(x + rw / 2, y + rh / 2 - lbl_size * 0.35, lbl)
         elif dim_size and rh >= dim_size + 1:
             c.setFont("Helvetica", dim_size)
             c.drawCentredString(x + rw / 2, y + rh / 2 - dim_size * 0.35, dim)
@@ -407,7 +443,7 @@ def _schnittliste_zeilen(plan: Schnittplan, max_w: float) -> list[str]:
     for p in plan.platzierungen:
         key = (p.teil_label, round(p.laenge, 1))
         anzahl[key] = anzahl.get(key, 0) + 1
-    teile = [f"{n} × {label} ({_fmt(laenge)} mm)"
+    teile = [f"{n} × {_latin1(label)} ({_fmt(laenge)} mm)"
              for (label, laenge), n in anzahl.items()]
     rest = sum(r[0] for r in plan.reste if r)
     if rest > 0:
@@ -470,11 +506,12 @@ def _draw_1d_plans(c: canvas.Canvas, cur: _PageCursor,
             c.setFillColor(colors.black)
             mitte = bar_y + bar_h / 2
             laenge_txt = _fmt(p.laenge)
-            lbl_size = _fit_size(p.teil_label, "Helvetica-Bold", 7.5, 5, w - 3)
+            lbl = _latin1(p.teil_label)
+            lbl_size = _fit_size(lbl, "Helvetica-Bold", 7.5, 5, w - 3)
             len_size = _fit_size(laenge_txt, "Helvetica", 7, 5, w - 2)
             if lbl_size and len_size:
                 c.setFont("Helvetica-Bold", lbl_size)
-                c.drawCentredString(x + w / 2, mitte + 2, p.teil_label)
+                c.drawCentredString(x + w / 2, mitte + 2, lbl)
                 c.setFont("Helvetica", len_size)
                 c.drawCentredString(x + w / 2, mitte - 8, laenge_txt)
             elif len_size:

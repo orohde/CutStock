@@ -604,7 +604,7 @@ async function renderProjects() {
     tbody.innerHTML = State.projects.map(p => {
         const selected = p.id === State.selectedProjectId ? ' selected' : '';
         const copies = p.anzahl > 1 ? ` <span class="proj-copies">×${p.anzahl}</span>` : '';
-        return `<tr class="fd-table__row ${selected}" data-id="${p.id}"><td class="fd-table__cell">${escHtml(p.name)}${copies}${planBadge(p)}</td></tr>`;
+        return `<tr class="fd-table__row ${selected}" data-id="${p.id}"><td class="fd-table__cell">${escHtml(p.name)}${copies}${planBadge(p)}${sammelBadge(p)}</td></tr>`;
     }).join('');
 
     tbody.querySelectorAll('tr[data-id]').forEach(row => {
@@ -627,6 +627,13 @@ function planBadge(project) {
     const done = plaene.reduce((s, p) => s + p.gesaegt, 0);
     const cls = total > 0 && done >= total ? 'plan-badge plan-badge--done' : 'plan-badge';
     return ` <span class="${cls}" title="${escAttr(t('plan.badge_title'))}">${done}/${total}</span>`;
+}
+
+// Hinweis, dass Material dieses Projekts in einem Sammelplan gesägt wird
+function sammelBadge(project) {
+    const names = Object.values(project.sammel || {});
+    if (!names.length) return '';
+    return ` <span class="plan-badge sammel-badge" title="${escAttr(names.join(', '))}">&#128279; ${escHtml(t('sammel.badge'))}</span>`;
 }
 
 function selectProjectRow(id) {
@@ -1140,6 +1147,19 @@ function renderOptResults({ quiet = false } = {}) {
             </div>`
             : '';
 
+        // Sammelplan: Legende mit Farbe und Stückzahl je Projekt
+        const projects = sammelProjects();
+        const projectsCard = projects.length
+            ? `<div class="stat-card">
+                <div class="stat-icon">&#128279;</div>
+                <div><div class="stat-value">${projects.length}</div>
+                <div class="stat-label">${t('sammel.stat_projects')}</div>
+                <div class="stat-sub sammel-legend">${projects.map(pr =>
+                    `<span><span class="saw-dot" style="background:${pr.color}"></span>${escHtml(pr.name || '–')} ${pr.count}</span>`
+                ).join('')}</div></div>
+            </div>`
+            : '';
+
         statsEl.innerHTML = `
             <div class="stat-card">
                 <div class="stat-icon">&#128196;</div>
@@ -1154,6 +1174,7 @@ function renderOptResults({ quiet = false } = {}) {
             </div>
             ${missingCard}
             ${bedarfCard}
+            ${projectsCard}
             <div class="stat-card">
                 <div class="stat-icon">&#9989;</div>
                 <div><div class="stat-value">${utilization.toFixed(1)}%</div>
@@ -1600,12 +1621,38 @@ async function renderBlades() {
 // 7. CUT PLAN VISUALIZATION (Canvas)
 // ===========================================================================
 
+// Projekt eines Teils im Sammelplan/Füllteil: „Label → Projekt“
+function partProject(label) {
+    const i = label.indexOf(' → ');
+    return i < 0 ? '' : label.slice(i + 3);
+}
+
+// Projekte des Ergebnisses mit Farbe und Stückzahl (nur im Sammelplan)
+function sammelProjects() {
+    if (State.optMode !== 'material') return [];
+    const counts = new Map();
+    (State.optimizationResult?.schnittplaene || []).forEach(sp =>
+        sp.platzierungen.forEach(p => {
+            const proj = partProject(p.teil_label);
+            counts.set(proj, (counts.get(proj) || 0) + 1);
+        }));
+    return [...counts.keys()].sort().map((name, i) =>
+        ({ name, count: counts.get(name), color: PART_COLORS[i % PART_COLORS.length] }));
+}
+
 // Konsistente Label→Farbe-Zuordnung über alle Schnittpläne des Ergebnisses.
+// Im Sammelplan bekommt jedes Projekt eine Farbe, damit die Stapel stimmen.
 function buildColorMap() {
     const map = {};
     const labels = new Set();
     (State.optimizationResult?.schnittplaene || []).forEach(sp =>
         sp.platzierungen.forEach(p => labels.add(p.teil_label)));
+    const projects = sammelProjects();
+    if (projects.length) {
+        const byName = Object.fromEntries(projects.map(pr => [pr.name, pr.color]));
+        labels.forEach(label => { map[label] = byName[partProject(label)]; });
+        return map;
+    }
     [...labels].sort().forEach((label, i) => {
         map[label] = PART_COLORS[i % PART_COLORS.length];
     });
@@ -4047,6 +4094,7 @@ function initEvents() {
             is_1d: is1D,
             schnittfolgen,
             schnittfolge_titel: t('seq.title'),
+            nach_projekt: State.optMode === 'material',
         });
     });
 

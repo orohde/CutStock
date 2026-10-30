@@ -545,6 +545,8 @@ class PdfRequest(BaseModel):
     # damit PDF und Web-Ansicht garantiert dieselbe Zerlegung zeigen)
     schnittfolgen: list[list[str]] = []
     schnittfolge_titel: str = "Schnittfolge"
+    # Sammelplan: Farbe je Projekt statt je Teil
+    nach_projekt: bool = False
 
 
 class LabelIn(BaseModel):
@@ -2172,6 +2174,7 @@ def generate_pdf(req: PdfRequest):
             is_1d=req.is_1d,
             schnittfolgen=req.schnittfolgen,
             schnittfolge_titel=req.schnittfolge_titel,
+            nach_projekt=req.nach_projekt,
             material_bild=(get_db().get_material_image(req.material_id) or b""
                            if req.material_id else b""),
         )
@@ -2476,6 +2479,8 @@ WEB_EXTRA_TRANSLATIONS = {
         "fr": "Ce matériau est découpé dans « {name} ».",
         "it": "Questo materiale viene tagliato in “{name}”.",
     },
+    "sammel.stat_projects": {"de": "Projekte", "en": "Projects", "fr": "Projets", "it": "Progetti"},
+    "sammel.badge": {"de": "Sammelplan", "en": "Combined plan", "fr": "Plan groupé", "it": "Piano combinato"},
     "sammel.open": {"de": "Sammelplan öffnen", "en": "Open combined plan", "fr": "Ouvrir le plan groupé", "it": "Apri piano combinato"},
     "upd.download": {"de": "Neue Version herunterladen", "en": "Download new version", "fr": "Télécharger la nouvelle version", "it": "Scarica la nuova versione"},
 }
