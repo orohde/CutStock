@@ -1502,6 +1502,8 @@ class VergleichOut(BaseModel):
     gemeinsam_menge: float
     fehlende_getrennt: int
     fehlende_gemeinsam: int
+    getrennt_reste: int = 0      # davon Reststücke (bei „Reste zuerst“ gewollt viele)
+    gemeinsam_reste: int = 0
 
 
 def _offener_einzelplan(db: Database, projekt_id: int, material_id: int
@@ -1673,6 +1675,11 @@ def compare_sammel(req: SammelRequest):
         getrennt.append(rechne([pid], rest_lage))
         rest_lage = _lage_ohne(rest_lage, getrennt[-1])
     gemeinsam = rechne(req.projekt_ids, lage)
+    rest_ids = {ls.id for ls in lage.vorrat_alle if ls.ist_rest}
+
+    def reste(erg: OptimierungsErgebnis) -> int:
+        return sum(1 for sp in erg.schnittplaene if sp.lagerstueck_id in rest_ids)
+
     return VergleichOut(
         getrennt_bretter=sum(len(e.schnittplaene) for e in getrennt),
         gemeinsam_bretter=len(gemeinsam.schnittplaene),
@@ -1680,6 +1687,8 @@ def compare_sammel(req: SammelRequest):
         gemeinsam_menge=_verbrauch(gemeinsam, is_1d),
         fehlende_getrennt=sum(len(e.fehlende_teile) for e in getrennt),
         fehlende_gemeinsam=len(gemeinsam.fehlende_teile),
+        getrennt_reste=sum(reste(e) for e in getrennt),
+        gemeinsam_reste=reste(gemeinsam),
     )
 
 
@@ -2481,6 +2490,7 @@ WEB_EXTRA_TRANSLATIONS = {
         "it": "Manca materiale – il confronto è solo indicativo.",
     },
     "sammel.bars": {"de": "{n} Stangen", "en": "{n} bars", "fr": "{n} barres", "it": "{n} barre"},
+    "sammel.of_which_rests": {"de": "davon {n} Reste", "en": "{n} of them offcuts", "fr": "dont {n} chutes", "it": "di cui {n} ritagli"},
     "sammel.boards": {"de": "{n} Platten", "en": "{n} boards", "fr": "{n} panneaux", "it": "{n} pannelli"},
     "sammel.select_projects": {"de": "Bitte mindestens ein Projekt auswählen.", "en": "Please select at least one project.", "fr": "Veuillez choisir au moins un projet.", "it": "Seleziona almeno un progetto."},
     "sammel.confirm_replace": {

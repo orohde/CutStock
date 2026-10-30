@@ -855,6 +855,7 @@ class TestSammelplan:
                         json=self._req(mid, bid, pids, reste_zuerst=True)).json()
         # A nimmt den Rest (1400), B muss eine ganze Stange anbrechen
         assert (v["getrennt_bretter"], v["getrennt_menge"]) == (2, 3400)
+        assert v["getrennt_reste"] == 1
 
     def test_sammel_projekt_unsichtbar_mitglieder_kennen_es(self, client):
         mid, bid, a, _ = self._setup(client)

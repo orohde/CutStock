@@ -975,8 +975,11 @@ function sammelVergleichHtml(is1D) {
     const v = State.sammel?.vergleich;
     if (!v) return '';
     const anz = n => t(is1D ? 'sammel.bars' : 'sammel.boards', { n });
-    const getrennt = `${anz(v.getrennt_bretter)} (${formatMenge(v.getrennt_menge, is1D)})`;
-    const gemeinsam = `${anz(v.gemeinsam_bretter)} (${formatMenge(v.gemeinsam_menge, is1D)})`;
+    // Reste getrennt nennen: „Reste zuerst“ braucht gewollt mehr (kurze) Stücke
+    const teil = (n, reste, menge) => `${anz(n)}${reste ? ', ' + t('sammel.of_which_rests', { n: reste }) : ''}`
+        + ` (${formatMenge(menge, is1D)})`;
+    const getrennt = teil(v.getrennt_bretter, v.getrennt_reste, v.getrennt_menge);
+    const gemeinsam = teil(v.gemeinsam_bretter, v.gemeinsam_reste, v.gemeinsam_menge);
     const diff = v.getrennt_menge - v.gemeinsam_menge;
     const pct = v.getrennt_menge > 0 ? Math.round(diff / v.getrennt_menge * 100) : 0;
     const saving = diff > 0
