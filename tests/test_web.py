@@ -838,6 +838,24 @@ class TestSammelplan:
         labels = sorted(p["teil_label"] for p in self._stuecke(plan))
         assert labels == ["Seite → A"] * 4 + ["Seite → B"] * 4   # gleiche Labels getrennt
 
+    def test_vergleich_getrennt_teilt_sich_das_lager(self, client):
+        """Getrennt darf nicht jedes Projekt denselben Rest verplanen."""
+        mid = client.post("/api/materials", json={"name": "Alu", "typ": "Stange"}).json()["id"]
+        client.post("/api/stock", json={"material_id": mid, "laenge": 2000, "stueckzahl": 5})
+        client.post("/api/stock", json={"material_id": mid, "laenge": 1400, "ist_rest": True})
+        bid = client.post("/api/blades", json={"name": "B", "schnittbreite": 3}).json()["id"]
+        pids = []
+        for name in ("A", "B"):
+            pid = client.post("/api/projects", json={"name": name}).json()["id"]
+            client.post(f"/api/projects/{pid}/parts", json={
+                "label": "Seite", "typ": "Stange", "material_id": mid,
+                "laenge": 695, "stueckzahl": 2})
+            pids.append(pid)
+        v = client.post("/api/sammel/compare",
+                        json=self._req(mid, bid, pids, reste_zuerst=True)).json()
+        # A nimmt den Rest (1400), B muss eine ganze Stange anbrechen
+        assert (v["getrennt_bretter"], v["getrennt_menge"]) == (2, 3400)
+
     def test_sammel_projekt_unsichtbar_mitglieder_kennen_es(self, client):
         mid, bid, a, _ = self._setup(client)
         self._sammel(client, mid, bid, [a])

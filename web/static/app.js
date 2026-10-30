@@ -1035,14 +1035,25 @@ function updateOptMaterialDropdown() {
     if (!projSel || !matSel) return;
 
     if (State.optMode === 'material') {
-        // Alle Materialien mit offenen Teilen in irgendeinem Projekt oder mit Sammelplan
-        const ids = new Set();
+        // Alle Materialien mit offenen Teilen in irgendeinem Projekt oder mit Sammelplan.
+        // Je Material die Zahl der Projekte, die es brauchen – die lohnenden zuerst.
+        const projekte = new Map();
+        const add = (mid, pid) => {
+            if (!projekte.has(mid)) projekte.set(mid, new Set());
+            if (pid) projekte.get(mid).add(pid);
+        };
         State.projects.forEach(p => {
-            (p.teile || []).forEach(t => { if (t.offen_anzahl > 0) ids.add(t.material_id); });
-            Object.keys(p.sammel || {}).forEach(mid => ids.add(parseInt(mid)));
+            (p.teile || []).forEach(tl => { if (tl.offen_anzahl > 0) add(tl.material_id, p.id); });
+            Object.keys(p.sammel || {}).forEach(mid => add(parseInt(mid), 0));
         });
-        matSel.innerHTML = State.materials.filter(m => ids.has(m.id)).map(m =>
-            `<option value="${m.id}">${escHtml(m.name)}</option>`).join('');
+        const anzahl = m => projekte.get(m.id).size;
+        matSel.innerHTML = State.materials.filter(m => projekte.has(m.id))
+            .sort((a, b) => anzahl(b) - anzahl(a) || a.name.localeCompare(b.name))
+            .map(m => {
+                const n = anzahl(m);
+                const info = n ? ` (${t(n === 1 ? 'sammel.one_project' : 'sammel.n_projects', { n })})` : '';
+                return `<option value="${m.id}">${escHtml(m.name)}${info}</option>`;
+            }).join('');
         return;
     }
 
@@ -1966,7 +1977,8 @@ function printPartLabels() {
     const result = State.optimizationResult;
     if (!result?.schnittplaene?.length) return;
     const projName = optProjName();
-    const matName = document.getElementById('opt-material')?.selectedOptions[0]?.text || '';
+    const matId = parseInt(document.getElementById('opt-material')?.value);
+    const matName = State.materials.find(m => m.id === matId)?.name || '';
 
     const labels = [];
     result.schnittplaene.forEach((plan, i) => {
@@ -4088,7 +4100,7 @@ function initEvents() {
         Api.downloadPdf({
             ergebnis: State.optimizationResult,
             projekt_name: optProjName(),
-            material_name: matSel?.selectedOptions[0]?.text || '',
+            material_name: mat?.name || '',
             material_id: matId || 0,
             saegeblatt_name: bladeSel?.selectedOptions[0]?.text || '',
             is_1d: is1D,

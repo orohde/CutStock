@@ -1288,7 +1288,10 @@ def _lagerlage(db: Database, material_id: int, ausser_projekt: int,
             material_id, ausser_projekt=ausser_projekt, auch_ausser=auch_ausser))
         nrs_map = {lid: [nr for nr in nrs if (lid, nr) not in reserviert]
                    for lid, nrs in nrs_map.items()}
-    vorrat_alle = db.list_lagerstuecke(material_id)
+    return _lage_aus(nrs_map, db.list_lagerstuecke(material_id), defekte_map)
+
+
+def _lage_aus(nrs_map: dict, vorrat_alle: list, defekte_map: dict) -> _Lagerlage:
     vorrat = [replace(ls, stueckzahl=len(nrs_map.get(ls.id, []))) for ls in vorrat_alle]
     vorrat = [ls for ls in vorrat if ls.stueckzahl > 0]
     # Der Optimizer zählt die Kopien eines Lagerstücks lückenlos 1..anzahl,
@@ -1300,6 +1303,14 @@ def _lagerlage(db: Database, material_id: int, ausser_projekt: int,
         for lid, by_nr in defekte_map.items()
     }
     return _Lagerlage(nrs_map, vorrat_alle, vorrat, defekte_map, defekte_lauf)
+
+
+def _lage_ohne(lage: _Lagerlage, erg: OptimierungsErgebnis) -> _Lagerlage:
+    """Lagerlage ohne die Stücke, die ein Ergebnis schon belegt."""
+    belegt = {(sp.lagerstueck_id, sp.stueck_nr) for sp in erg.schnittplaene}
+    nrs_map = {lid: [nr for nr in nrs if (lid, nr) not in belegt]
+               for lid, nrs in lage.nrs_map.items()}
+    return _lage_aus(nrs_map, lage.vorrat_alle, lage.defekte_map)
 
 
 def _berechnen(material: Material, kerf: float, algorithm: str, reste_zuerst: bool,
@@ -1630,8 +1641,9 @@ def optimize_sammel(req: SammelRequest):
 def compare_sammel(req: SammelRequest):
     """Was spart der Sammelplan? Jedes Projekt einzeln gegen alle gemeinsam rechnen.
 
-    Nichts wird gespeichert. Beide Varianten sehen dasselbe freie Lager; die
-    getrennte Rechnung ist eine Schätzung, weil sich echte Einzelpläne das Lager teilen.
+    Nichts wird gespeichert. Getrennt wird nacheinander gerechnet: Jedes Projekt
+    bekommt nur das Lager, das die vorigen übrig lassen – wie echte Einzelpläne,
+    die sich das Lager teilen (sonst zählten z. B. dieselben Reste mehrfach).
     """
     db = get_db()
     material = db.get_material(req.material_id)
@@ -1649,14 +1661,18 @@ def compare_sammel(req: SammelRequest):
     lage = _lagerlage(db, material.id, ausser_projekt=ausser, auch_ausser=ersetzt)
     kerf = blade.schnittbreite
 
-    def rechne(pids: list[int]) -> OptimierungsErgebnis:
+    def rechne(pids: list[int], lage: _Lagerlage) -> OptimierungsErgebnis:
         teile, offen = _sammel_teile(db, material, pids, ausser)
         if not teile:
             return OptimierungsErgebnis()
         return _berechnen(material, kerf, req.algorithm, req.reste_zuerst, teile, offen, lage)
 
-    getrennt = [rechne([pid]) for pid in req.projekt_ids]
-    gemeinsam = rechne(req.projekt_ids)
+    getrennt = []
+    rest_lage = lage
+    for pid in req.projekt_ids:
+        getrennt.append(rechne([pid], rest_lage))
+        rest_lage = _lage_ohne(rest_lage, getrennt[-1])
+    gemeinsam = rechne(req.projekt_ids, lage)
     return VergleichOut(
         getrennt_bretter=sum(len(e.schnittplaene) for e in getrennt),
         gemeinsam_bretter=len(gemeinsam.schnittplaene),
@@ -2480,6 +2496,8 @@ WEB_EXTRA_TRANSLATIONS = {
         "it": "Questo materiale viene tagliato in “{name}”.",
     },
     "sammel.stat_projects": {"de": "Projekte", "en": "Projects", "fr": "Projets", "it": "Progetti"},
+    "sammel.one_project": {"de": "1 Projekt", "en": "1 project", "fr": "1 projet", "it": "1 progetto"},
+    "sammel.n_projects": {"de": "{n} Projekte", "en": "{n} projects", "fr": "{n} projets", "it": "{n} progetti"},
     "sammel.badge": {"de": "Sammelplan", "en": "Combined plan", "fr": "Plan groupé", "it": "Piano combinato"},
     "sammel.open": {"de": "Sammelplan öffnen", "en": "Open combined plan", "fr": "Ouvrir le plan groupé", "it": "Apri piano combinato"},
     "upd.download": {"de": "Neue Version herunterladen", "en": "Download new version", "fr": "Télécharger la nouvelle version", "it": "Scarica la nuova versione"},
