@@ -737,6 +737,55 @@ TRANSLATIONS = {
         "de": "Rest-Etiketten drucken", "en": "Print remnant labels",
         "fr": "Imprimer les étiquettes des chutes", "it": "Stampa etichette sfridi",
     },
+    "plan.discard": {
+        "de": "Plan verwerfen", "en": "Discard plan", "fr": "Abandonner le plan", "it": "Scarta piano",
+    },
+    "plan.discard_confirm": {
+        "de": "Plan verwerfen?\n- Reservierte, noch nicht angefangene Bretter werden wieder frei\n- Bereits Gesägtes und das Lager bleiben unverändert",
+        "en": "Discard plan?\n- Reserved, not yet started pieces become available again\n- Parts already cut and stock stay unchanged",
+        "fr": "Abandonner le plan ?\n- Les pièces réservées non entamées redeviennent disponibles\n- Les pièces déjà coupées et le stock restent inchangés",
+        "it": "Scartare il piano?\n- I pezzi riservati non ancora iniziati tornano disponibili\n- I pezzi già tagliati e il magazzino restano invariati",
+    },
+    "plan.discarded": {
+        "de": "Plan verworfen – Material wieder frei", "en": "Plan discarded – material available again",
+        "fr": "Plan abandonné – matériau de nouveau disponible", "it": "Piano scartato – materiale di nuovo disponibile",
+    },
+    "opt.rests_first": {
+        "de": "Reste zuerst", "en": "Remnants first", "fr": "Chutes d'abord", "it": "Prima gli sfridi",
+    },
+    "opt.rests_first_hint": {
+        "de": "Erst nur als Rest markierte Stücke verplanen, dann ganze Stücke",
+        "en": "Plan pieces marked as remnants first, then full pieces",
+        "fr": "Planifier d'abord les pièces marquées comme chutes, puis les pièces entières",
+        "it": "Pianifica prima i pezzi segnati come sfridi, poi i pezzi interi",
+    },
+    "piece.reserved_hint": {
+        "de": "Reserviert durch einen gespeicherten Plan dieses Projekts",
+        "en": "Reserved by a saved plan of this project",
+        "fr": "Réservé par un plan enregistré de ce projet",
+        "it": "Riservato da un piano salvato di questo progetto",
+    },
+    "set.stock": {
+        "de": "Lager", "en": "Stock", "fr": "Stock", "it": "Magazzino",
+    },
+    "set.reservation": {
+        "de": "Gespeicherte Pläne reservieren ihr Material:",
+        "en": "Saved plans reserve their material:",
+        "fr": "Les plans enregistrés réservent leur matériau :",
+        "it": "I piani salvati riservano il loro materiale:",
+    },
+    "set.nr_lock": {
+        "de": "Nummern-Sperrfrist (Tage, 0 = aus):",
+        "en": "Number lock period (days, 0 = off):",
+        "fr": "Blocage des numéros (jours, 0 = non) :",
+        "it": "Blocco numeri (giorni, 0 = no):",
+    },
+    "set.nr_lock_hint": {
+        "de": "Eine verbrauchte Stücknummer wird erst nach dieser Frist neu vergeben",
+        "en": "A used piece number is only reassigned after this period",
+        "fr": "Un numéro de pièce utilisé n'est réattribué qu'après ce délai",
+        "it": "Un numero di pezzo usato viene riassegnato solo dopo questo periodo",
+    },
     "plan.badge_title": {
         "de": "Gesägt laut gespeicherten Plänen",
         "en": "Cut according to saved plans",
@@ -789,6 +838,12 @@ TRANSLATIONS = {
     "labels.button": {
         "de": "Etiketten", "en": "Labels",
         "fr": "Étiquettes", "it": "Etichette",
+    },
+    "stock.is_rest": {
+        "de": "Ist ein Rest (wird bei „Reste zuerst“ bevorzugt):",
+        "en": "Is a remnant (preferred with “remnants first”):",
+        "fr": "Est une chute (préférée avec « chutes d'abord ») :",
+        "it": "È uno sfrido (preferito con «prima gli sfridi»):",
     },
     "labels.rest": {
         "de": "Rest", "en": "Remnant", "fr": "Chute", "it": "Sfrido",

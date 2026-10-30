@@ -231,14 +231,16 @@ class TestEinzelstueckVerbrauch:
         assert pieces[1]["defekt_count"] == 1
         assert res["consumed_piece"] is None
 
-    def test_freie_nummer_wird_wiederverwendet(self, client):
+    @pytest.mark.parametrize("sperrfrist,erwartet", [(0, [1, 2, 3]), (1, [1, 3, 4])])
+    def test_freie_nummer_nach_sperrfrist(self, client, sperrfrist, erwartet):
+        client.put("/api/settings", json={"nr_lock_days": sperrfrist})
         mid, sid = self._setup(client)
         self._mark(client, mid, sid, 2, [500])
         assert sorted(self._pieces(client, sid)) == [1, 3]
         stock = client.get(f"/api/stock?material_id={mid}").json()
         ls = next(s for s in stock if s["id"] == sid)
         client.put(f"/api/stock/{sid}", json={**ls, "stueckzahl": 3})
-        assert sorted(self._pieces(client, sid)) == [1, 2, 3]
+        assert sorted(self._pieces(client, sid)) == erwartet
 
     def test_optimierung_nutzt_echte_nummern(self, client):
         mid, sid = self._setup(client, stueckzahl=3)
@@ -608,3 +610,78 @@ class TestRestErbtCode:
             rest = next(sp for sp in res["plan"]["schnittplaene"] if sp["id"] == brett["id"])
             codes.append([(r["code"], r["laenge"]) for r in rest["reste_stuecke"]])
         assert codes == [[("ER-02", 1997)], [("ER-02", 994)]]
+
+
+# =====================================================================
+# Reservierung, Plan verwerfen, Reste zuerst
+# =====================================================================
+
+class TestReservierungUndResteZuerst:
+
+    def _setup(self, client, lager, kuerzel):
+        mid = client.post("/api/materials", json={"name": f"Res {kuerzel}", "typ": "Stange",
+                                                  "kuerzel": kuerzel, "rest_min_laenge": 50}).json()["id"]
+        sids = [client.post("/api/stock", json={"material_id": mid, "laenge": l,
+                                                "stueckzahl": n, "ist_rest": rest}).json()["id"]
+                for l, n, rest in lager]
+        bid = client.post("/api/blades", json={"name": "B", "schnittbreite": 3}).json()["id"]
+        return mid, sids, bid
+
+    def _projekt(self, client, mid, name, laenge, n):
+        pid = client.post("/api/projects", json={"name": name}).json()["id"]
+        client.post(f"/api/projects/{pid}/parts", json={
+            "label": "A", "typ": "Stange", "material_id": mid, "laenge": laenge, "stueckzahl": n})
+        return pid
+
+    def _opt(self, client, pid, mid, bid, **kw):
+        r = client.post("/api/optimize", json={"project_id": pid, "material_id": mid,
+                                               "blade_id": bid, **kw})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    def test_andere_projekte_nutzen_reservierte_stuecke_nicht(self, client):
+        mid, sids, bid = self._setup(client, [(3000, 2, False)], "RV")
+        p1 = self._projekt(client, mid, "Eins", 2500, 1)
+        p2 = self._projekt(client, mid, "Zwei", 2500, 2)
+        plan1 = self._opt(client, p1, mid, bid)
+        code1 = plan1["schnittplaene"][0]["stueck_code"]
+        plan2 = self._opt(client, p2, mid, bid)
+        assert [sp["stueck_code"] for sp in plan2["schnittplaene"]] != [code1]
+        assert code1 not in [sp["stueck_code"] for sp in plan2["schnittplaene"]]
+        assert len(plan2["fehlende_teile"]) == 1
+        pieces = client.get(f"/api/stock/{sids[0]}/pieces").json()
+        assert {p["code"]: p["reserviert_fuer"] for p in pieces}[code1] == "Eins"
+        # Plan verwerfen gibt das Stück frei
+        assert client.delete(f"/api/plans/{plan1['plan_id']}").status_code == 204
+        plan2 = self._opt(client, p2, mid, bid)
+        assert plan2["fehlende_teile"] == []
+
+    def test_reservierung_abschaltbar(self, client):
+        client.put("/api/settings", json={"reservation": False})
+        mid, _, bid = self._setup(client, [(3000, 1, False)], "RA")
+        p1 = self._projekt(client, mid, "Eins", 2500, 1)
+        p2 = self._projekt(client, mid, "Zwei", 2500, 1)
+        self._opt(client, p1, mid, bid)
+        assert self._opt(client, p2, mid, bid)["fehlende_teile"] == []
+
+    def test_reste_zuerst(self, client):
+        # Ganze 3000er und zwei 1000er-Reste; Teile 900 mm passen in beide
+        mid, sids, bid = self._setup(client, [(3000, 2, False), (1000, 2, True)], "RZ")
+        pid = self._projekt(client, mid, "Reste", 900, 3)
+        normal = self._opt(client, pid, mid, bid)
+        zuerst = self._opt(client, pid, mid, bid, reste_zuerst=True)
+        laengen = sorted(sp["lager_laenge"] for sp in zuerst["schnittplaene"])
+        assert laengen[:2] == [1000, 1000]           # beide Reste werden verbraucht
+        assert sum(len(sp["platzierungen"]) for sp in zuerst["schnittplaene"]) == 3
+        assert zuerst["fehlende_teile"] == [] and normal["fehlende_teile"] == []
+        # ohne Option passt alles material-sparend auf eine 3000er-Stange
+        assert [sp["lager_laenge"] for sp in normal["schnittplaene"]] == [3000]
+
+    def test_eingebuchter_rest_ist_markiert(self, client):
+        mid, sids, bid = self._setup(client, [(3000, 1, False)], "RM")
+        pid = self._projekt(client, mid, "M", 1000, 1)
+        plan = self._opt(client, pid, mid, bid)
+        client.post(f"/api/plan-pieces/{plan['schnittplaene'][0]['platzierungen'][0]['id']}",
+                    json={"gesaegt": True})
+        stock = client.get(f"/api/stock?material_id={mid}").json()
+        assert [(s["laenge"], s["ist_rest"]) for s in stock] == [(1997, True)]

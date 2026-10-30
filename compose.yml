@@ -11,6 +11,8 @@ services:
     volumes:
       # Persistente Daten (SQLite-Datenbank + Einstellungen)
       # Unraid z. B.: /mnt/user/appdata/cutstock:/data
+      # Synology (Container Manager): den Ordner "data" neben dieser Datei VORHER
+      # in der File Station anlegen – sonst "Bind mount failed: ... does not exist"
       - ./data:/data
     environment:
       - CUTSTOCK_DB=/data/cutstock.db

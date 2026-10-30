@@ -248,7 +248,7 @@ def einspielen(api: Api):
         for i, (laenge, breite, anzahl) in enumerate(lager):
             sid = api.call("POST", "/api/stock", {
                 "material_id": mid, "laenge": laenge, "breite": breite,
-                "stueckzahl": anzahl})["id"]
+                "stueckzahl": anzahl, "ist_rest": i >= 2})["id"]
             stock_ids.append(sid)
             n_lager += anzahl
             if i >= 2:   # kleinere Bestände sind Reste → liegen in der Restekiste

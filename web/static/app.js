@@ -89,6 +89,9 @@ const applyTranslations = () => {
     document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
         el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
     });
+    document.querySelectorAll('[data-i18n-title]').forEach(el => {
+        el.title = t(el.getAttribute('data-i18n-title'));
+    });
     if (typeof renderHotkeyTable === 'function') renderHotkeyTable();
 };
 
@@ -218,6 +221,7 @@ const Api = {
     setPieceSawn: (pieceId, gesaegt) => fetchJSON(`/api/plan-pieces/${pieceId}`, 'POST', { gesaegt }),
     confirmAllPieces: (planId) => fetchJSON(`/api/plans/${planId}/confirm-all`, 'POST'),
     restartProject: (projectId) => fetchJSON(`/api/projects/${projectId}/restart`, 'POST'),
+    discardPlan: (planId) => fetchJSON(`/api/plans/${planId}`, 'DELETE'),
 
     async downloadPdf(data) {
         const resp = await fetch(API_BASE + '/api/pdf', {
@@ -382,6 +386,7 @@ async function renderMaterials() {
             <td class="fd-table__cell">${grain}</td>
         </tr>`;
     }).join('');
+    setupImageHoverPreview(tbody);
 
     tbody.querySelectorAll('tr[data-id]').forEach(row => {
         row.addEventListener('click', () => selectMaterialRow(parseInt(row.dataset.id)));
@@ -392,6 +397,39 @@ async function renderMaterials() {
     });
 
     renderStock();
+}
+
+// Schwebende Vollbild-Vorschau für Material-Miniaturen, im Fenster gehalten
+function setupImageHoverPreview(container) {
+    let box = document.getElementById('img-hover-preview');
+    if (!box) {
+        box = document.createElement('div');
+        box.id = 'img-hover-preview';
+        box.className = 'img-hover-preview';
+        box.innerHTML = '<img alt="">';
+        document.body.appendChild(box);
+    }
+    const img = box.querySelector('img');
+    const place = (thumb) => {
+        const r = thumb.getBoundingClientRect();
+        const w = box.offsetWidth, h = box.offsetHeight, m = 8;
+        // bevorzugt rechts neben der Miniatur, sonst links; vertikal mittig, geklemmt
+        let x = r.right + m;
+        if (x + w > window.innerWidth - m) x = Math.max(m, r.left - m - w);
+        let y = r.top + r.height / 2 - h / 2;
+        y = Math.max(m, Math.min(y, window.innerHeight - h - m));
+        box.style.left = `${x}px`;
+        box.style.top = `${y}px`;
+    };
+    container.querySelectorAll('img.mat-thumb').forEach(thumb => {
+        thumb.addEventListener('mouseenter', () => {
+            img.onload = () => place(thumb);
+            img.src = thumb.src;
+            box.classList.add('active');
+            place(thumb);
+        });
+        thumb.addEventListener('mouseleave', () => box.classList.remove('active'));
+    });
 }
 
 function selectMaterialRow(id) {
@@ -455,7 +493,7 @@ async function renderStock() {
             : '';
         const expandable = s.stueckzahl > 1;
         return `<tr class="fd-table__row ${selected}" data-id="${s.id}">
-            <td class="fd-table__cell num">${formatDim(s.laenge)}${badge}</td>
+            <td class="fd-table__cell num">${s.ist_rest ? `<span class="rest-badge" title="${escAttr(t('stock.is_rest'))}">${escHtml(t('labels.rest'))}</span> ` : ''}${formatDim(s.laenge)}${badge}</td>
             <td class="fd-table__cell num" style="${isPlatte ? '' : 'display:none'}">${formatDim(s.breite)}</td>
             <td class="fd-table__cell num${expandable ? ' expand-toggle' : ''}" data-stock-id="${s.id}">${expandable ? '<span class="expand-arrow">&#9654;</span> ' : ''}${s.stueckzahl}</td>
         </tr>`;
@@ -483,10 +521,12 @@ async function renderStock() {
                 const note = p.notiz ? ` <span class="piece-note">${escHtml(p.notiz)}</span>` : '';
                 const ort = p.lagerort_effektiv
                     ? ` <span class="piece-location">&#128205; ${escHtml(p.lagerort_effektiv)}</span>` : '';
+                const res = p.reserviert_fuer
+                    ? ` <span class="piece-reserved" title="${escAttr(t('piece.reserved_hint'))}">&#128274; ${escHtml(p.reserviert_fuer)}</span>` : '';
                 return `<tr class="fd-table__row piece-row" data-parent="${stockId}" data-piece-id="${p.id}"
                         title="${escAttr(t('piece.edit_hint'))}">
                     <td class="fd-table__cell piece-cell" colspan="${isPlatte ? 3 : 2}">
-                        <span class="piece-code">${escHtml(p.code || '#' + p.nr)}</span>${ort}${note}${pBadge}
+                        <span class="piece-code">${escHtml(p.code || '#' + p.nr)}</span>${ort}${res}${note}${pBadge}
                     </td>
                 </tr>`;
             }).join('');
@@ -1048,6 +1088,11 @@ function renderSettings() {
         fmtSel.value = State.settings.label_format || 'a4_3x8';
         if (!fmtSel.value) fmtSel.value = 'a4_3x8';
     }
+    const lockInp = document.getElementById('settings-nr-lock');
+    if (lockInp) lockInp.value = State.settings.nr_lock_days ?? 1;
+    const resChk = document.getElementById('settings-reservation');
+    if (resChk) resChk.checked = State.settings.reservation !== false;
+
     const wInp = document.getElementById('settings-label-w');
     const hInp = document.getElementById('settings-label-h');
     if (wInp) wInp.value = State.settings.label_custom_w ?? 89;
@@ -1370,6 +1415,19 @@ async function confirmAllPieces() {
     document.querySelectorAll('.cut-plan-canvas').forEach(c => redrawPlanForCanvas(c));
     await refreshAfterSawing();
     showToast(t('opt.done'), 'info');
+}
+
+// „Plan verwerfen": Plan löschen und reservierte Bretter freigeben.
+// Bereits Gesägtes (Fortschritt, Lagerbuchungen) bleibt, wie es ist.
+async function discardPlan() {
+    const result = State.optimizationResult;
+    if (!result?.plan_id) return;
+    try { await Api.discardPlan(result.plan_id); } catch { return; }
+    clearOptResult();
+    try { State.projects = await Api.getProjects(); } catch { /* ignore */ }
+    renderProjects();
+    updateOptMaterialDropdown();
+    showToast(t('plan.discarded'), 'info');
 }
 
 // „Projekt neu starten": Fortschritt auf 0, Pläne löschen (Lager bleibt).
@@ -2171,6 +2229,8 @@ function openModal(title, fields, data, onSave) {
                 }
             } else if (f.type === 'select') {
                 val = el.value;
+            } else if (f.type === 'checkbox') {
+                val = el.checked;
             } else {
                 val = el.value.trim();
                 if (f.required && !val) {
@@ -2209,6 +2269,8 @@ function fieldHtml(f, data) {
             `<option value="${o.value}"${String(o.value) === String(val) ? ' selected' : ''}>${escHtml(o.text)}</option>`
         ).join('');
         input = `<select name="${f.key}" class="cs-select">${opts}</select>`;
+    } else if (f.type === 'checkbox') {
+        input = `<input type="checkbox" name="${f.key}" class="cs-checkbox"${val ? ' checked' : ''}>`;
     } else if (f.type === 'number') {
         const step = f.step ?? (f.isDimension ? 'any' : 1);
         const min = f.min != null ? ` min="${f.min}"` : '';
@@ -2382,6 +2444,7 @@ function openStockDialog(stock = null) {
         { key: 'laenge', label: t('stock.length'), type: 'number', required: true, isDimension: true, min: 0.1 },
         { key: 'breite', label: t('stock.width'), type: 'number', isDimension: true, hidden: !isPlatte, min: 0.1 },
         { key: 'stueckzahl', label: t('stock.qty'), type: 'number', required: true, min: 1, step: 1 },
+        { key: 'ist_rest', label: t('stock.is_rest'), type: 'checkbox' },
     ];
 
     openModal(title, fields, data, async (formData) => {
@@ -3462,6 +3525,7 @@ function initEvents() {
                 material_id: matId,
                 blade_id: bladeId,
                 algorithm: algo,
+                reste_zuerst: !!document.getElementById('opt-rests-first')?.checked,
             }));
             renderOptResults();
             try { State.projects = await Api.getProjects(); renderProjects(); } catch { /* ignore */ }
@@ -3477,6 +3541,31 @@ function initEvents() {
     document.getElementById('btn-confirm')?.addEventListener('click', () => {
         if (!State.optimizationResult) return;
         openConfirmDialog(t('opt.confirm_msg'), () => confirmAllPieces());
+    });
+
+    document.getElementById('btn-discard-plan')?.addEventListener('click', () => {
+        if (!State.optimizationResult) return;
+        openConfirmDialog(t('plan.discard_confirm'), () => discardPlan());
+    });
+
+    // „Reste zuerst“ merken (pro Browser)
+    const restsFirst = document.getElementById('opt-rests-first');
+    if (restsFirst) {
+        restsFirst.checked = storageGet('localStorage', 'cutstock_rests_first') === '1';
+        restsFirst.addEventListener('change', () =>
+            storageSet('localStorage', 'cutstock_rests_first', restsFirst.checked ? '1' : '0'));
+    }
+
+    // ----- Lager-Einstellungen -----
+    document.getElementById('settings-nr-lock')?.addEventListener('change', async (e) => {
+        const v = Math.max(0, parseFloat(e.target.value) || 0);
+        e.target.value = v;
+        State.settings.nr_lock_days = v;
+        try { await Api.updateSettings({ nr_lock_days: v }); } catch { /* non-critical */ }
+    });
+    document.getElementById('settings-reservation')?.addEventListener('change', async (e) => {
+        State.settings.reservation = e.target.checked;
+        try { await Api.updateSettings({ reservation: e.target.checked }); } catch { /* non-critical */ }
     });
 
     document.getElementById('btn-restart')?.addEventListener('click', () => {

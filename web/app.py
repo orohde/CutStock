@@ -6,7 +6,7 @@ import os
 import signal
 import sys
 import tempfile
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -67,10 +67,31 @@ _db_generation = 0
 SETTINGS_PATH = DB_PATH.parent / "settings.json"
 
 
+def _lager_einstellungen() -> dict:
+    """Lager-Einstellungen aus settings.json, gecacht bis sich die Datei ändert."""
+    global _lager_cache
+    try:
+        mtime = SETTINGS_PATH.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    if _lager_cache[0] != mtime:
+        from core.settings import Settings
+        s = Settings(SETTINGS_PATH)
+        _lager_cache = (mtime, {
+            "nr_sperrfrist_tage": float(s.value("stock/nr_lock_days", 1) or 0),
+            "reservierung": bool(s.value("stock/reservation", True)),
+        })
+    return _lager_cache[1]
+
+
+_lager_cache: tuple[float, dict] = (-1.0, {})
+
+
 def get_db() -> Database:
     """Thread-local Database instance — SQLite connections can't cross threads."""
     db = getattr(_db_local, "db", None)
     if db is not None and getattr(_db_local, "gen", None) == _db_generation:
+        db.nr_sperrfrist_tage = _lager_einstellungen()["nr_sperrfrist_tage"]
         return db
     if db is not None:
         try:
@@ -80,6 +101,7 @@ def get_db() -> Database:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     _db_local.db = Database(DB_PATH)
     _db_local.gen = _db_generation
+    _db_local.db.nr_sperrfrist_tage = _lager_einstellungen()["nr_sperrfrist_tage"]
     return _db_local.db
 
 
@@ -260,6 +282,7 @@ class StockIn(BaseModel):
     laenge: float
     breite: float = 0.0
     stueckzahl: int = 1
+    ist_rest: bool = False
 
 
 class StockOut(BaseModel):
@@ -268,6 +291,7 @@ class StockOut(BaseModel):
     laenge: float
     breite: float
     stueckzahl: int
+    ist_rest: bool = False
 
 
 class EinzelstueckOut(BaseModel):
@@ -279,6 +303,7 @@ class EinzelstueckOut(BaseModel):
     code: str = ""               # Aufschrift, z.B. "AP4040-07"
     lagerort: str = ""           # eigener Lagerort (leer = Material)
     lagerort_effektiv: str = ""  # eigener oder der des Materials
+    reserviert_fuer: str = ""    # Projekt, dessen gespeicherter Plan das Stück reserviert
 
 
 class EinzelstueckIn(BaseModel):
@@ -359,6 +384,7 @@ class OptimizeRequest(BaseModel):
     material_id: int
     blade_id: int
     algorithm: str = "greedy"
+    reste_zuerst: bool = False   # erst nur Reste verplanen, dann ganze Stücke
 
 
 class PlatzierungOut(BaseModel):
@@ -501,6 +527,8 @@ class SettingsIn(BaseModel):
     api_port: Optional[int] = None
     api_key: Optional[str] = None
     license_key: Optional[str] = None
+    nr_lock_days: Optional[float] = None    # Sperrfrist frei gewordener Stücknummern
+    reservation: Optional[bool] = None      # gespeicherte Pläne reservieren ihr Lager
 
 
 # ---------------------------------------------------------------------------
@@ -553,6 +581,7 @@ def _stock_to_out(ls: Lagerstueck) -> StockOut:
         laenge=ls.laenge,
         breite=ls.breite,
         stueckzahl=ls.stueckzahl,
+        ist_rest=ls.ist_rest,
     )
 
 
@@ -723,6 +752,8 @@ def _get_settings_dict() -> dict:
         "api_port": s.value("api/port", 8421),
         "api_key": s.value("api/key", ""),
         "license_key": s.value("license/key", ""),
+        "nr_lock_days": s.value("stock/nr_lock_days", 1),
+        "reservation": s.value("stock/reservation", True),
     }
 
 
@@ -751,6 +782,10 @@ def _update_settings(data: SettingsIn):
         s.setValue("api/port", data.api_port)
     if data.api_key is not None:
         s.setValue("api/key", data.api_key)
+    if data.nr_lock_days is not None:
+        s.setValue("stock/nr_lock_days", max(0.0, data.nr_lock_days))
+    if data.reservation is not None:
+        s.setValue("stock/reservation", data.reservation)
     if data.license_key is not None:
         s.setValue("license/key", data.license_key)
 
@@ -847,6 +882,7 @@ def create_stock(data: StockIn):
         laenge=data.laenge,
         breite=data.breite,
         stueckzahl=data.stueckzahl,
+        ist_rest=data.ist_rest,
     )
     ls = get_db().save_lagerstueck(ls)
     return _stock_to_out(ls)
@@ -863,6 +899,7 @@ def update_stock(sid: int, data: StockIn):
         laenge=data.laenge,
         breite=data.breite,
         stueckzahl=data.stueckzahl,
+        ist_rest=data.ist_rest,
     )
     ls = get_db().save_lagerstueck(ls)
     return _stock_to_out(ls)
@@ -881,8 +918,10 @@ def delete_stock(sid: int):
 # ---------------------------------------------------------------------------
 
 
-def _piece_out(db: Database, e: Einzelstueck, material: Material | None) -> EinzelstueckOut:
+def _piece_out(db: Database, e: Einzelstueck, material: Material | None,
+               reserviert: dict | None = None) -> EinzelstueckOut:
     return EinzelstueckOut(
+        reserviert_fuer=(reserviert or {}).get((e.lagerstueck_id, e.nr), ""),
         id=e.id, lagerstueck_id=e.lagerstueck_id, nr=e.nr, notiz=e.notiz,
         defekt_count=len(db.list_defekte(e.id)),
         code=stueck_code(material.kuerzel if material else "", e.nr),
@@ -899,7 +938,9 @@ def _material_of_stock(db: Database, sid: int) -> Material | None:
 def list_pieces(sid: int):
     db = get_db()
     material = _material_of_stock(db, sid)
-    return [_piece_out(db, e, material) for e in db.list_einzelstuecke(sid)]
+    reserviert = (db.reservierte_stuecke(material.id)
+                  if material and _lager_einstellungen()["reservierung"] else {})
+    return [_piece_out(db, e, material, reserviert) for e in db.list_einzelstuecke(sid)]
 
 
 @app.put("/api/pieces/{eid}", response_model=EinzelstueckOut)
@@ -1219,62 +1260,70 @@ def run_optimization(req: OptimizeRequest):
                                    [], [])
         raise HTTPException(400, "No open parts for this material")
 
-    vorrat = get_db().list_lagerstuecke(req.material_id)
-
+    db = get_db()
     kerf = blade.schnittbreite
-    defekte_map = get_db().list_defekte_for_material(req.material_id)
+    defekte_map = db.list_defekte_for_material(req.material_id)
+    # Verfügbare Stücknummern je Lagerzeile. Reservierung: Noch nicht angefangene
+    # Bretter gespeicherter Pläne ANDERER Projekte sind tabu.
+    nrs_map = db.einzelstueck_nrs_for_material(req.material_id)
+    if _lager_einstellungen()["reservierung"]:
+        reserviert = set(db.reservierte_stuecke(req.material_id, ausser_projekt=req.project_id))
+        nrs_map = {lid: [nr for nr in nrs if (lid, nr) not in reserviert]
+                   for lid, nrs in nrs_map.items()}
+    vorrat_alle = db.list_lagerstuecke(req.material_id)
+    vorrat = [replace(ls, stueckzahl=len(nrs_map.get(ls.id, []))) for ls in vorrat_alle]
+    vorrat = [ls for ls in vorrat if ls.stueckzahl > 0]
     # Der Optimizer zählt die Kopien eines Lagerstücks lückenlos 1..anzahl,
-    # echte Stücknummern können Lücken haben (verbrauchte Stücke). Defekte auf
-    # die laufende Nummer umschlüsseln und das Ergebnis danach zurückübersetzen.
-    nrs_map = get_db().einzelstueck_nrs_for_material(req.material_id)
+    # echte Stücknummern haben Lücken (verbraucht/reserviert). Defekte auf die
+    # laufende Nummer umschlüsseln und das Ergebnis danach zurückübersetzen.
     defekte_lauf = {
         lid: {i + 1: by_nr[nr] for i, nr in enumerate(nrs_map.get(lid, []))
               if nr in by_nr}
         for lid, by_nr in defekte_map.items()
     }
 
-    if is_1d:
-        besaeumung = material.besaeumung
-        teil_tuples = [(t.label, t.laenge, offen[t.id]) for t in teile]
-        stock = [
-            StangenVorrat(ls.id, ls.laenge - 2 * besaeumung, ls.stueckzahl)
-            for ls in vorrat
-            if ls.laenge - 2 * besaeumung > 0
-        ]
+    besaeumung = material.besaeumung
+    teil_drehung: dict[str, tuple[bool, bool]] = {}
+    for t in teile:
+        normal_ok, gedreht_ok = drehung_fuer_teil(material.maserung, t.maserung)
+        teil_drehung[t.label] = (normal_ok, gedreht_ok)
+    drehung_erlaubt = material.maserung == Maserung.KEINE
 
+    def rechnen(lager: list[Lagerstueck], mengen: dict[int, int]) -> OptimierungsErgebnis:
+        tl = [t for t in teile if mengen.get(t.id, 0) > 0]
+        if is_1d:
+            teil_tuples = [(t.label, t.laenge, mengen[t.id]) for t in tl]
+            stock = [StangenVorrat(ls.id, ls.laenge - 2 * besaeumung, ls.stueckzahl)
+                     for ls in lager if ls.laenge - 2 * besaeumung > 0]
+            if req.algorithm == "ga":
+                return optimize_1d_ga(teil_tuples, stock, kerf, defekte_lauf)
+            return optimize_1d(teil_tuples, stock, kerf, defekte_lauf)
+        teil_tuples = [(t.label, t.laenge, t.breite, mengen[t.id]) for t in tl]
+        stock = [PlattenVorrat(ls.id, ls.laenge - 2 * besaeumung,
+                               ls.breite - 2 * besaeumung, ls.stueckzahl)
+                 for ls in lager]
         if req.algorithm == "ga":
-            ergebnis = optimize_1d_ga(teil_tuples, stock, kerf, defekte_lauf)
-        else:
-            ergebnis = optimize_1d(teil_tuples, stock, kerf, defekte_lauf)
+            return optimize_2d_ga(teil_tuples, stock, kerf, drehung_erlaubt,
+                                  teil_drehung, defekte_lauf)
+        if req.algorithm == "nested":
+            return optimize_2d_nested(teil_tuples, stock, kerf, drehung_erlaubt,
+                                      teil_drehung, defekte_lauf)
+        return optimize_2d(teil_tuples, stock, kerf, drehung_erlaubt,
+                           teil_drehung, defekte_lauf)
+
+    mengen = {t.id: offen[t.id] for t in teile}
+    reste = [ls for ls in vorrat if ls.ist_rest]
+    ganze = [ls for ls in vorrat if not ls.ist_rest]
+    if req.reste_zuerst and reste and ganze:
+        # 1. Durchgang nur mit Resten, 2. Durchgang mit ganzen Stücken für den Rest
+        erg_reste = rechnen(reste, mengen)
+        noch = _fehlende_mengen(erg_reste.fehlende_teile, teile, mengen)
+        erg_ganz = rechnen(ganze, noch) if noch else OptimierungsErgebnis()
+        ergebnis = OptimierungsErgebnis(
+            schnittplaene=erg_reste.schnittplaene + erg_ganz.schnittplaene,
+            fehlende_teile=erg_ganz.fehlende_teile)
     else:
-        besaeumung = material.besaeumung
-        teil_tuples = [(t.label, t.laenge, t.breite, offen[t.id]) for t in teile]
-        stock = [
-            PlattenVorrat(
-                ls.id,
-                ls.laenge - 2 * besaeumung,
-                ls.breite - 2 * besaeumung,
-                ls.stueckzahl,
-            )
-            for ls in vorrat
-        ]
-
-        teil_drehung: dict[str, tuple[bool, bool]] = {}
-        for t in teile:
-            normal_ok, gedreht_ok = drehung_fuer_teil(material.maserung, t.maserung)
-            teil_drehung[t.label] = (normal_ok, gedreht_ok)
-
-        drehung_erlaubt = material.maserung == Maserung.KEINE
-
-        if req.algorithm == "ga":
-            ergebnis = optimize_2d_ga(teil_tuples, stock, kerf, drehung_erlaubt,
-                                       teil_drehung, defekte_lauf)
-        elif req.algorithm == "nested":
-            ergebnis = optimize_2d_nested(teil_tuples, stock, kerf, drehung_erlaubt,
-                                           teil_drehung, defekte_lauf)
-        else:
-            ergebnis = optimize_2d(teil_tuples, stock, kerf, drehung_erlaubt,
-                                    teil_drehung, defekte_lauf)
+        ergebnis = rechnen(vorrat, mengen)
 
     for sp in ergebnis.schnittplaene:
         nrs = nrs_map.get(sp.lagerstueck_id, [])
@@ -1285,7 +1334,7 @@ def run_optimization(req: OptimizeRequest):
     bedarf = []
     if ergebnis.fehlende_teile:
         bedarf = [m.model_dump() for m in _berechne_materialbedarf(
-            ergebnis.fehlende_teile, teile, vorrat, material, kerf)]
+            ergebnis.fehlende_teile, teile, vorrat_alle, material, kerf)]
     return _plan_speichern(projekt, material, blade, req.algorithm, behalten + neue,
                            ergebnis.fehlende_teile, bedarf)
 
@@ -1293,6 +1342,18 @@ def run_optimization(req: OptimizeRequest):
 # ---------------------------------------------------------------------------
 # Gespeicherte Schnittpläne
 # ---------------------------------------------------------------------------
+
+
+def _fehlende_mengen(labels: list[str], teile: list[Teil], mengen: dict[int, int]
+                     ) -> dict[int, int]:
+    """Nicht platzierte Labels wieder auf Teile (IDs) verteilen."""
+    noch: dict[int, int] = {}
+    for label in labels:
+        t = next((t for t in teile if t.label == label
+                  and noch.get(t.id, 0) < mengen.get(t.id, 0)), None)
+        if t:
+            noch[t.id] = noch.get(t.id, 0) + 1
+    return noch
 
 
 def _angefangene_bretter(alt: GespeicherterPlan | None, is_1d: bool) -> list[PlanBrett]:
@@ -1531,6 +1592,15 @@ def set_piece_sawn(sid: int, data: PieceSawnIn):
         t = next((t for t in db.list_teile(plan.projekt_id) if t.id == stueck.teil_id), None)
         teil = _teil_to_out(t) if t else None
     return PieceSawnOut(plan=_plan_to_out(db.get_plan_by_id(plan.id)), teil=teil)
+
+
+@app.delete("/api/plans/{plan_id}", status_code=204)
+def discard_plan(plan_id: int):
+    """Plan verwerfen: gibt reservierte Bretter frei. Fortschritt und Lager bleiben."""
+    db = get_db()
+    if not db.get_plan_by_id(plan_id):
+        raise HTTPException(404, "Plan not found")
+    db.delete_plan(plan_id)
 
 
 @app.post("/api/plans/{plan_id}/confirm-all", response_model=OptimizeResult)

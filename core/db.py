@@ -97,7 +97,17 @@ CREATE TABLE IF NOT EXISTS lagerstueck (
     material_id INTEGER NOT NULL REFERENCES material(id),
     laenge      REAL    NOT NULL,
     breite      REAL    NOT NULL DEFAULT 0,
-    stueckzahl  INTEGER NOT NULL DEFAULT 1
+    stueckzahl  INTEGER NOT NULL DEFAULT 1,
+    ist_rest    INTEGER NOT NULL DEFAULT 0     -- beim Sägen entstanden / als Rest markiert
+);
+
+-- Frei gewordene Stücknummern erst nach einer Sperrfrist neu vergeben
+-- (Schutz, falls ein Stück versehentlich abgehakt wurde und noch im Regal liegt)
+CREATE TABLE IF NOT EXISTS stueck_nr_sperre (
+    material_id INTEGER NOT NULL,
+    nr          INTEGER NOT NULL,
+    frei_ab     REAL    NOT NULL,
+    PRIMARY KEY (material_id, nr)
 );
 
 CREATE TABLE IF NOT EXISTS app_lock (
@@ -207,6 +217,9 @@ class Database:
 
     def __init__(self, path: Path | str = DEFAULT_DB):
         self.path = Path(path)
+        # Sperrfrist (Tage) für frei gewordene Stücknummern; die Web-App setzt sie
+        # aus den Einstellungen, 0 = sofort wieder vergeben
+        self.nr_sperrfrist_tage: float = 1.0
         self._sicherung_vor_migration()
         self.conn = sqlite3.connect(str(self.path))
         self.conn.execute("PRAGMA foreign_keys = ON")
@@ -219,6 +232,7 @@ class Database:
     # Spalten, die per Migration nachgerüstet werden (für die Sicherung vor dem Update)
     PFLICHT_SPALTEN = {
         "projekt": {"anzahl"},
+        "lagerstueck": {"ist_rest"},
         "material": {"kuerzel", "lagerort", "lagerort_reste"},
         "einzelstueck": {"lagerort"},
     }
@@ -305,6 +319,11 @@ class Database:
             self.conn.execute(
                 "UPDATE teil SET gesaegt_anzahl = stueckzahl WHERE status = 'gesägt'")
         self._migrate_einzelstuecke()
+        ls_cols = {row[1] for row in
+                   self.conn.execute("PRAGMA table_info(lagerstueck)").fetchall()}
+        if "ist_rest" not in ls_cols:
+            self.conn.execute(
+                "ALTER TABLE lagerstueck ADD COLUMN ist_rest INTEGER NOT NULL DEFAULT 0")
         es_cols = {row[1] for row in
                    self.conn.execute("PRAGMA table_info(einzelstueck)").fetchall()}
         if "lagerort" not in es_cols:
@@ -521,16 +540,16 @@ class Database:
     def save_lagerstueck(self, l: Lagerstueck, wunsch_nr: int = 0) -> Lagerstueck:
         if l.id is None:
             cur = self.conn.execute(
-                """INSERT INTO lagerstueck (material_id, laenge, breite, stueckzahl)
-                   VALUES (?,?,?,?)""",
-                (l.material_id, l.laenge, l.breite, l.stueckzahl),
+                """INSERT INTO lagerstueck (material_id, laenge, breite, stueckzahl, ist_rest)
+                   VALUES (?,?,?,?,?)""",
+                (l.material_id, l.laenge, l.breite, l.stueckzahl, int(l.ist_rest)),
             )
             l.id = cur.lastrowid
         else:
             self.conn.execute(
                 """UPDATE lagerstueck SET material_id=?, laenge=?, breite=?,
-                   stueckzahl=? WHERE id=?""",
-                (l.material_id, l.laenge, l.breite, l.stueckzahl, l.id),
+                   stueckzahl=?, ist_rest=? WHERE id=?""",
+                (l.material_id, l.laenge, l.breite, l.stueckzahl, int(l.ist_rest), l.id),
             )
         self._sync_einzelstuecke(l.id, l.stueckzahl, wunsch_nr)
         self.conn.commit()
@@ -555,6 +574,7 @@ class Database:
         return self._row_to_lagerstueck(row) if row else None
 
     def delete_lagerstueck(self, lid: int):
+        self._nrs_sperren(lid, self.einzelstueck_nrs_for_lagerstueck(lid))
         self.conn.execute("DELETE FROM lagerstueck WHERE id=?", (lid,))
         self.conn.commit()
 
@@ -564,6 +584,7 @@ class Database:
             id=row["id"], material_id=row["material_id"],
             laenge=row["laenge"], breite=row["breite"],
             stueckzahl=row["stueckzahl"],
+            ist_rest=bool(row["ist_rest"]) if "ist_rest" in row.keys() else False,
         )
 
     # ------------------------------------------------------------------
@@ -586,28 +607,57 @@ class Database:
                     "INSERT INTO einzelstueck (lagerstueck_id, nr) VALUES (?,?)",
                     (lagerstueck_id, nr),
                 )
-        for nr in nrs[stueckzahl:] if stueckzahl < len(nrs) else []:
+        weg = nrs[stueckzahl:] if stueckzahl < len(nrs) else []
+        for nr in weg:
             self.conn.execute(
                 """DELETE FROM einzelstueck
                    WHERE lagerstueck_id=? AND nr=?""",
                 (lagerstueck_id, nr),
             )
+        self._nrs_sperren(lagerstueck_id, weg)
+
+    def _nrs_sperren(self, lagerstueck_id: int, nrs: list[int]):
+        """Gerade frei gewordene Nummern für die Sperrfrist vormerken."""
+        if self.nr_sperrfrist_tage <= 0 or not nrs:
+            return
+        import time
+        row = self.conn.execute(
+            "SELECT material_id FROM lagerstueck WHERE id=?", (lagerstueck_id,)).fetchone()
+        if not row:
+            return
+        frei_ab = time.time() + self.nr_sperrfrist_tage * 86400
+        self.conn.executemany(
+            "INSERT OR REPLACE INTO stueck_nr_sperre (material_id, nr, frei_ab) VALUES (?,?,?)",
+            [(row["material_id"], nr, frei_ab) for nr in nrs])
+
+    def gesperrte_nrs(self, material_id: int) -> dict[int, float]:
+        """Noch gesperrte Nummern eines Materials: {nr: frei_ab}."""
+        import time
+        return {r["nr"]: r["frei_ab"] for r in self.conn.execute(
+            "SELECT nr, frei_ab FROM stueck_nr_sperre WHERE material_id=? AND frei_ab > ?",
+            (material_id, time.time()))}
 
     def freie_stueck_nrs(self, lagerstueck_id: int, anzahl: int,
                          wunsch_nr: int = 0) -> list[int]:
         """Die kleinsten freien Stücknummern im Material dieser Lagerzeile.
 
-        Ist wunsch_nr frei, kommt sie zuerst (Rest erbt den Code seines Bretts).
+        Ist wunsch_nr frei, kommt sie zuerst (Rest erbt den Code seines Bretts) –
+        auch wenn sie gerade gesperrt ist, denn es ist dasselbe physische Stück.
+        Sonst werden gesperrte Nummern (Sperrfrist) übersprungen.
         """
+        mid = self.conn.execute(
+            "SELECT material_id FROM lagerstueck WHERE id=?", (lagerstueck_id,)).fetchone()[0]
         belegt = {r[0] for r in self.conn.execute(
             """SELECT e.nr FROM einzelstueck e
                JOIN lagerstueck l ON l.id = e.lagerstueck_id
-               WHERE l.material_id = (SELECT material_id FROM lagerstueck WHERE id=?)""",
-            (lagerstueck_id,))}
+               WHERE l.material_id = ?""", (mid,))}
         frei, nr = [], 1
         if wunsch_nr > 0 and wunsch_nr not in belegt and anzahl > 0:
             frei.append(wunsch_nr)
             belegt.add(wunsch_nr)
+            self.conn.execute("DELETE FROM stueck_nr_sperre WHERE material_id=? AND nr=?",
+                              (mid, wunsch_nr))
+        belegt |= set(self.gesperrte_nrs(mid))
         while len(frei) < anzahl:
             if nr not in belegt:
                 frei.append(nr)
@@ -1016,6 +1066,26 @@ class Database:
             (projekt_id,)).fetchall()
         return [dict(r) for r in rows]
 
+    def reservierte_stuecke(self, material_id: int, ausser_projekt: int = 0
+                            ) -> dict[tuple[int, int], str]:
+        """Von gespeicherten Plänen reservierte Stücke: {(lagerstück_id, nr): Projektname}.
+
+        Reserviert sind die noch nicht angefangenen Bretter (verbraucht=0);
+        die Pläne von ausser_projekt zählen nicht (der wird gerade neu berechnet).
+        """
+        rows = self.conn.execute(
+            """SELECT b.lagerstueck_id, b.stueck_nr, pr.name FROM schnittplan_brett b
+               JOIN schnittplan p ON p.id = b.schnittplan_id
+               JOIN projekt pr ON pr.id = p.projekt_id
+               WHERE p.material_id=? AND p.projekt_id != ? AND b.verbraucht=0
+                     AND b.stueck_nr > 0""",
+            (material_id, ausser_projekt)).fetchall()
+        return {(r["lagerstueck_id"], r["stueck_nr"]): r["name"] for r in rows}
+
+    def delete_plan(self, plan_id: int):
+        self.conn.execute("DELETE FROM schnittplan WHERE id=?", (plan_id,))
+        self.conn.commit()
+
     def set_stueck_gesaegt(self, stueck_id: int, gesaegt: bool):
         self.conn.execute("UPDATE schnittplan_stueck SET gesaegt=? WHERE id=?",
                           (int(gesaegt), stueck_id))
@@ -1091,6 +1161,7 @@ class Database:
                         for d in self.list_defekte(row["id"])],
                 }
                 self.conn.execute("DELETE FROM einzelstueck WHERE id=?", (row["id"],))
+                self._nrs_sperren(lagerstueck_id, [row["nr"]])
                 anzahl = 1
         ls.stueckzahl -= anzahl
         if ls.stueckzahl <= 0:
@@ -1130,6 +1201,9 @@ class Database:
         if frei:
             self.conn.execute("UPDATE einzelstueck SET nr=? WHERE id=?",
                               (nr, neu["id"]))
+            self.conn.execute(
+                """DELETE FROM stueck_nr_sperre WHERE nr=? AND material_id =
+                   (SELECT material_id FROM lagerstueck WHERE id=?)""", (nr, lagerstueck_id))
         self.conn.execute("UPDATE einzelstueck SET notiz=?, lagerort=? WHERE id=?",
                           (snapshot.get("notiz", ""), snapshot.get("lagerort", ""),
                            neu["id"]))
@@ -1169,7 +1243,7 @@ class Database:
         ls = next((e for e in self.list_lagerstuecke(material_id)
                    if abs(e.laenge - laenge) < 0.1 and abs(e.breite - breite) < 0.1),
                   None) or Lagerstueck(material_id=material_id, laenge=laenge,
-                                       breite=breite, stueckzahl=0)
+                                       breite=breite, stueckzahl=0, ist_rest=True)
         ls, nr = self.stueck_hinzufuegen(ls, wunsch_nr)
         if mat.lagerort_reste and nr:
             self.conn.execute(

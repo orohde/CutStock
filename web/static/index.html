@@ -181,6 +181,10 @@
             <label class="fd-form-label" for="opt-algorithm" data-i18n="opt.algorithm">Algorithmus</label>
             <select id="opt-algorithm" class="cs-select"></select>
           </div>
+          <label class="opt-check" title="" data-i18n-title="opt.rests_first_hint">
+            <input type="checkbox" id="opt-rests-first" class="cs-checkbox">
+            <span data-i18n="opt.rests_first">Reste zuerst</span>
+          </label>
           <button id="btn-optimize" class="fd-button fd-button--emphasized" type="button" data-i18n="opt.run">Optimieren</button>
         </div>
       </div>
@@ -192,6 +196,7 @@
           <button id="btn-pdf" class="fd-button" type="button" data-i18n="opt.pdf">PDF Export</button>
           <button id="btn-labels" class="fd-button" type="button" data-i18n="labels.button">Etiketten</button>
           <button id="btn-saw-mode" class="fd-button" type="button" data-i18n="saw.mode">Werkstatt-Modus</button>
+          <button id="btn-discard-plan" class="fd-button" type="button" data-i18n="plan.discard">Plan verwerfen</button>
           <button id="btn-restart" class="fd-button" type="button" data-i18n="plan.restart">Projekt neu starten</button>
         </div>
         <div id="cut-plans" class="cut-plans"></div>
@@ -240,6 +245,18 @@
         <div class="form-group label-custom-field">
           <label class="fd-form-label" for="settings-label-h" data-i18n="labels.custom_h">Etikett Höhe (mm):</label>
           <input type="number" id="settings-label-h" min="10" step="1">
+        </div>
+      </div>
+
+      <div class="panel settings-section">
+        <h3 class="fd-title fd-title--h5" data-i18n="set.stock">Lager</h3>
+        <div class="form-group">
+          <label class="fd-form-label" for="settings-reservation" data-i18n="set.reservation">Gespeicherte Pläne reservieren ihr Material:</label>
+          <input type="checkbox" id="settings-reservation" class="cs-checkbox">
+        </div>
+        <div class="form-group">
+          <label class="fd-form-label" for="settings-nr-lock" data-i18n="set.nr_lock" title="" data-i18n-title="set.nr_lock_hint">Nummern-Sperrfrist (Tage, 0 = aus):</label>
+          <input type="number" id="settings-nr-lock" min="0" step="1" class="cs-input" style="width:100px">
         </div>
       </div>
 

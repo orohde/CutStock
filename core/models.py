@@ -72,6 +72,7 @@ class Lagerstueck:
     laenge: float = 0.0
     breite: float = 0.0
     stueckzahl: int = 1
+    ist_rest: bool = False   # Reststück (für "Reste zuerst aufbrauchen")
 
 
 @dataclass
