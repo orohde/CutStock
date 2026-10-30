@@ -110,6 +110,12 @@ CREATE TABLE IF NOT EXISTS stueck_nr_sperre (
     PRIMARY KEY (material_id, nr)
 );
 
+-- Schlüssel/Wert-Infos zur App, z. B. mit welcher Version die DB zuletzt lief
+CREATE TABLE IF NOT EXISTS app_info (
+    schluessel  TEXT PRIMARY KEY,
+    wert        TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS app_lock (
     id          INTEGER PRIMARY KEY CHECK(id = 1),
     hostname    TEXT    NOT NULL DEFAULT '',
@@ -227,8 +233,14 @@ CREATE TABLE IF NOT EXISTS schnittplan_fuellteil (
 class Database:
     """Zentrale Datenbankklasse – öffnet/erstellt die SQLite-Datei."""
 
-    def __init__(self, path: Path | str = DEFAULT_DB):
+    # So viele automatische Sicherungen (*-vor-update-*) bleiben liegen, ältere weg
+    MAX_SICHERUNGEN = 5
+
+    def __init__(self, path: Path | str = DEFAULT_DB, app_version: str | None = None):
+        """app_version: laufende Programmversion. Wenn gesetzt, wird die DB bei
+        jedem Versionswechsel vorher gesichert (nicht nur bei Schema-Änderungen)."""
         self.path = Path(path)
+        self.app_version = app_version
         # Sperrfrist (Tage) für frei gewordene Stücknummern; die Web-App setzt sie
         # aus den Einstellungen, 0 = sofort wieder vergeben
         self.nr_sperrfrist_tage: float = 1.0
@@ -240,6 +252,11 @@ class Database:
         self.conn.execute("PRAGMA journal_mode = DELETE")
         self.conn.row_factory = sqlite3.Row
         self._create_tables()
+        if app_version:
+            self.conn.execute(
+                "INSERT INTO app_info (schluessel, wert) VALUES ('version', ?) "
+                "ON CONFLICT(schluessel) DO UPDATE SET wert=excluded.wert", (app_version,))
+            self.conn.commit()
 
     # Spalten, die per Migration nachgerüstet werden (für die Sicherung vor dem Update)
     PFLICHT_SPALTEN = {
@@ -260,12 +277,26 @@ class Database:
         finally:
             conn.close()
 
+    @staticmethod
+    def _gespeicherte_version(path: Path) -> str:
+        conn = sqlite3.connect(str(path))
+        try:
+            row = conn.execute(
+                "SELECT wert FROM app_info WHERE schluessel='version'").fetchone()
+            return row[0] if row else ""
+        except sqlite3.Error:
+            return ""  # DB von vor der app_info-Tabelle
+        finally:
+            conn.close()
+
     def _sicherung_vor_migration(self):
-        """Vor einer Schema-Änderung eine Kopie der DB anlegen (neben der DB).
+        """Vor einem Update eine Kopie der DB anlegen (neben der DB).
 
         Die Migrationen legen nur Tabellen/Spalten an und ändern keine bestehenden
-        Daten – die Kopie ist reine Vorsicht. Sie entsteht nur, wenn wirklich etwas
-        fehlt, also einmal pro Update: <name>-vor-update-JJJJMMTT-HHMMSS.db
+        Daten – die Kopie ist reine Vorsicht. Sie entsteht, wenn im Schema etwas
+        fehlt oder (mit app_version) die Programmversion gewechselt hat, also
+        einmal pro Update: <name>-vor-update-JJJJMMTT-HHMMSS.db
+        Es bleiben nur die letzten MAX_SICHERUNGEN liegen.
         """
         if not self.path.exists() or self.path.stat().st_size == 0:
             return
@@ -278,10 +309,13 @@ class Database:
                 conn.close()
             if "projekt" not in tabellen:
                 return  # leere/neue DB, nichts zu sichern
-            if "schnittplan" in tabellen and all(
-                    spalten <= self._spalten_vorhanden(self.path, tabelle)
-                    for tabelle, spalten in self.PFLICHT_SPALTEN.items()):
-                return  # Schema aktuell
+            schema_aktuell = "schnittplan" in tabellen and all(
+                spalten <= self._spalten_vorhanden(self.path, tabelle)
+                for tabelle, spalten in self.PFLICHT_SPALTEN.items())
+            version_gleich = (not self.app_version or
+                              self._gespeicherte_version(self.path) == self.app_version)
+            if schema_aktuell and version_gleich:
+                return
             import shutil
             import time
             sicherung = self.path.with_name(
@@ -289,6 +323,11 @@ class Database:
                 f"{self.path.suffix}")
             if not sicherung.exists():
                 shutil.copy2(str(self.path), str(sicherung))
+            # Name enthält den Zeitstempel → alphabetisch = zeitlich sortiert
+            alte = sorted(self.path.parent.glob(
+                f"{self.path.stem}-vor-update-*{self.path.suffix}"))
+            for datei in alte[:-self.MAX_SICHERUNGEN]:
+                datei.unlink()
         except (sqlite3.Error, OSError):
             pass  # Sicherung ist optional, der Start darf daran nicht scheitern
 

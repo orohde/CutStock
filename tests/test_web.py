@@ -434,6 +434,36 @@ class TestMigrationSchnittplaene:
         assert conn.execute("SELECT name FROM material").fetchone()[0] == "Alt"
         conn.close()
 
+    def test_versionswechsel_sichert_einmal(self, tmp_path):
+        from core.db import Database
+        path = tmp_path / "cutstock.db"
+        db = Database(path, app_version="2026.10.1")
+        db.conn.execute("INSERT INTO projekt (name) VALUES ('P')")
+        db.conn.commit()
+        db.close()
+        Database(path, app_version="2026.10.1").close()   # gleiche Version
+        assert list(tmp_path.glob("cutstock-vor-update-*.db")) == []
+
+        Database(path, app_version="2026.10.2").close()   # Update
+        assert len(list(tmp_path.glob("cutstock-vor-update-*.db"))) == 1
+        Database(path, app_version="2026.10.2").close()   # zweiter Start
+        assert len(list(tmp_path.glob("cutstock-vor-update-*.db"))) == 1
+
+    def test_nur_letzte_sicherungen_bleiben(self, tmp_path):
+        from core.db import Database
+        path = tmp_path / "cutstock.db"
+        db = Database(path, app_version="1")
+        db.conn.execute("INSERT INTO projekt (name) VALUES ('P')")
+        db.conn.commit()
+        db.close()
+        for i in range(7):
+            (tmp_path / f"cutstock-vor-update-2020010{i}-000000.db").write_bytes(b"")
+        Database(path, app_version="2").close()
+        rest = sorted(p.name for p in tmp_path.glob("cutstock-vor-update-*.db"))
+        assert len(rest) == Database.MAX_SICHERUNGEN
+        assert "cutstock-vor-update-20200100-000000.db" not in rest
+        assert not rest[-1].startswith("cutstock-vor-update-2020")   # neue bleibt
+
 
 
 # =====================================================================

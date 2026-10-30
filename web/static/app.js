@@ -1267,24 +1267,96 @@ function openExternal(url) {
     }
 }
 
+// Neueste Version von GitHub holen: { tag, url } (url = Release-Seite)
+async function fetchLatestRelease(info) {
+    const resp = await fetch(info.releases_api, {
+        headers: { 'Accept': 'application/vnd.github+json' },
+    });
+    if (!resp.ok) throw new Error('github');
+    const rel = await resp.json();
+    return { tag: (rel.tag_name || '').trim(), url: rel.html_url || info.github_url };
+}
+
+const UPDATE_CACHE_KEY = 'cutstock_update_check';
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+// Ist eine neuere Version da, erscheint oben ein Knopf, der die Anleitung öffnet
+function showUpdateButton(info, release) {
+    const btn = document.getElementById('btn-update-available');
+    if (!btn) return;
+    const newer = release.tag && compareVersions(release.tag, info.version) > 0;
+    btn.style.display = newer ? '' : 'none';
+    btn.onclick = newer ? () => openUpdateDialog(info, release) : null;
+}
+
+// Beim Start im Hintergrund prüfen – höchstens einmal am Tag, Fehler still ignorieren
+async function autoCheckUpdate() {
+    try {
+        const info = State.versionInfo || await Api.getVersion();
+        State.versionInfo = info;
+        let release = null;
+        try {
+            const cached = JSON.parse(storageGet('localStorage', UPDATE_CACHE_KEY) || 'null');
+            if (cached && Date.now() - cached.ts < UPDATE_CHECK_INTERVAL_MS) release = cached;
+        } catch { /* Cache defekt → neu prüfen */ }
+        if (!release) {
+            release = await fetchLatestRelease(info);
+            storageSet('localStorage', UPDATE_CACHE_KEY, JSON.stringify({ ...release, ts: Date.now() }));
+        }
+        showUpdateButton(info, release);
+    } catch { /* offline o. ä. – kein Hinweis */ }
+}
+
 async function checkForUpdate() {
     showToast(t('set.checking_update'), 'info');
     try {
         const info = State.versionInfo || await Api.getVersion();
-        const resp = await fetch(info.releases_api, {
-            headers: { 'Accept': 'application/vnd.github+json' },
-        });
-        if (!resp.ok) throw new Error('github');
-        const rel = await resp.json();
-        const latest = (rel.tag_name || '').trim();
-        if (latest && compareVersions(latest, info.version) > 0) {
-            showToast(t('set.update_available', { version: latest }), 'info');
+        const release = await fetchLatestRelease(info);
+        storageSet('localStorage', UPDATE_CACHE_KEY, JSON.stringify({ ...release, ts: Date.now() }));
+        showUpdateButton(info, release);
+        if (release.tag && compareVersions(release.tag, info.version) > 0) {
+            openUpdateDialog(info, release);
         } else {
             showToast(t('set.up_to_date', { version: info.version }), 'info');
         }
     } catch {
         showToast(t('set.update_failed'), 'error');
     }
+}
+
+// Anleitung zum Aktualisieren: Docker-Plattformen bzw. Download für die Desktop-App
+function openUpdateDialog(info, release) {
+    const overlay = document.getElementById('modal-overlay');
+    const body = document.getElementById('modal-body');
+    const steps = key => `<ol>${t(key).split('\n').map(s => `<li>${escHtml(s)}</li>`).join('')}</ol>`;
+    const releaseLink = (label, cls = '') =>
+        `<a class="fd-button ${cls}" href="${escAttr(release.url)}" target="_blank" rel="noopener">`
+        + `<span>${escHtml(label)}</span><span class="ext-arrow" aria-hidden="true"> ↗</span></a>`;
+
+    let guide;
+    if (info.docker) {
+        guide = `<p>${escHtml(t('upd.how_docker'))}</p>
+            <details open><summary>${escHtml(t('upd.synology'))}</summary>
+                ${steps('upd.synology_steps')}
+                <p class="update-hint">${escHtml(t('upd.synology_hint'))}</p></details>
+            <details><summary>${escHtml(t('upd.unraid'))}</summary>${steps('upd.unraid_steps')}</details>
+            <details><summary>${escHtml(t('upd.compose'))}</summary>
+                <pre>docker compose pull\ndocker compose up -d</pre></details>`;
+    } else {
+        guide = `<p>${escHtml(t('upd.desktop'))}</p>
+            <div class="toolbar">${releaseLink(t('upd.download'), 'fd-button--emphasized')}</div>`;
+    }
+
+    document.getElementById('modal-title').textContent = t('upd.title', { version: release.tag });
+    body.innerHTML = `<div class="update-guide">
+        <p>${escHtml(t('upd.current', { current: info.version }))}</p>
+        ${guide}
+        <div class="toolbar">${releaseLink(t('upd.whats_new'), 'fd-button--transparent')}</div>
+    </div>`;
+    document.getElementById('modal-save').style.display = 'none';
+    document.getElementById('modal-cancel').textContent = t('btn.close');
+    overlay.classList.remove('hidden');
+    overlay.classList.add('active');
 }
 
 async function renderBlades() {
@@ -2445,6 +2517,7 @@ function closeModal() {
     overlay.classList.add('hidden');
     document.getElementById('modal-body').innerHTML = '';
     document.getElementById('modal-save').onclick = null;
+    document.getElementById('modal-cancel').textContent = t('btn.cancel');
 }
 
 // ---------------------------------------------------------------------------
@@ -4192,6 +4265,7 @@ async function init() {
         renderLicense();
         renderProjects();
         renderOptDropdowns();
+        autoCheckUpdate();
 
         // Zuletzt offenen Tab wiederherstellen (überlebt ein Neuladen der Seite)
         const lastTab = storageGet('sessionStorage', 'cutstock_tab');

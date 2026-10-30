@@ -33,7 +33,8 @@ CutStock comes in two flavors that share the same optimization core:
 - **Labels** -- printable labels for sawn parts and remnants (A4 sheets like Avery 3475/L7160 or Dymo/Brother label printers, custom sizes)
 - **PDF Export** -- compact multi-page layout: parts list with quantities, identical cutting patterns combined, material requirements with piece codes, storage location and material image
 - **Statistics** -- detailed waste analysis per stock piece and totals
-- **Backup/Restore** -- full database + settings as ZIP; before every update that changes the database, CutStock automatically creates a backup copy
+- **Backup/Restore** -- full database + settings as ZIP; before every update, CutStock automatically creates a backup copy
+- **Update notice** -- CutStock checks once a day for a new version and then shows a button at the top with step-by-step instructions (Synology, Unraid, Docker Compose, or desktop app download)
 - **Multi-language** -- English, Deutsch, Francais, Italiano
 - **SAP Horizon Design** -- identical Fiori look in desktop and web, light and dark theme
 - **Keyboard Shortcuts** -- fully keyboard-driven workflow, remappable in the web app
@@ -96,7 +97,7 @@ docker run -d -p 8420:8000 -v "$(pwd)/data:/data" cutstock
 | Data | SQLite database + `settings.json` live in the `/data` volume |
 | Unraid | Use `/mnt/user/appdata/cutstock:/data` as the volume mapping |
 | Synology | In Container Manager, create the `data` folder next to `compose.yml` in File Station first -- otherwise startup fails with "Bind mount failed" |
-| Updates | New versions extend the database automatically; a copy `cutstock-vor-update-<date>.db` is created in the data folder beforehand |
+| Updates | Use the `latest` image tag; Synology (Container Manager → Image → “Update available”) and Unraid (Docker → “update ready”) then detect new versions on their own. CutStock points them out too. Before a new version first starts, a copy `cutstock-vor-update-<date>.db` is created in the data folder (the last 5 are kept) |
 | API key | Optional; set in Settings to protect the REST API from external access. The web UI works without it. |
 | Reverse proxy | Plain HTTP backend, works behind nginx, Traefik, Zoraxy, Caddy, ... |
 | Users | Single-user by design -- no authentication built in; use your reverse proxy/SSO if exposed |
@@ -336,7 +337,7 @@ CUTSTOCK_DB=./data/cutstock.db uvicorn web.app:app --host 0.0.0.0 --port 8000
 
 On macOS, the desktop database and settings sync automatically via iCloud Drive between Macs. A heartbeat-based lock mechanism prevents concurrent access.
 
-Before an update that extends the database, CutStock automatically creates a copy `cutstock-vor-update-<date>.db` next to the database. Updates only add tables and columns; older versions can still open the same database.
+On the first start of a new version (and whenever the database is extended), CutStock automatically creates a copy `cutstock-vor-update-<date>.db` next to the database; the last 5 copies are kept. Updates only add tables and columns; older versions can still open the same database.
 
 The desktop app and the web app share the exact same interface: the desktop
 build runs the same FastAPI backend locally and opens it in your default

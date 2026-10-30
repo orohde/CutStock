@@ -929,3 +929,29 @@ td.expand-toggle:hover { background: rgba(255,255,255,0.05); }
 .fill-table .fd-table__cell {
   padding: 0.25rem 0.5rem;
 }
+
+/* Update-Anleitung */
+.update-guide { max-width: 34rem; }
+.update-guide details { margin: 0.5rem 0; }
+.update-guide summary { cursor: pointer; font-weight: 600; }
+.update-guide ol { margin: 0.5rem 0 0.5rem 1.25rem; padding: 0; }
+.update-guide li { margin: 0.25rem 0; }
+.update-guide pre {
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.25rem;
+  background: var(--sapNeutralBackground, #f5f6f7);
+  white-space: pre-wrap;
+}
+.update-guide .update-hint {
+  font-size: 0.9em;
+  color: var(--sapNeutralTextColor, #6a6d70);
+}
+#btn-update-available {
+  color: #fff;
+  background: #e76500;
+  border-color: #e76500;
+}
+#btn-update-available:hover {
+  background: #c35500;
+}

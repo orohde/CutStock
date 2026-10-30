@@ -58,6 +58,21 @@ from ui.i18n import LANGUAGES, TRANSLATIONS
 
 DB_PATH = Path(os.environ.get("CUTSTOCK_DB", "/data/cutstock.db"))
 
+
+def _read_version() -> str:
+    try:
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            vf = Path(sys._MEIPASS) / "VERSION"
+        else:
+            vf = PROJECT_ROOT / "VERSION"
+        return vf.read_text().strip()
+    except Exception:
+        return "0.0.0"
+
+
+# Vor der DB eingelesen: die DB wird bei jedem Versionswechsel vorher gesichert
+APP_VERSION = _read_version()
+
 import threading
 
 _db_local = threading.local()
@@ -100,7 +115,7 @@ def get_db() -> Database:
         except Exception:
             pass
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _db_local.db = Database(DB_PATH)
+    _db_local.db = Database(DB_PATH, app_version=APP_VERSION)
     _db_local.gen = _db_generation
     _db_local.db.nr_sperrfrist_tage = _lager_einstellungen()["nr_sperrfrist_tage"]
     return _db_local.db
@@ -116,6 +131,7 @@ _init_db = get_db()
 app = FastAPI(title="CutStock API", version="1.0.0")
 
 IS_DESKTOP = os.environ.get("CUTSTOCK_DESKTOP") == "1"
+IS_DOCKER = os.environ.get("CUTSTOCK_DOCKER") == "1" or Path("/.dockerenv").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -1970,18 +1986,6 @@ def get_license():
 # ---------------------------------------------------------------------------
 
 
-def _read_version() -> str:
-    try:
-        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-            vf = Path(sys._MEIPASS) / "VERSION"
-        else:
-            vf = PROJECT_ROOT / "VERSION"
-        return vf.read_text().strip()
-    except Exception:
-        return "0.0.0"
-
-
-APP_VERSION = _read_version()
 GITHUB_REPO = "orohde/CutStock"
 
 
@@ -1993,6 +1997,8 @@ def get_version():
         "github_url": f"https://github.com/{GITHUB_REPO}",
         "website_url": "https://worldgate.de/cutstock/",
         "releases_api": f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+        # Bestimmt, welche Update-Anleitung die Oberfläche zeigt
+        "docker": IS_DOCKER,
     }
 
 
@@ -2119,6 +2125,51 @@ WEB_EXTRA_TRANSLATIONS = {
     "stat.material_needed": {"de": "Materialbedarf", "en": "Material needed", "fr": "Matériel nécessaire", "it": "Materiale necessario"},
     "stat.add_to_stock": {"de": "Ins Lager", "en": "Add to stock", "fr": "Ajouter au stock", "it": "Aggiungi a scorte"},
     "stat.stock_added": {"de": "Lagerbestand ergänzt.", "en": "Stock added.", "fr": "Stock ajouté.", "it": "Scorte aggiunte."},
+    # Update-Hinweis mit Anleitung (Schritte durch Zeilenumbruch getrennt)
+    "btn.close": {"de": "Schließen", "en": "Close", "fr": "Fermer", "it": "Chiudi"},
+    "upd.button": {"de": "Update verfügbar", "en": "Update available", "fr": "Mise à jour disponible", "it": "Aggiornamento disponibile"},
+    "upd.title": {"de": "Neue Version {version}", "en": "New version {version}", "fr": "Nouvelle version {version}", "it": "Nuova versione {version}"},
+    "upd.current": {
+        "de": "Installiert ist Version {current}. Deine Daten bleiben beim Update erhalten – CutStock sichert die Datenbank automatisch, bevor die neue Version sie zum ersten Mal öffnet.",
+        "en": "Installed version: {current}. Your data is kept during the update – CutStock backs up the database automatically before the new version opens it for the first time.",
+        "fr": "Version installée : {current}. Vos données sont conservées – CutStock sauvegarde automatiquement la base de données avant que la nouvelle version ne l’ouvre.",
+        "it": "Versione installata: {current}. I tuoi dati restano invariati – CutStock salva automaticamente il database prima che la nuova versione lo apra.",
+    },
+    "upd.whats_new": {"de": "Was ist neu?", "en": "What’s new?", "fr": "Quoi de neuf ?", "it": "Novità"},
+    "upd.how_docker": {
+        "de": "So aktualisierst du CutStock – je nachdem, worauf es läuft:",
+        "en": "How to update CutStock – depending on where it runs:",
+        "fr": "Comment mettre à jour CutStock – selon l’endroit où il tourne :",
+        "it": "Come aggiornare CutStock – a seconda di dove è in esecuzione:",
+    },
+    "upd.synology": {"de": "Synology (Container Manager)", "en": "Synology (Container Manager)", "fr": "Synology (Container Manager)", "it": "Synology (Container Manager)"},
+    "upd.synology_steps": {
+        "de": "Container Manager öffnen\nLinks auf „Image“ klicken\nBei cutstock auf „Update verfügbar“ klicken und bestätigen\nEtwa eine Minute warten, dann diese Seite neu laden",
+        "en": "Open Container Manager\nClick “Image” on the left\nClick “Update available” next to cutstock and confirm\nWait about a minute, then reload this page",
+        "fr": "Ouvrir Container Manager\nCliquer sur « Image » à gauche\nCliquer sur « Mise à jour disponible » à côté de cutstock et confirmer\nAttendre environ une minute, puis recharger cette page",
+        "it": "Aprire Container Manager\nFare clic su “Immagine” a sinistra\nFare clic su “Aggiornamento disponibile” accanto a cutstock e confermare\nAttendere circa un minuto, poi ricaricare questa pagina",
+    },
+    "upd.synology_hint": {
+        "de": "Kein „Update verfügbar“ zu sehen? Dann wurde das Image mit fester Versionsnummer statt „latest“ eingerichtet.",
+        "en": "No “Update available” shown? Then the image was set up with a fixed version number instead of “latest”.",
+        "fr": "Pas de « Mise à jour disponible » ? L’image a alors été configurée avec un numéro de version fixe au lieu de « latest ».",
+        "it": "Nessun “Aggiornamento disponibile”? Allora l’immagine è stata configurata con un numero di versione fisso invece di “latest”.",
+    },
+    "upd.unraid": {"de": "Unraid", "en": "Unraid", "fr": "Unraid", "it": "Unraid"},
+    "upd.unraid_steps": {
+        "de": "Im Unraid-Menü „Docker“ öffnen\nBei CutStock auf „update ready“ und dann „apply update“ klicken\nNach dem Neustart diese Seite neu laden",
+        "en": "Open “Docker” in the Unraid menu\nClick “update ready” next to CutStock, then “apply update”\nReload this page after the restart",
+        "fr": "Ouvrir « Docker » dans le menu Unraid\nCliquer sur « update ready » à côté de CutStock, puis « apply update »\nRecharger cette page après le redémarrage",
+        "it": "Aprire “Docker” nel menu di Unraid\nFare clic su “update ready” accanto a CutStock, poi “apply update”\nRicaricare questa pagina dopo il riavvio",
+    },
+    "upd.compose": {"de": "Docker Compose (Kommandozeile)", "en": "Docker Compose (command line)", "fr": "Docker Compose (ligne de commande)", "it": "Docker Compose (riga di comando)"},
+    "upd.desktop": {
+        "de": "Lade die neue Version herunter und ersetze damit die bisherige App. Deine Daten bleiben erhalten.",
+        "en": "Download the new version and replace the existing app with it. Your data is kept.",
+        "fr": "Téléchargez la nouvelle version et remplacez l’application existante. Vos données sont conservées.",
+        "it": "Scarica la nuova versione e sostituisci l’app esistente. I tuoi dati restano invariati.",
+    },
+    "upd.download": {"de": "Neue Version herunterladen", "en": "Download new version", "fr": "Télécharger la nouvelle version", "it": "Scarica la nuova versione"},
 }
 
 
