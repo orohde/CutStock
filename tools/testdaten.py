@@ -251,11 +251,14 @@ def main():
     ap.add_argument("--leeren", action="store_true",
                     help="vorher alle Projekte, Materialien und Sägeblätter löschen")
     ap.add_argument("--key", help="API-Key, falls in der Instanz gesetzt")
+    ap.add_argument("--sprache", default="de", choices=["de", "en", "fr", "it"],
+                    help="Oberflächensprache der Instanz (Standard: de)")
     args = ap.parse_args()
 
     if any(m in args.url for m in LIVE_MERKMALE):
         sys.exit(f"Abbruch: {args.url} sieht nach der Live-Instanz aus.")
     api = Api(args.url, args.key)
+    api.call("PUT", "/api/settings", {"language": args.sprache})
     if args.leeren:
         leeren(api)
     elif api.call("GET", "/api/materials"):

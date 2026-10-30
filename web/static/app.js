@@ -3157,11 +3157,19 @@ function initEvents() {
 
     // ----- Tab switching -----
     document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.addEventListener('click', (e) => {
+            // Tabs sind <a href="#">: Link-Navigation unterdrücken (manche Browser
+            // laden die Seite sonst neu und landen wieder auf dem ersten Tab)
+            e.preventDefault();
+            document.querySelectorAll('.tab-btn').forEach(b => {
+                b.classList.remove('active');
+                b.setAttribute('aria-selected', 'false');
+            });
             document.querySelectorAll('.tab-content').forEach(p => p.classList.remove('active'));
             btn.classList.add('active');
+            btn.setAttribute('aria-selected', 'true');
             const tabId = btn.dataset.tab;
+            storageSet('sessionStorage', 'cutstock_tab', tabId);
             const panel = document.getElementById(`tab-${tabId}`);
             if (panel) panel.classList.add('active');
 
@@ -3851,6 +3859,12 @@ async function init() {
         renderLicense();
         renderProjects();
         renderOptDropdowns();
+
+        // Zuletzt offenen Tab wiederherstellen (überlebt ein Neuladen der Seite)
+        const lastTab = storageGet('sessionStorage', 'cutstock_tab');
+        if (lastTab && lastTab !== 'material') {
+            document.querySelector(`.tab-btn[data-tab="${CSS.escape(lastTab)}"]`)?.click();
+        }
     } catch (e) {
         console.error('Init failed:', e);
         showToast('Initialization failed. Is the server running?', 'error');
