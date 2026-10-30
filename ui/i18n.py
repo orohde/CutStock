@@ -675,6 +675,59 @@ TRANSLATIONS = {
     "opt.zoom": {
         "de": "Vergrößern", "en": "Zoom", "fr": "Agrandir", "it": "Ingrandisci",
     },
+    # ---- Gespeicherte Schnittpläne ----
+    "plan.saved": {
+        "de": "Gespeicherter Plan vom {date}",
+        "en": "Saved plan from {date}",
+        "fr": "Plan enregistré du {date}",
+        "it": "Piano salvato del {date}",
+    },
+    "plan.progress": {
+        "de": "{done} / {total} gesägt",
+        "en": "{done} / {total} cut",
+        "fr": "{done} / {total} coupées",
+        "it": "{done} / {total} tagliati",
+    },
+    "plan.outdated": {
+        "de": "Teile, Material oder Sägeblatt wurden seit der Berechnung geändert – ggf. neu optimieren",
+        "en": "Parts, material or saw blade changed since the calculation – consider optimizing again",
+        "fr": "Pièces, matériau ou lame modifiés depuis le calcul – réoptimiser si nécessaire",
+        "it": "Pezzi, materiale o lama modificati dopo il calcolo – eventualmente riottimizzare",
+    },
+    "plan.stock_missing": {
+        "de": "Eingeplante Lagerstücke sind nicht mehr im Lager – ggf. neu optimieren",
+        "en": "Planned stock pieces are no longer in stock – consider optimizing again",
+        "fr": "Des pièces de stock prévues ne sont plus en stock – réoptimiser si nécessaire",
+        "it": "Alcuni pezzi di magazzino pianificati non sono più disponibili – eventualmente riottimizzare",
+    },
+    "plan.reoptimize_started": {
+        "de": "Dieser Plan ist schon angefangen.\n- Angefangene Platten bleiben samt ihren Teilen erhalten\n- Angefangene Stangen behalten nur die gesägten Teile (der Rest liegt schon im Lager)\n- Alles andere wird neu verteilt\n\nNeu optimieren?",
+        "en": "This plan has already been started.\n- Started sheets are kept including their parts\n- Started bars keep only the cut parts (the remnant is already in stock)\n- Everything else is redistributed\n\nOptimize again?",
+        "fr": "Ce plan est déjà commencé.\n- Les panneaux entamés sont conservés avec leurs pièces\n- Les barres entamées ne gardent que les pièces coupées (la chute est déjà en stock)\n- Tout le reste est réparti à nouveau\n\nRéoptimiser ?",
+        "it": "Questo piano è già iniziato.\n- I pannelli iniziati restano con i loro pezzi\n- Le barre iniziate mantengono solo i pezzi tagliati (il resto è già a magazzino)\n- Tutto il resto viene ridistribuito\n\nRiottimizzare?",
+    },
+    "plan.restart": {
+        "de": "Projekt neu starten", "en": "Restart project",
+        "fr": "Recommencer le projet", "it": "Ricomincia progetto",
+    },
+    "plan.restart_confirm": {
+        "de": "Projekt neu starten, um es noch einmal zu sägen?\n- Der Fortschritt aller Teile wird auf 0 gesetzt\n- Die gespeicherten Pläne des Projekts werden gelöscht\n- Das Lager bleibt unverändert\n\nTipp: Bei Bedarf vorher das PDF exportieren.",
+        "en": "Restart the project to cut it again?\n- Progress of all parts is reset to 0\n- The project's saved plans are deleted\n- Stock stays unchanged\n\nTip: export the PDF first if you need it.",
+        "fr": "Recommencer le projet pour le couper à nouveau ?\n- La progression de toutes les pièces est remise à 0\n- Les plans enregistrés du projet sont supprimés\n- Le stock reste inchangé\n\nAstuce : exportez d'abord le PDF si nécessaire.",
+        "it": "Ricominciare il progetto per tagliarlo di nuovo?\n- L'avanzamento di tutti i pezzi torna a 0\n- I piani salvati del progetto vengono eliminati\n- Il magazzino resta invariato\n\nSuggerimento: se serve, esporta prima il PDF.",
+    },
+    "plan.restarted": {
+        "de": "Projekt zurückgesetzt – jetzt neu optimieren",
+        "en": "Project reset – optimize again now",
+        "fr": "Projet réinitialisé – réoptimisez maintenant",
+        "it": "Progetto azzerato – ora riottimizza",
+    },
+    "plan.badge_title": {
+        "de": "Gesägt laut gespeicherten Plänen",
+        "en": "Cut according to saved plans",
+        "fr": "Coupé selon les plans enregistrés",
+        "it": "Tagliato secondo i piani salvati",
+    },
     "opt.saw_hint": {
         "de": "Tipp: Auf ein Stück im Schnittplan klicken, um es als gesägt zu markieren.",
         "en": "Tip: click a piece in the cut plan to mark it as sawn.",

@@ -121,6 +121,59 @@ class Defekt:
     breite: float = 0.0
 
 
+@dataclass
+class PlanStueck:
+    """Ein platziertes Teil in einem gespeicherten Schnittplan."""
+    id: int | None = None
+    brett_id: int = 0
+    teil_id: int | None = None
+    teil_label: str = ""
+    laenge: float = 0.0
+    breite: float = 0.0
+    x: float = 0.0
+    y: float = 0.0
+    gedreht: bool = False
+    gesaegt: bool = False
+
+
+@dataclass
+class PlanBrett:
+    """Eine Platte/Stange in einem gespeicherten Schnittplan inkl. Lagerzustand."""
+    id: int | None = None
+    schnittplan_id: int = 0
+    pos: int = 0
+    lagerstueck_id: int = 0
+    stueck_nr: int = 0
+    lager_laenge: float = 0.0
+    lager_breite: float = 0.0
+    reste: list = field(default_factory=list)
+    defekte: list = field(default_factory=list)       # [{position, position_y, laenge, breite}]
+    verschnitt_mm: float = 0.0
+    verschnitt_prozent: float = 0.0
+    verbraucht: bool = False                         # Lagerstück schon ausgetragen
+    rest_ids: list = field(default_factory=list)     # dafür eingebuchte Reste
+    verbrauchtes_stueck: dict | None = None          # Schnappschuss fürs Zurückbuchen
+    stuecke: list[PlanStueck] = field(default_factory=list)
+
+
+@dataclass
+class GespeicherterPlan:
+    """Optimierungsergebnis eines Projekts für ein Material (ein Plan je Paar)."""
+    id: int | None = None
+    projekt_id: int = 0
+    material_id: int = 0
+    saegeblatt_id: int | None = None
+    kerf: float = 0.0
+    algorithmus: str = ""
+    eingabe_hash: str = ""
+    fehlende_teile: list = field(default_factory=list)
+    materialbedarf: list = field(default_factory=list)
+    erstellt: float = 0.0
+    geaendert: float = 0.0
+    version: int = 1
+    bretter: list[PlanBrett] = field(default_factory=list)
+
+
 def drehung_fuer_teil(mat_maserung: Maserung, teil_maserung: Maserung
                       ) -> tuple[bool, bool]:
     """Berechnet welche Orientierungen für ein Teil erlaubt sind.

@@ -358,6 +358,39 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
   display: block;
 }
 
+/* Kopfzeile des gespeicherten Plans (Stand, Fortschritt, Hinweise) */
+.plan-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  font-size: 0.875rem;
+  color: var(--sapContent_LabelColor, #556b82);
+}
+
+.plan-info .plan-progress {
+  font-weight: 600;
+  color: var(--sapTextColor, #1d2d3e);
+}
+
+.plan-info .plan-warning {
+  color: var(--sapCriticalTextColor, #aa5808);
+}
+
+.plan-badge {
+  margin-left: 0.375rem;
+  padding: 0 0.375rem;
+  border-radius: 0.5rem;
+  font-size: 0.75rem;
+  background: var(--sapNeutralBackground, #eaecee);
+  color: var(--sapContent_LabelColor, #556b82);
+}
+
+.plan-badge--done {
+  color: var(--sapPositiveTextColor, #256f3a);
+}
+
 .opt-actions {
   display: flex;
   gap: 0.5rem;

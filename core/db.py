@@ -13,10 +13,13 @@ from pathlib import Path
 from core.models import (
     Defekt,
     Einzelstueck,
+    GespeicherterPlan,
     Lagerstueck,
     Maserung,
     Material,
     MaterialTyp,
+    PlanBrett,
+    PlanStueck,
     Projekt,
     Saegeblatt,
     Teil,
@@ -140,6 +143,56 @@ CREATE TABLE IF NOT EXISTS teil (
     maserung    TEXT    NOT NULL DEFAULT 'egal',
     status      TEXT    NOT NULL DEFAULT 'offen' CHECK(status IN ('offen','gesägt'))
 );
+
+-- Gespeicherte Schnittpläne (ein Plan je Projekt + Material).
+-- Fremdschlüssel bewusst mit CASCADE/SET NULL: Auch eine ältere CutStock-Version,
+-- die diese Tabellen nicht kennt, kann Projekte, Materialien, Teile und
+-- Sägeblätter weiterhin löschen (gleiche DB über iCloud auf mehreren Macs).
+CREATE TABLE IF NOT EXISTS schnittplan (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    projekt_id     INTEGER NOT NULL REFERENCES projekt(id) ON DELETE CASCADE,
+    material_id    INTEGER NOT NULL REFERENCES material(id) ON DELETE CASCADE,
+    saegeblatt_id  INTEGER REFERENCES saegeblatt(id) ON DELETE SET NULL,
+    kerf           REAL    NOT NULL DEFAULT 0,
+    algorithmus    TEXT    NOT NULL DEFAULT '',
+    eingabe_hash   TEXT    NOT NULL DEFAULT '',
+    fehlende_json  TEXT    NOT NULL DEFAULT '[]',
+    bedarf_json    TEXT    NOT NULL DEFAULT '[]',
+    erstellt       REAL    NOT NULL DEFAULT 0,
+    geaendert      REAL    NOT NULL DEFAULT 0,
+    version        INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(projekt_id, material_id)
+);
+
+CREATE TABLE IF NOT EXISTS schnittplan_brett (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    schnittplan_id   INTEGER NOT NULL REFERENCES schnittplan(id) ON DELETE CASCADE,
+    pos              INTEGER NOT NULL DEFAULT 0,
+    lagerstueck_id   INTEGER NOT NULL DEFAULT 0,   -- kein FK: Zeile verschwindet beim Verbrauch
+    stueck_nr        INTEGER NOT NULL DEFAULT 0,
+    lager_laenge     REAL    NOT NULL DEFAULT 0,
+    lager_breite     REAL    NOT NULL DEFAULT 0,
+    reste_json       TEXT    NOT NULL DEFAULT '[]',
+    defekte_json     TEXT    NOT NULL DEFAULT '[]',
+    verschnitt_mm    REAL    NOT NULL DEFAULT 0,
+    verschnitt_prozent REAL  NOT NULL DEFAULT 0,
+    verbraucht       INTEGER NOT NULL DEFAULT 0,
+    rest_ids_json    TEXT    NOT NULL DEFAULT '[]',
+    stueck_json      TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS schnittplan_stueck (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    brett_id   INTEGER NOT NULL REFERENCES schnittplan_brett(id) ON DELETE CASCADE,
+    teil_id    INTEGER REFERENCES teil(id) ON DELETE SET NULL,
+    teil_label TEXT    NOT NULL DEFAULT '',
+    laenge     REAL    NOT NULL DEFAULT 0,
+    breite     REAL    NOT NULL DEFAULT 0,
+    x          REAL    NOT NULL DEFAULT 0,
+    y          REAL    NOT NULL DEFAULT 0,
+    gedreht    INTEGER NOT NULL DEFAULT 0,
+    gesaegt    INTEGER NOT NULL DEFAULT 0
+);
 """
 
 
@@ -148,6 +201,7 @@ class Database:
 
     def __init__(self, path: Path | str = DEFAULT_DB):
         self.path = Path(path)
+        self._sicherung_vor_migration()
         self.conn = sqlite3.connect(str(self.path))
         self.conn.execute("PRAGMA foreign_keys = ON")
         # DELETE-Modus statt WAL: alle Daten landen direkt in der .db-Datei.
@@ -155,6 +209,31 @@ class Database:
         self.conn.execute("PRAGMA journal_mode = DELETE")
         self.conn.row_factory = sqlite3.Row
         self._create_tables()
+
+    def _sicherung_vor_migration(self):
+        """Vor dem ersten Start mit gespeicherten Schnittplänen eine Kopie der DB anlegen.
+
+        Die Migration legt nur neue Tabellen an und ändert keine bestehenden Daten –
+        die Kopie ist reine Vorsicht. Sie entsteht genau einmal, neben der DB.
+        """
+        if not self.path.exists() or self.path.stat().st_size == 0:
+            return
+        sicherung = self.path.with_name(
+            f"{self.path.stem}-vor-schnittplaene{self.path.suffix}")
+        if sicherung.exists():
+            return
+        try:
+            conn = sqlite3.connect(str(self.path))
+            try:
+                tabellen = {r[0] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'")}
+            finally:
+                conn.close()
+            if "projekt" in tabellen and "schnittplan" not in tabellen:
+                import shutil
+                shutil.copy2(str(self.path), str(sicherung))
+        except (sqlite3.Error, OSError):
+            pass  # Sicherung ist optional, der Start darf daran nicht scheitern
 
     def _create_tables(self):
         self.conn.executescript(SCHEMA)
@@ -299,6 +378,7 @@ class Database:
         return [self._row_to_material(r, hat_bild_col=True) for r in rows]
 
     def delete_material(self, mid: int):
+        self.conn.execute("DELETE FROM schnittplan WHERE material_id=?", (mid,))
         self.conn.execute("DELETE FROM teil WHERE material_id=?", (mid,))
         self.conn.execute("DELETE FROM lagerstueck WHERE material_id=?", (mid,))
         self.conn.execute("DELETE FROM material WHERE id=?", (mid,))
@@ -594,6 +674,7 @@ class Database:
         return p
 
     def delete_projekt(self, pid: int):
+        self.conn.execute("DELETE FROM schnittplan WHERE projekt_id=?", (pid,))
         self.conn.execute("DELETE FROM teil WHERE projekt_id=?", (pid,))
         self.conn.execute("DELETE FROM projekt WHERE id=?", (pid,))
         self.conn.commit()
@@ -657,6 +738,176 @@ class Database:
             maserung=mas,
             status=TeilStatus(row["status"]),
         )
+
+    # ------------------------------------------------------------------
+    # Gespeicherte Schnittpläne
+    # ------------------------------------------------------------------
+
+    def save_plan(self, plan: GespeicherterPlan) -> GespeicherterPlan:
+        """Plan für (Projekt, Material) anlegen bzw. komplett ersetzen."""
+        import json
+        import time
+        jetzt = time.time()
+        alt = self.conn.execute(
+            "SELECT id, erstellt, version FROM schnittplan WHERE projekt_id=? AND material_id=?",
+            (plan.projekt_id, plan.material_id),
+        ).fetchone()
+        if alt:
+            self.conn.execute("DELETE FROM schnittplan WHERE id=?", (alt["id"],))
+            plan.version = alt["version"] + 1
+        plan.erstellt = plan.erstellt or jetzt
+        plan.geaendert = jetzt
+        cur = self.conn.execute(
+            """INSERT INTO schnittplan (projekt_id, material_id, saegeblatt_id, kerf,
+               algorithmus, eingabe_hash, fehlende_json, bedarf_json, erstellt,
+               geaendert, version) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (plan.projekt_id, plan.material_id, plan.saegeblatt_id, plan.kerf,
+             plan.algorithmus, plan.eingabe_hash, json.dumps(plan.fehlende_teile),
+             json.dumps(plan.materialbedarf), plan.erstellt, plan.geaendert,
+             plan.version),
+        )
+        plan.id = cur.lastrowid
+        for pos, b in enumerate(plan.bretter):
+            b.schnittplan_id = plan.id
+            b.pos = pos
+            cur = self.conn.execute(
+                """INSERT INTO schnittplan_brett (schnittplan_id, pos, lagerstueck_id,
+                   stueck_nr, lager_laenge, lager_breite, reste_json, defekte_json,
+                   verschnitt_mm, verschnitt_prozent, verbraucht, rest_ids_json,
+                   stueck_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (b.schnittplan_id, b.pos, b.lagerstueck_id, b.stueck_nr,
+                 b.lager_laenge, b.lager_breite, json.dumps(b.reste),
+                 json.dumps(b.defekte), b.verschnitt_mm, b.verschnitt_prozent,
+                 int(b.verbraucht), json.dumps(b.rest_ids),
+                 json.dumps(b.verbrauchtes_stueck) if b.verbrauchtes_stueck else ""),
+            )
+            b.id = cur.lastrowid
+            for st in b.stuecke:
+                st.brett_id = b.id
+                cur = self.conn.execute(
+                    """INSERT INTO schnittplan_stueck (brett_id, teil_id, teil_label,
+                       laenge, breite, x, y, gedreht, gesaegt)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (st.brett_id, st.teil_id, st.teil_label, st.laenge, st.breite,
+                     st.x, st.y, int(st.gedreht), int(st.gesaegt)),
+                )
+                st.id = cur.lastrowid
+        self.conn.commit()
+        return plan
+
+    def get_plan(self, projekt_id: int, material_id: int) -> GespeicherterPlan | None:
+        row = self.conn.execute(
+            "SELECT * FROM schnittplan WHERE projekt_id=? AND material_id=?",
+            (projekt_id, material_id),
+        ).fetchone()
+        return self._row_to_plan(row) if row else None
+
+    def get_plan_by_id(self, plan_id: int) -> GespeicherterPlan | None:
+        row = self.conn.execute(
+            "SELECT * FROM schnittplan WHERE id=?", (plan_id,)).fetchone()
+        return self._row_to_plan(row) if row else None
+
+    def get_plan_for_stueck(self, stueck_id: int) -> GespeicherterPlan | None:
+        row = self.conn.execute(
+            """SELECT p.* FROM schnittplan p
+               JOIN schnittplan_brett b ON b.schnittplan_id = p.id
+               JOIN schnittplan_stueck s ON s.brett_id = b.id
+               WHERE s.id=?""", (stueck_id,)).fetchone()
+        return self._row_to_plan(row) if row else None
+
+    def _row_to_plan(self, row: sqlite3.Row) -> GespeicherterPlan:
+        import json
+        plan = GespeicherterPlan(
+            id=row["id"], projekt_id=row["projekt_id"], material_id=row["material_id"],
+            saegeblatt_id=row["saegeblatt_id"], kerf=row["kerf"],
+            algorithmus=row["algorithmus"], eingabe_hash=row["eingabe_hash"],
+            fehlende_teile=json.loads(row["fehlende_json"] or "[]"),
+            materialbedarf=json.loads(row["bedarf_json"] or "[]"),
+            erstellt=row["erstellt"], geaendert=row["geaendert"],
+            version=row["version"],
+        )
+        bretter = self.conn.execute(
+            "SELECT * FROM schnittplan_brett WHERE schnittplan_id=? ORDER BY pos",
+            (plan.id,)).fetchall()
+        for b in bretter:
+            brett = PlanBrett(
+                id=b["id"], schnittplan_id=plan.id, pos=b["pos"],
+                lagerstueck_id=b["lagerstueck_id"], stueck_nr=b["stueck_nr"],
+                lager_laenge=b["lager_laenge"], lager_breite=b["lager_breite"],
+                reste=json.loads(b["reste_json"] or "[]"),
+                defekte=json.loads(b["defekte_json"] or "[]"),
+                verschnitt_mm=b["verschnitt_mm"],
+                verschnitt_prozent=b["verschnitt_prozent"],
+                verbraucht=bool(b["verbraucht"]),
+                rest_ids=json.loads(b["rest_ids_json"] or "[]"),
+                verbrauchtes_stueck=json.loads(b["stueck_json"]) if b["stueck_json"] else None,
+            )
+            brett.stuecke = [
+                PlanStueck(id=s["id"], brett_id=brett.id, teil_id=s["teil_id"],
+                           teil_label=s["teil_label"], laenge=s["laenge"],
+                           breite=s["breite"], x=s["x"], y=s["y"],
+                           gedreht=bool(s["gedreht"]), gesaegt=bool(s["gesaegt"]))
+                for s in self.conn.execute(
+                    "SELECT * FROM schnittplan_stueck WHERE brett_id=? ORDER BY id",
+                    (brett.id,)).fetchall()
+            ]
+            plan.bretter.append(brett)
+        return plan
+
+    def list_plan_status(self, projekt_id: int) -> list[dict]:
+        """Kurzstatus aller Pläne eines Projekts (für Projektliste/Dropdowns)."""
+        rows = self.conn.execute(
+            """SELECT p.id, p.material_id, p.erstellt,
+                      COUNT(s.id) AS gesamt,
+                      COALESCE(SUM(s.gesaegt), 0) AS gesaegt,
+                      COALESCE(MAX(b.verbraucht), 0) AS angefangen
+               FROM schnittplan p
+               LEFT JOIN schnittplan_brett b ON b.schnittplan_id = p.id
+               LEFT JOIN schnittplan_stueck s ON s.brett_id = b.id
+               WHERE p.projekt_id=? GROUP BY p.id ORDER BY p.id""",
+            (projekt_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_stueck_gesaegt(self, stueck_id: int, gesaegt: bool):
+        self.conn.execute("UPDATE schnittplan_stueck SET gesaegt=? WHERE id=?",
+                          (int(gesaegt), stueck_id))
+        self.conn.commit()
+
+    def save_brett_zustand(self, b: PlanBrett):
+        import json
+        self.conn.execute(
+            """UPDATE schnittplan_brett SET lagerstueck_id=?, verbraucht=?,
+               rest_ids_json=?, stueck_json=? WHERE id=?""",
+            (b.lagerstueck_id, int(b.verbraucht), json.dumps(b.rest_ids),
+             json.dumps(b.verbrauchtes_stueck) if b.verbrauchtes_stueck else "",
+             b.id))
+        self.conn.commit()
+
+    def plan_geaendert(self, plan_id: int):
+        """Version hochzählen (Grundlage für spätere Mehrbenutzer-Erkennung)."""
+        import time
+        self.conn.execute(
+            "UPDATE schnittplan SET version = version + 1, geaendert=? WHERE id=?",
+            (time.time(), plan_id))
+        self.conn.commit()
+
+    def teil_gesaegt_aendern(self, teil_id: int, delta: int):
+        """Fortschritt relativ ändern (nie unter 0, nie über die Stückzahl)."""
+        self.conn.execute(
+            """UPDATE teil SET gesaegt_anzahl = MAX(0, MIN(stueckzahl, gesaegt_anzahl + ?))
+               WHERE id=?""", (delta, teil_id))
+        self.conn.execute(
+            """UPDATE teil SET status = CASE WHEN gesaegt_anzahl >= stueckzahl
+               THEN 'gesägt' ELSE 'offen' END WHERE id=?""", (teil_id,))
+        self.conn.commit()
+
+    def projekt_neu_starten(self, projekt_id: int):
+        """Fortschritt aller Teile zurücksetzen und Pläne löschen (Lager bleibt)."""
+        self.conn.execute(
+            "UPDATE teil SET gesaegt_anzahl=0, status='offen' WHERE projekt_id=?",
+            (projekt_id,))
+        self.conn.execute("DELETE FROM schnittplan WHERE projekt_id=?", (projekt_id,))
+        self.conn.commit()
 
     # ------------------------------------------------------------------
     # Lager-Operationen für den Optimierungslauf

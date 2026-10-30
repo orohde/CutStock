@@ -212,8 +212,12 @@ const Api = {
     deletePart: (id) => fetchJSON(`/api/parts/${id}`, 'DELETE'),
 
     optimize: (data) => fetchJSON('/api/optimize', 'POST', data),
-    confirmOptimization: (data) => fetchJSON('/api/optimize/confirm', 'POST', data),
-    markPlan: (data) => fetchJSON('/api/optimize/mark-plan', 'POST', data),
+    // Gespeicherter Plan; null wenn es (noch) keinen gibt
+    getSavedPlan: (projectId, materialId) =>
+        fetchJSON(`/api/projects/${projectId}/plans/${materialId}`),
+    setPieceSawn: (pieceId, gesaegt) => fetchJSON(`/api/plan-pieces/${pieceId}`, 'POST', { gesaegt }),
+    confirmAllPieces: (planId) => fetchJSON(`/api/plans/${planId}/confirm-all`, 'POST'),
+    restartProject: (projectId) => fetchJSON(`/api/projects/${projectId}/restart`, 'POST'),
 
     async downloadPdf(data) {
         const resp = await fetch(API_BASE + '/api/pdf', {
@@ -524,7 +528,7 @@ async function renderProjects() {
 
     tbody.innerHTML = State.projects.map(p => {
         const selected = p.id === State.selectedProjectId ? ' selected' : '';
-        return `<tr class="fd-table__row ${selected}" data-id="${p.id}"><td class="fd-table__cell">${escHtml(p.name)}</td></tr>`;
+        return `<tr class="fd-table__row ${selected}" data-id="${p.id}"><td class="fd-table__cell">${escHtml(p.name)}${planBadge(p)}</td></tr>`;
     }).join('');
 
     tbody.querySelectorAll('tr[data-id]').forEach(row => {
@@ -537,6 +541,16 @@ async function renderProjects() {
     });
 
     renderParts();
+}
+
+// Fortschritt der gespeicherten Pläne eines Projekts als kleines Badge
+function planBadge(project) {
+    const plaene = project.plaene || [];
+    if (!plaene.length) return '';
+    const total = plaene.reduce((s, p) => s + p.gesamt, 0);
+    const done = plaene.reduce((s, p) => s + p.gesaegt, 0);
+    const cls = total > 0 && done >= total ? 'plan-badge plan-badge--done' : 'plan-badge';
+    return ` <span class="${cls}" title="${escAttr(t('plan.badge_title'))}">${done}/${total}</span>`;
 }
 
 function selectProjectRow(id) {
@@ -663,12 +677,65 @@ function renderOptDropdowns() {
         algoSel.value = prevAlgo || 'nested';
     }
 
-    // Passt der angezeigte Schnittplan nicht mehr zur (wieder­hergestellten)
-    // Auswahl – etwa weil das Projekt gelöscht wurde – verwerfen.
-    if (State.optimizationResult &&
-        (!projSel?.value || projSel.value !== String(State.optimizationResult._projId))) {
-        clearOptResult();
+    // Gespeicherten Plan zur (wiederhergestellten) Auswahl laden – auch, um
+    // nach Änderungen an Teilen den Hinweis „veraltet“ aktuell zu halten.
+    loadSavedPlan();
+}
+
+// Plan des gewählten Projekts/Materials vom Server holen und anzeigen.
+async function loadSavedPlan() {
+    const projId = parseInt(document.getElementById('opt-project')?.value);
+    const matId = parseInt(document.getElementById('opt-material')?.value);
+    if (!projId || !matId) { clearOptResult(); return; }
+    let plan = null;
+    try { plan = await Api.getSavedPlan(projId, matId); } catch { /* offline o.ä. */ }
+    // Auswahl hat sich während des Ladens geändert → Ergebnis verwerfen
+    if (parseInt(document.getElementById('opt-project')?.value) !== projId ||
+        parseInt(document.getElementById('opt-material')?.value) !== matId) return;
+    if (!plan) { clearOptResult(); return; }
+    adoptPlan(plan);
+    const bladeSel = document.getElementById('opt-blade');
+    if (plan.saegeblatt_id && bladeSel?.querySelector(`option[value="${plan.saegeblatt_id}"]`)) {
+        bladeSel.value = String(plan.saegeblatt_id);
     }
+    const algoSel = document.getElementById('opt-algorithm');
+    if (plan.algorithmus && algoSel?.querySelector(`option[value="${plan.algorithmus}"]`)) {
+        algoSel.value = plan.algorithmus;
+    }
+    renderOptResults({ quiet: true });
+    if (sawModeActive()) renderSawMode();
+}
+
+// Server-Plan als angezeigtes Ergebnis übernehmen (_done = gesägt-Markierung).
+function adoptPlan(plan) {
+    plan._projId = String(plan.projekt_id);
+    (plan.schnittplaene || []).forEach(sp =>
+        sp.platzierungen.forEach(p => { p._done = !!p.gesaegt; }));
+    State.optimizationResult = plan;
+}
+
+// Gesägt-Zustand aus einer Server-Antwort in den angezeigten Plan übernehmen,
+// ohne alles neu aufzubauen (Canvas-Klick-Handler bleiben bestehen).
+function applyPlanState(plan) {
+    const cur = State.optimizationResult;
+    if (!cur || cur.plan_id !== plan.plan_id) { adoptPlan(plan); renderOptResults({ quiet: true }); return; }
+    const byId = new Map();
+    (plan.schnittplaene || []).forEach(sp => byId.set(sp.id, sp));
+    (cur.schnittplaene || []).forEach(sp => {
+        const neu = byId.get(sp.id);
+        if (!neu) return;
+        sp.lagerstueck_id = neu.lagerstueck_id;
+        sp.verbraucht = neu.verbraucht;
+        const st = new Map(neu.platzierungen.map(p => [p.id, p]));
+        sp.platzierungen.forEach(p => {
+            const n = st.get(p.id);
+            if (n) { p.gesaegt = n.gesaegt; p._done = !!n.gesaegt; }
+        });
+    });
+    cur.version = plan.version;
+    cur.lager_fehlt = plan.lager_fehlt;
+    cur.veraltet = plan.veraltet;
+    renderPlanInfo();
 }
 
 // Angezeigten Schnittplan verwerfen (Auswahl passt nicht mehr dazu).
@@ -692,6 +759,8 @@ function updateOptMaterialDropdown() {
             if (t.offen_anzahl > 0) materialIds.add(t.material_id);
         });
     }
+    // Auch fertig gesägte Materialien bleiben wählbar, solange es einen Plan gibt
+    (project?.plaene || []).forEach(p => materialIds.add(p.material_id));
 
     const filtered = materialIds.size > 0
         ? State.materials.filter(m => materialIds.has(m.id))
@@ -702,7 +771,7 @@ function updateOptMaterialDropdown() {
     ).join('');
 }
 
-function renderOptResults() {
+function renderOptResults({ quiet = false } = {}) {
     const container = document.getElementById('opt-results');
     const statsEl = document.getElementById('opt-stats');
     const plansEl = document.getElementById('cut-plans');
@@ -873,10 +942,36 @@ function renderOptResults() {
     }
 
     if (actionsEl) actionsEl.style.display = '';
+    renderPlanInfo();
 
-    if (missing.length > 0) {
+    if (missing.length > 0 && !quiet) {
         showToast(`${t('opt.missing')}: ${missing.join(', ')}`, 'error');
     }
+}
+
+// Kopfzeile des gespeicherten Plans: Stand, Fortschritt, Warnhinweise.
+function renderPlanInfo() {
+    const el = document.getElementById('plan-info');
+    const result = State.optimizationResult;
+    if (!el) return;
+    if (!result?.plan_id) { el.innerHTML = ''; el.classList.add('hidden'); return; }
+    const plans = result.schnittplaene || [];
+    const total = plans.reduce((s, p) => s + p.platzierungen.length, 0);
+    const done = plans.reduce((s, p) => s + p.platzierungen.filter(x => x._done).length, 0);
+    const when = result.erstellt
+        ? new Date(result.erstellt * 1000).toLocaleString(State.settings.language || undefined,
+            { dateStyle: 'short', timeStyle: 'short' })
+        : '';
+    const warn = [];
+    if (result.veraltet) warn.push(t('plan.outdated'));
+    if (result.lager_fehlt) warn.push(t('plan.stock_missing'));
+    el.innerHTML = `
+        <span>${escHtml(t('plan.saved', { date: when }))}</span>
+        <span class="plan-progress">${escHtml(t('plan.progress', { done, total }))}</span>
+        ${warn.map(w => `<span class="plan-warning">&#9888; ${escHtml(w)}</span>`).join('')}`;
+    el.classList.remove('hidden');
+    const restartBtn = document.getElementById('btn-restart');
+    if (restartBtn) restartBtn.classList.toggle('fd-button--emphasized', total > 0 && done >= total);
 }
 
 // ---------------------------------------------------------------------------
@@ -1175,139 +1270,73 @@ function drawCutPlan(canvas, plan, material) {
     }
 }
 
-// Ein Stück im Schnittplan als gesägt markieren/zurücknehmen: Fortschritt des
-// Teils anpassen UND den Lagerbestand live führen (wie Desktop _on_teil_cut).
+// Ein Stück im Schnittplan als gesägt markieren/zurücknehmen. Der Server
+// führt Fortschritt des Teils UND Lagerbestand (gespeicherter Plan).
 async function togglePieceSawn(canvas, placement) {
     const result = State.optimizationResult;
-    if (!result) return;
-    const idx = parseInt(canvas.dataset.planIndex);
-    const plan = result.schnittplaene[idx];
-    const proj = State.projects.find(p => String(p.id) === result._projId);
-    const teil = proj?.teile?.find(t => t.label === placement.teil_label);
-
+    if (!result || !placement.id) return;
     const willBeDone = !placement._done;
     placement._done = willBeDone;
     redrawPlanForCanvas(canvas);
 
-    // 1) Fortschritt des Teils
-    if (teil) {
-        const delta = willBeDone ? +1 : -1;
-        const next = Math.max(0, Math.min(teil.stueckzahl, teil.gesaegt_anzahl + delta));
-        if (next !== teil.gesaegt_anzahl) {
-            try {
-                await Api.updatePart(teil.id, { ...teil, gesaegt_anzahl: next });
-                teil.gesaegt_anzahl = next;
-                if (State.selectedProjectId === proj.id) renderParts();
-            } catch {
-                placement._done = !willBeDone;
-                redrawPlanForCanvas(canvas);
-                return;
-            }
-        }
+    let res;
+    try {
+        res = await Api.setPieceSawn(placement.id, willBeDone);
+    } catch {
+        placement._done = !willBeDone;
+        redrawPlanForCanvas(canvas);
+        return;
     }
-
-    // 2) Lagerbestand live anpassen
-    await reconcilePlanStock(plan);
-    await refreshStockAfterMark();
+    applyPlanState(res.plan);
+    if (res.teil) updatePartInState(res.teil);
+    await refreshAfterSawing();
 
     // Rebuild the workshop-mode view (if open) with the new state
     if (sawModeActive()) renderSawMode();
 }
 
-// Lagerbestand für einen Schnittplan mit dem Backend abgleichen und den
-// Verbrauchszustand am Plan-Objekt mitführen.
-async function reconcilePlanStock(plan) {
-    const optMat = State.materials.find(
-        m => m.id === parseInt(document.getElementById('opt-material')?.value));
-    if (!optMat) return;
-    const is1D = optMat.typ === 'Stange';
-    const blade = State.blades.find(
-        b => b.id === parseInt(document.getElementById('opt-blade')?.value));
-    const kerf = blade?.schnittbreite || 0;
-    const marked = plan.platzierungen.filter(p => p._done);
-
-    try {
-        const res = await Api.markPlan({
-            material_id: optMat.id,
-            lagerstueck_id: plan.lagerstueck_id,
-            is_1d: is1D,
-            lager_laenge: plan.lager_laenge,
-            lager_breite: plan.lager_breite || 0,
-            kerf,
-            marked_laengen: marked.map(p => p.laenge),
-            marked_x: marked.map(p => p.x),
-            defekte: is1D ? (plan.defekte || []).map(d => [d.position, d.laenge]) : [],
-            total_pieces: plan.platzierungen.length,
-            reste: plan.reste || [],
-            prev_consumed: plan._consumed || false,
-            prev_rest_ids: plan._restIds || [],
-            stueck_nr: plan.stueck_nr || 0,
-            prev_consumed_piece: plan._consumedPiece || null,
-        });
-        plan._consumed = res.consumed;
-        plan._consumedPiece = res.consumed_piece || null;
-        plan._restIds = res.rest_ids || [];
-        // Beim Zurückbuchen kann die Lagerzeile eine neue ID bekommen haben –
-        // alle Pläne, die noch auf die alte zeigen, mitziehen.
-        const oldId = plan.lagerstueck_id;
-        if (res.lagerstueck_id && res.lagerstueck_id !== oldId) {
-            (State.optimizationResult?.schnittplaene || []).forEach(p => {
-                if (p.lagerstueck_id === oldId) p.lagerstueck_id = res.lagerstueck_id;
-            });
-            plan.lagerstueck_id = res.lagerstueck_id;
-        }
-    } catch { /* nicht kritisch */ }
+// Geänderten Teil-Fortschritt in State.projects übernehmen.
+function updatePartInState(teil) {
+    const proj = State.projects.find(p => p.id === teil.projekt_id);
+    const idx = proj?.teile?.findIndex(x => x.id === teil.id) ?? -1;
+    if (idx >= 0) proj.teile[idx] = teil;
 }
 
-// Lagerbestand-Tabelle auffrischen, falls das betroffene Material dort offen ist.
-async function refreshStockAfterMark() {
+// Lagerbestand und Projektliste nach dem Abhaken auffrischen.
+async function refreshAfterSawing() {
     const matId = parseInt(document.getElementById('opt-material')?.value);
     if (State.selectedMaterialId === matId) {
         try { State.stock = await Api.getStock(matId); renderStock(); } catch { /* ignore */ }
     }
+    try {
+        State.projects = await Api.getProjects();
+        renderProjects();
+    } catch { /* ignore */ }
 }
 
-// „Bestätigen": alle noch nicht markierten Stücke auf einmal als gesägt
-// markieren – nutzt denselben Pfad wie das Einzel-Abhaken (kein Doppelzählen).
+// „Bestätigen": alle noch nicht markierten Stücke auf einmal als gesägt markieren.
 async function confirmAllPieces() {
     const result = State.optimizationResult;
-    if (!result) return;
-    const proj = State.projects.find(p => String(p.id) === result._projId);
-
-    // Pro Label die noch nicht markierten Platzierungen zählen und markieren
-    const addByLabel = {};
-    (result.schnittplaene || []).forEach(plan => {
-        plan.platzierungen.forEach(p => {
-            if (!p._done) {
-                addByLabel[p.teil_label] = (addByLabel[p.teil_label] || 0) + 1;
-                p._done = true;
-            }
-        });
-    });
-
-    // Fortschritt je Teil setzen
-    for (const [label, add] of Object.entries(addByLabel)) {
-        const teil = proj?.teile?.find(t => t.label === label);
-        if (!teil) continue;
-        const next = Math.min(teil.stueckzahl, teil.gesaegt_anzahl + add);
-        if (next !== teil.gesaegt_anzahl) {
-            try {
-                await Api.updatePart(teil.id, { ...teil, gesaegt_anzahl: next });
-                teil.gesaegt_anzahl = next;
-            } catch { /* handled */ }
-        }
-    }
-
-    // Lager pro Plan abgleichen (jetzt sind alle Stücke markiert)
-    for (const plan of (result.schnittplaene || [])) {
-        await reconcilePlanStock(plan);
-    }
-
+    if (!result?.plan_id) return;
+    try {
+        const plan = await Api.confirmAllPieces(result.plan_id);
+        applyPlanState(plan);
+    } catch { return; }
     document.querySelectorAll('.cut-plan-canvas').forEach(c => redrawPlanForCanvas(c));
-    State.projects = await Api.getProjects();
-    if (proj && State.selectedProjectId === proj.id) renderParts();
-    await refreshStockAfterMark();
+    await refreshAfterSawing();
     showToast(t('opt.done'), 'info');
+}
+
+// „Projekt neu starten": Fortschritt auf 0, Pläne löschen (Lager bleibt).
+async function restartProject() {
+    const projId = parseInt(document.getElementById('opt-project')?.value);
+    if (!projId) return;
+    try { await Api.restartProject(projId); } catch { return; }
+    clearOptResult();
+    try { State.projects = await Api.getProjects(); } catch { /* ignore */ }
+    renderProjects();
+    renderOptDropdowns();
+    showToast(t('plan.restarted'), 'info');
 }
 
 function redrawPlanForCanvas(canvas) {
@@ -2942,6 +2971,16 @@ function openBladeDialog(blade = null) {
     });
 }
 
+// Bestätigungsdialog als Promise: true bei „Bestätigen“, false bei „Abbrechen“.
+function confirmAsync(message) {
+    return new Promise(resolve => {
+        openConfirmDialog(message, () => resolve(true));
+        const cancelBtn = document.getElementById('modal-cancel');
+        const handler = cancelBtn.onclick;
+        cancelBtn.onclick = (e) => { if (handler) handler(e); resolve(false); };
+    });
+}
+
 function openConfirmDialog(message, onConfirm) {
     const overlay = document.getElementById('modal-overlay');
     const titleEl = document.getElementById('modal-title');
@@ -2949,7 +2988,7 @@ function openConfirmDialog(message, onConfirm) {
     const saveBtn = document.getElementById('modal-save');
 
     titleEl.textContent = t('btn.confirm');
-    body.innerHTML = `<p style="padding:8px 0">${escHtml(message)}</p>`;
+    body.innerHTML = `<p style="padding:8px 0;white-space:pre-line">${escHtml(message)}</p>`;
     saveBtn.style.display = '';
     saveBtn.textContent = t('btn.confirm');
 
@@ -3299,23 +3338,28 @@ function initEvents() {
             return;
         }
 
+        // Angefangener Plan: angefangene Bretter bleiben, der Rest wird neu verteilt
+        const cur = State.optimizationResult;
+        const started = cur?.plan_id && String(cur.projekt_id) === String(projId) &&
+            cur.material_id === matId && (cur.schnittplaene || []).some(p => p.verbraucht);
+        if (started && !(await confirmAsync(t('plan.reoptimize_started')))) return;
+
         const btn = document.getElementById('btn-optimize');
         btn.disabled = true;
         btn.textContent = '...';
 
         try {
-            State.optimizationResult = await Api.optimize({
+            adoptPlan(await Api.optimize({
                 project_id: projId,
                 material_id: matId,
                 blade_id: bladeId,
                 algorithm: algo,
-            });
-            // Ergebnis mit seiner Auswahl markieren, um veraltete Anzeige zu erkennen
-            State.optimizationResult._projId = String(projId);
+            }));
             renderOptResults();
+            try { State.projects = await Api.getProjects(); renderProjects(); } catch { /* ignore */ }
         } catch {
-            State.optimizationResult = null;
-            renderOptResults();
+            // Gespeicherten Stand wieder anzeigen (z.B. keine offenen Teile mehr)
+            await loadSavedPlan();
         } finally {
             btn.disabled = false;
             btn.textContent = t('opt.run');
@@ -3325,6 +3369,11 @@ function initEvents() {
     document.getElementById('btn-confirm')?.addEventListener('click', () => {
         if (!State.optimizationResult) return;
         openConfirmDialog(t('opt.confirm_msg'), () => confirmAllPieces());
+    });
+
+    document.getElementById('btn-restart')?.addEventListener('click', () => {
+        if (!State.optimizationResult) return;
+        openConfirmDialog(t('plan.restart_confirm'), () => restartProject());
     });
 
     document.getElementById('btn-pdf')?.addEventListener('click', () => {
@@ -3356,13 +3405,12 @@ function initEvents() {
     // ----- Optimization project dropdown changes material filter -----
     document.getElementById('opt-project')?.addEventListener('change', () => {
         updateOptMaterialDropdown();
-        clearOptResult();
+        loadSavedPlan();
     });
 
-    // Auswahländerung macht den angezeigten Schnittplan ungültig
-    ['opt-material', 'opt-blade', 'opt-algorithm'].forEach(id => {
-        document.getElementById(id)?.addEventListener('change', () => clearOptResult());
-    });
+    // Anderes Material → dessen gespeicherten Plan zeigen. Sägeblatt/Algorithmus
+    // wirken erst beim nächsten Optimieren, der gespeicherte Plan bleibt stehen.
+    document.getElementById('opt-material')?.addEventListener('change', () => loadSavedPlan());
 
     // ----- Settings -----
     document.getElementById('settings-lang')?.addEventListener('change', async (e) => {

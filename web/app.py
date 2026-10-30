@@ -23,10 +23,13 @@ from core.db import Database, seed_data
 from core.models import (
     Defekt,
     Einzelstueck,
+    GespeicherterPlan,
     Lagerstueck,
     Maserung,
     Material,
     MaterialTyp,
+    PlanBrett,
+    PlanStueck,
     Projekt,
     Saegeblatt,
     Teil,
@@ -334,6 +337,7 @@ class ProjectOut(BaseModel):
     id: int
     name: str
     teile: list[PartOut]
+    plaene: list[PlanStatusOut] = []
 
 
 class OptimizeRequest(BaseModel):
@@ -350,6 +354,8 @@ class PlatzierungOut(BaseModel):
     x: float
     y: float
     gedreht: bool
+    id: int = 0            # gespeicherter Plan: ID des Plan-Stücks
+    gesaegt: bool = False
 
 
 class SchnittplanOut(BaseModel):
@@ -362,6 +368,8 @@ class SchnittplanOut(BaseModel):
     verschnitt_mm: float
     verschnitt_prozent: float
     defekte: list[DefectOut] = []
+    id: int = 0            # gespeicherter Plan: ID des Bretts
+    verbraucht: bool = False
 
 
 class MaterialBedarfOut(BaseModel):
@@ -375,16 +383,38 @@ class OptimizeResult(BaseModel):
     fehlende_teile: list[str]
     gesamt_verschnitt_prozent: float
     materialbedarf: list[MaterialBedarfOut] = []
+    # Gespeicherter Plan (0/leer bei reinen Berechnungsergebnissen, z.B. im PDF)
+    plan_id: int = 0
+    projekt_id: int = 0
+    material_id: int = 0
+    saegeblatt_id: Optional[int] = None
+    algorithmus: str = ""
+    erstellt: float = 0.0
+    version: int = 0
+    veraltet: bool = False      # Teile/Material/Sägeblatt seit der Berechnung geändert
+    lager_fehlt: bool = False   # eingeplante, noch unbenutzte Lagerstücke fehlen
+
+
+class PlanStatusOut(BaseModel):
+    plan_id: int
+    material_id: int
+    erstellt: float
+    gesamt: int
+    gesaegt: int
+    angefangen: bool
+
+
+class PieceSawnIn(BaseModel):
+    gesaegt: bool
+
+
+class PieceSawnOut(BaseModel):
+    plan: OptimizeResult
+    teil: Optional[PartOut] = None
 
 
 class CopyPartsRequest(BaseModel):
     part_ids: list[int]
-
-
-class ConfirmRequest(BaseModel):
-    project_id: int
-    material_id: int
-    schnittplaene: list[SchnittplanOut]
 
 
 class MarkPlanRequest(BaseModel):
@@ -517,58 +547,10 @@ def _projekt_to_out(p: Projekt) -> ProjectOut:
         id=p.id,
         name=p.name,
         teile=[_teil_to_out(t) for t in p.teile],
-    )
-
-
-def _ergebnis_to_out(
-    erg: OptimierungsErgebnis,
-    defekte_map: dict[int, dict[int, list]] | None = None,
-) -> OptimizeResult:
-    defekte_map = defekte_map or {}
-
-    def _defekte_for_plan(sp):
-        nr_map = defekte_map.get(sp.lagerstueck_id, {})
-        defs = nr_map.get(sp.stueck_nr, [])
-        return [
-            DefectOut(
-                id=d.id or 0,
-                einzelstueck_id=d.einzelstueck_id,
-                stueck_nr=sp.stueck_nr,
-                position=d.position,
-                position_y=d.position_y,
-                laenge=d.laenge,
-                breite=d.breite,
-            )
-            for d in defs
-        ]
-
-    return OptimizeResult(
-        schnittplaene=[
-            SchnittplanOut(
-                lagerstueck_id=sp.lagerstueck_id,
-                lager_laenge=sp.lager_laenge,
-                lager_breite=sp.lager_breite,
-                stueck_nr=sp.stueck_nr,
-                platzierungen=[
-                    PlatzierungOut(
-                        teil_label=p.teil_label,
-                        laenge=p.laenge,
-                        breite=p.breite,
-                        x=p.x,
-                        y=p.y,
-                        gedreht=p.gedreht,
-                    )
-                    for p in sp.platzierungen
-                ],
-                reste=[list(r) for r in sp.reste],
-                verschnitt_mm=sp.verschnitt_mm,
-                verschnitt_prozent=sp.verschnitt_prozent,
-                defekte=_defekte_for_plan(sp),
-            )
-            for sp in erg.schnittplaene
-        ],
-        fehlende_teile=erg.fehlende_teile,
-        gesamt_verschnitt_prozent=erg.gesamt_verschnitt_prozent,
+        plaene=[PlanStatusOut(plan_id=r["id"], material_id=r["material_id"],
+                              erstellt=r["erstellt"], gesamt=r["gesamt"],
+                              gesaegt=r["gesaegt"], angefangen=bool(r["angefangen"]))
+                for r in get_db().list_plan_status(p.id)] if p.id else [],
     )
 
 
@@ -1150,6 +1132,13 @@ def delete_part(tid: int):
 
 @app.post("/api/optimize", response_model=OptimizeResult)
 def run_optimization(req: OptimizeRequest):
+    """Berechnen und als Plan des Projekts für dieses Material speichern.
+
+    Ist der bisherige Plan schon angefangen, bleiben angefangene Bretter erhalten:
+    2D-Platten samt ihrer ungesägten Teile (deren Fläche steht nicht im Lager),
+    1D-Stangen nur mit den gesägten Teilen – ihr Rest ist bereits eingebucht.
+    Neu verteilt wird nur, was darauf nicht (mehr) liegt.
+    """
     projekt = get_db().get_projekt(req.project_id)
     if not projekt:
         raise HTTPException(404, "Project not found")
@@ -1163,17 +1152,28 @@ def run_optimization(req: OptimizeRequest):
     if not blade:
         raise HTTPException(404, "Saw blade not found")
 
-    # Filter parts for this material that are not fully cut
+    is_1d = material.typ == MaterialTyp.STANGE
+    behalten = _angefangene_bretter(get_db().get_plan(req.project_id, req.material_id),
+                                    is_1d)
+    schon_geplant: dict[int, int] = {}
+    for b in behalten:
+        for st in b.stuecke:
+            if not st.gesaegt and st.teil_id:
+                schon_geplant[st.teil_id] = schon_geplant.get(st.teil_id, 0) + 1
+    offen = {t.id: t.offen_anzahl - schon_geplant.get(t.id, 0) for t in projekt.teile}
+
+    # Filter parts for this material that are not fully cut (or already on a kept board)
     teile = [t for t in projekt.teile
-             if t.material_id == req.material_id and t.offen_anzahl > 0]
+             if t.material_id == req.material_id and offen[t.id] > 0]
     if not teile:
+        if behalten:
+            return _plan_speichern(projekt, material, blade, req.algorithm, behalten,
+                                   [], [])
         raise HTTPException(400, "No open parts for this material")
 
     vorrat = get_db().list_lagerstuecke(req.material_id)
 
     kerf = blade.schnittbreite
-    is_1d = material.typ == MaterialTyp.STANGE
-
     defekte_map = get_db().list_defekte_for_material(req.material_id)
     # Der Optimizer zählt die Kopien eines Lagerstücks lückenlos 1..anzahl,
     # echte Stücknummern können Lücken haben (verbrauchte Stücke). Defekte auf
@@ -1187,7 +1187,7 @@ def run_optimization(req: OptimizeRequest):
 
     if is_1d:
         besaeumung = material.besaeumung
-        teil_tuples = [(t.label, t.laenge, t.offen_anzahl) for t in teile]
+        teil_tuples = [(t.label, t.laenge, offen[t.id]) for t in teile]
         stock = [
             StangenVorrat(ls.id, ls.laenge - 2 * besaeumung, ls.stueckzahl)
             for ls in vorrat
@@ -1200,7 +1200,7 @@ def run_optimization(req: OptimizeRequest):
             ergebnis = optimize_1d(teil_tuples, stock, kerf, defekte_lauf)
     else:
         besaeumung = material.besaeumung
-        teil_tuples = [(t.label, t.laenge, t.breite, t.offen_anzahl) for t in teile]
+        teil_tuples = [(t.label, t.laenge, t.breite, offen[t.id]) for t in teile]
         stock = [
             PlattenVorrat(
                 ls.id,
@@ -1233,69 +1233,270 @@ def run_optimization(req: OptimizeRequest):
         if 0 < sp.stueck_nr <= len(nrs):
             sp.stueck_nr = nrs[sp.stueck_nr - 1]
 
-    result = _ergebnis_to_out(ergebnis, defekte_map)
+    neue = _ergebnis_to_bretter(ergebnis, defekte_map, teile, offen)
+    bedarf = []
     if ergebnis.fehlende_teile:
-        result.materialbedarf = _berechne_materialbedarf(
-            ergebnis.fehlende_teile, teile, vorrat, material, kerf)
-    return result
+        bedarf = [m.model_dump() for m in _berechne_materialbedarf(
+            ergebnis.fehlende_teile, teile, vorrat, material, kerf)]
+    return _plan_speichern(projekt, material, blade, req.algorithm, behalten + neue,
+                           ergebnis.fehlende_teile, bedarf)
 
 
 # ---------------------------------------------------------------------------
-# Confirm (apply cutting plan)
+# Gespeicherte Schnittpläne
 # ---------------------------------------------------------------------------
 
 
-@app.post("/api/optimize/confirm")
-def confirm_optimization(req: ConfirmRequest):
-    material = get_db().get_material(req.material_id)
-    if not material:
-        raise HTTPException(404, "Material not found")
-
-    projekt = get_db().get_projekt(req.project_id)
-    if not projekt:
-        raise HTTPException(404, "Project not found")
-
-    is_1d = material.typ == MaterialTyp.STANGE
-
-    # Count how many times each label was placed
-    label_counts: dict[str, int] = {}
-    for sp in req.schnittplaene:
-        # Consume the stock piece
-        get_db().lager_verbrauchen(sp.lagerstueck_id, stueck_nr=sp.stueck_nr)
-
-        for rest in sp.reste:
-            if is_1d:
-                if len(rest) >= 1 and rest[0] > 0:
-                    get_db().rest_einbuchen(req.material_id, rest[0])
-            else:
-                if len(rest) >= 2 and rest[0] > 0 and rest[1] > 0:
-                    get_db().rest_einbuchen(req.material_id, rest[0], rest[1])
-
-        for p in sp.platzierungen:
-            label_counts[p.teil_label] = label_counts.get(p.teil_label, 0) + 1
-
-    # Update teil.gesaegt_anzahl
-    for teil in projekt.teile:
-        if teil.material_id != req.material_id:
+def _angefangene_bretter(alt: GespeicherterPlan | None, is_1d: bool) -> list[PlanBrett]:
+    """Bretter des alten Plans, die beim Neuberechnen erhalten bleiben."""
+    if not alt:
+        return []
+    behalten = []
+    for b in alt.bretter:
+        if not b.verbraucht:
             continue
-        placed = label_counts.get(teil.label, 0)
-        if placed > 0:
-            teil.gesaegt_anzahl = min(teil.stueckzahl, teil.gesaegt_anzahl + placed)
-            get_db().save_teil(teil)
+        if is_1d:
+            # Rest der Stange ist schon im Lager → nur das Gesägte bleibt im Plan
+            b.stuecke = [st for st in b.stuecke if st.gesaegt]
+            genutzt = sum(st.laenge for st in b.stuecke)
+            b.verschnitt_mm = max(0.0, b.lager_laenge - genutzt)
+            b.verschnitt_prozent = (b.verschnitt_mm / b.lager_laenge * 100
+                                    if b.lager_laenge else 0.0)
+        b.id = None
+        for st in b.stuecke:
+            st.id = None
+        behalten.append(b)
+    return behalten
 
-    return {"status": "ok", "message": "Cutting plan confirmed. Stock updated."}
+
+def _ergebnis_to_bretter(erg: OptimierungsErgebnis, defekte_map, teile,
+                         offen: dict[int, int]) -> list[PlanBrett]:
+    """Optimierungsergebnis in Plan-Bretter umwandeln, Teile per ID zuordnen.
+
+    Der Optimizer kennt nur Labels. Bei mehrfach vergebenen Labels werden die
+    Platzierungen der Reihe nach auf die Teile verteilt (je bis zu ihrer offenen Anzahl).
+    """
+    rest = {t.id: offen[t.id] for t in teile}
+    nach_label: dict[str, list[Teil]] = {}
+    for t in teile:
+        nach_label.setdefault(t.label, []).append(t)
+
+    def teil_id(label: str) -> int | None:
+        kandidaten = nach_label.get(label, [])
+        for t in kandidaten:
+            if rest[t.id] > 0:
+                rest[t.id] -= 1
+                return t.id
+        return kandidaten[0].id if kandidaten else None
+
+    bretter = []
+    for sp in erg.schnittplaene:
+        defs = (defekte_map or {}).get(sp.lagerstueck_id, {}).get(sp.stueck_nr, [])
+        bretter.append(PlanBrett(
+            lagerstueck_id=sp.lagerstueck_id, stueck_nr=sp.stueck_nr,
+            lager_laenge=sp.lager_laenge, lager_breite=sp.lager_breite,
+            reste=[list(r) for r in sp.reste],
+            defekte=[{"position": d.position, "position_y": d.position_y,
+                      "laenge": d.laenge, "breite": d.breite} for d in defs],
+            verschnitt_mm=sp.verschnitt_mm, verschnitt_prozent=sp.verschnitt_prozent,
+            stuecke=[PlanStueck(teil_id=teil_id(p.teil_label), teil_label=p.teil_label,
+                                laenge=p.laenge, breite=p.breite, x=p.x, y=p.y,
+                                gedreht=p.gedreht)
+                     for p in sp.platzierungen],
+        ))
+    return bretter
 
 
-@app.post("/api/optimize/mark-plan")
-def mark_plan(req: MarkPlanRequest):
-    """Lagerbestand für EINEN Schnittplan live anpassen (wie Desktop _on_teil_cut).
+def _eingabe_hash(projekt: Projekt, material: Material, kerf: float) -> str:
+    """Fingerabdruck der Eingaben, die sich NICHT durchs Sägen ändern.
+
+    Fortschritt (gesaegt_anzahl) und Lager gehören bewusst nicht dazu.
+    """
+    import hashlib
+    import json
+    teile = sorted((t.id, t.laenge, t.breite, t.maserung.value, t.stueckzahl)
+                   for t in projekt.teile if t.material_id == material.id)
+    raw = json.dumps([teile, material.besaeumung, material.maserung.value, kerf])
+    return hashlib.sha1(raw.encode()).hexdigest()
+
+
+def _plan_speichern(projekt, material, blade, algorithmus, bretter, fehlende, bedarf
+                    ) -> OptimizeResult:
+    db = get_db()
+    plan = GespeicherterPlan(
+        projekt_id=projekt.id, material_id=material.id, saegeblatt_id=blade.id,
+        kerf=blade.schnittbreite, algorithmus=algorithmus,
+        eingabe_hash=_eingabe_hash(projekt, material, blade.schnittbreite),
+        fehlende_teile=list(fehlende), materialbedarf=list(bedarf), bretter=bretter,
+    )
+    return _plan_to_out(db.save_plan(plan))
+
+
+def _plan_to_out(plan: GespeicherterPlan) -> OptimizeResult:
+    db = get_db()
+    material = db.get_material(plan.material_id)
+    projekt = db.get_projekt(plan.projekt_id)
+    is_1d = material is not None and material.typ == MaterialTyp.STANGE
+
+    # Noch nicht angefangene Bretter: gibt es genau diese Stücke noch im Lager?
+    nrs_map = db.einzelstueck_nrs_for_material(plan.material_id)
+    lager_fehlt = False
+    for b in plan.bretter:
+        if b.verbraucht:
+            continue
+        nrs = nrs_map.get(b.lagerstueck_id)
+        if not nrs or (b.stueck_nr and b.stueck_nr not in nrs):
+            lager_fehlt = True
+
+    gesamt, genutzt = 0.0, 0.0
+    for b in plan.bretter:
+        if is_1d:
+            gesamt += b.lager_laenge
+            genutzt += sum(st.laenge for st in b.stuecke)
+        else:
+            gesamt += b.lager_laenge * b.lager_breite
+            genutzt += sum(st.laenge * st.breite for st in b.stuecke)
+
+    return OptimizeResult(
+        schnittplaene=[
+            SchnittplanOut(
+                id=b.id, lagerstueck_id=b.lagerstueck_id, lager_laenge=b.lager_laenge,
+                lager_breite=b.lager_breite, stueck_nr=b.stueck_nr,
+                platzierungen=[
+                    PlatzierungOut(id=st.id, teil_label=st.teil_label, laenge=st.laenge,
+                                   breite=st.breite, x=st.x, y=st.y, gedreht=st.gedreht,
+                                   gesaegt=st.gesaegt)
+                    for st in b.stuecke],
+                reste=b.reste, verschnitt_mm=b.verschnitt_mm,
+                verschnitt_prozent=b.verschnitt_prozent,
+                defekte=[DefectOut(id=0, einzelstueck_id=0, stueck_nr=b.stueck_nr,
+                                   position=d.get("position", 0),
+                                   position_y=d.get("position_y", 0),
+                                   laenge=d.get("laenge", 0), breite=d.get("breite", 0))
+                         for d in b.defekte],
+                verbraucht=b.verbraucht,
+            )
+            for b in plan.bretter],
+        fehlende_teile=plan.fehlende_teile,
+        gesamt_verschnitt_prozent=round((1 - genutzt / gesamt) * 100, 1) if gesamt else 0.0,
+        materialbedarf=[MaterialBedarfOut(**m) for m in plan.materialbedarf],
+        plan_id=plan.id, projekt_id=plan.projekt_id, material_id=plan.material_id,
+        saegeblatt_id=plan.saegeblatt_id, algorithmus=plan.algorithmus,
+        erstellt=plan.erstellt, version=plan.version,
+        veraltet=(projekt is None or material is None or
+                  _eingabe_hash(projekt, material, plan.kerf) != plan.eingabe_hash),
+        lager_fehlt=lager_fehlt,
+    )
+
+
+def _brett_abgleichen(db: Database, plan: GespeicherterPlan, brett: PlanBrett,
+                      is_1d: bool):
+    """Lagerbestand eines Bretts an seine gesägten Stücke anpassen (Zustand in der DB)."""
+    marked = [st for st in brett.stuecke if st.gesaegt]
+    res = _mark_plan_core(db, MarkPlanRequest(
+        material_id=plan.material_id, lagerstueck_id=brett.lagerstueck_id,
+        is_1d=is_1d, lager_laenge=brett.lager_laenge, lager_breite=brett.lager_breite,
+        kerf=plan.kerf, marked_laengen=[st.laenge for st in marked],
+        marked_x=[st.x for st in marked],
+        defekte=[[d.get("position", 0), d.get("laenge", 0)] for d in brett.defekte]
+        if is_1d else [],
+        total_pieces=len(brett.stuecke), reste=brett.reste,
+        prev_consumed=brett.verbraucht, prev_rest_ids=brett.rest_ids,
+        stueck_nr=brett.stueck_nr, prev_consumed_piece=brett.verbrauchtes_stueck,
+    ))
+    alte_id = brett.lagerstueck_id
+    brett.verbraucht = res["consumed"]
+    brett.rest_ids = res["rest_ids"]
+    brett.lagerstueck_id = res["lagerstueck_id"]
+    brett.verbrauchtes_stueck = res["consumed_piece"]
+    db.save_brett_zustand(brett)
+    if brett.lagerstueck_id != alte_id:
+        # Zurückgebucht in eine neue Lagerzeile: unbenutzte Bretter aller Pläne mitziehen
+        db.conn.execute(
+            """UPDATE schnittplan_brett SET lagerstueck_id=?
+               WHERE lagerstueck_id=? AND verbraucht=0""",
+            (brett.lagerstueck_id, alte_id))
+        db.conn.commit()
+
+
+def _plan_is_1d(db: Database, plan: GespeicherterPlan) -> bool:
+    material = db.get_material(plan.material_id)
+    return material is not None and material.typ == MaterialTyp.STANGE
+
+
+@app.get("/api/projects/{pid}/plans/{mid}", response_model=Optional[OptimizeResult])
+def get_saved_plan(pid: int, mid: int):
+    """Gespeicherter Plan oder null, wenn für Projekt+Material noch keiner existiert."""
+    plan = get_db().get_plan(pid, mid)
+    return _plan_to_out(plan) if plan else None
+
+
+@app.post("/api/plan-pieces/{sid}", response_model=PieceSawnOut)
+def set_piece_sawn(sid: int, data: PieceSawnIn):
+    """Ein Stück als gesägt markieren/zurücknehmen – Fortschritt und Lager inklusive.
+
+    Idempotent: Der Zielzustand wird gesetzt, nicht umgeschaltet.
+    """
+    db = get_db()
+    plan = db.get_plan_for_stueck(sid)
+    if not plan:
+        raise HTTPException(404, "Plan piece not found")
+    brett = next(b for b in plan.bretter if any(st.id == sid for st in b.stuecke))
+    stueck = next(st for st in brett.stuecke if st.id == sid)
+    teil = None
+    if stueck.gesaegt != data.gesaegt:
+        stueck.gesaegt = data.gesaegt
+        db.set_stueck_gesaegt(sid, data.gesaegt)
+        if stueck.teil_id:
+            db.teil_gesaegt_aendern(stueck.teil_id, 1 if data.gesaegt else -1)
+        _brett_abgleichen(db, plan, brett, _plan_is_1d(db, plan))
+        db.plan_geaendert(plan.id)
+    if stueck.teil_id:
+        t = next((t for t in db.list_teile(plan.projekt_id) if t.id == stueck.teil_id), None)
+        teil = _teil_to_out(t) if t else None
+    return PieceSawnOut(plan=_plan_to_out(db.get_plan_by_id(plan.id)), teil=teil)
+
+
+@app.post("/api/plans/{plan_id}/confirm-all", response_model=OptimizeResult)
+def confirm_all_pieces(plan_id: int):
+    """Alle noch offenen Stücke des Plans als gesägt markieren."""
+    db = get_db()
+    plan = db.get_plan_by_id(plan_id)
+    if not plan:
+        raise HTTPException(404, "Plan not found")
+    is_1d = _plan_is_1d(db, plan)
+    for brett in plan.bretter:
+        offen = [st for st in brett.stuecke if not st.gesaegt]
+        if not offen:
+            continue
+        for st in offen:
+            st.gesaegt = True
+            db.set_stueck_gesaegt(st.id, True)
+            if st.teil_id:
+                db.teil_gesaegt_aendern(st.teil_id, 1)
+        _brett_abgleichen(db, plan, brett, is_1d)
+    db.plan_geaendert(plan.id)
+    return _plan_to_out(db.get_plan_by_id(plan.id))
+
+
+@app.post("/api/projects/{pid}/restart", response_model=ProjectOut)
+def restart_project(pid: int):
+    """Projekt nochmal sägen: Fortschritt auf 0, Pläne weg, Lager bleibt wie es ist."""
+    db = get_db()
+    if not db.get_projekt(pid):
+        raise HTTPException(404, "Project not found")
+    db.projekt_neu_starten(pid)
+    return _projekt_to_out(db.get_projekt(pid))
+
+
+def _mark_plan_core(db: Database, req: MarkPlanRequest) -> dict:
+    """Lagerbestand für EIN Brett eines Schnittplans anpassen.
 
     Beim ersten markierten Stück wird das Lagerstück verbraucht; der tatsächliche
     Rest (1D: Länge − Σ markiert − Kerf·Anzahl; 2D: plan.reste nur wenn komplett)
     wird eingebucht. Vorher gebuchte Reste werden zuerst entfernt (idempotent).
     Ohne Markierungen wird der Verbrauch rückgängig gemacht.
     """
-    db = get_db()
     consumed = req.prev_consumed
     consumed_piece = req.prev_consumed_piece
     lagerstueck_id = req.lagerstueck_id

@@ -29,6 +29,11 @@ def _set_key(key: str):
     webapp.SETTINGS_PATH.write_text(json.dumps({"api": {"key": key}}))
 
 
+def _mark_plan(payload: dict) -> dict:
+    """Lager-Abgleich eines Bretts direkt aufrufen (früher /api/optimize/mark-plan)."""
+    return webapp._mark_plan_core(webapp.get_db(), webapp.MarkPlanRequest(**payload))
+
+
 def _ui_cookie(c: TestClient):
     return c.cookies.get("cutstock_ui_default")
 
@@ -129,11 +134,11 @@ class TestMarkPlanUndo:
                 for s in client.get(f"/api/stock?material_id={mid}").json()]
 
     def _mark(self, client, mid, sid, is_1d, l, b, marked, consumed, rest_ids=()):
-        return client.post("/api/optimize/mark-plan", json={
+        return _mark_plan({
             "material_id": mid, "lagerstueck_id": sid, "is_1d": is_1d,
             "lager_laenge": l, "lager_breite": b, "kerf": 3,
             "marked_laengen": marked, "prev_consumed": consumed,
-            "prev_rest_ids": list(rest_ids)}).json()
+            "prev_rest_ids": list(rest_ids)})
 
     @pytest.mark.parametrize("stueckzahl", [1, 2])
     def test_platte_mehrfach_markieren_und_zuruecknehmen(self, client, stueckzahl):
@@ -164,11 +169,11 @@ class TestMarkPlanUndo:
         mid = self._material(client, "Stange", 0)
         sid = client.post("/api/stock", json={
             "material_id": mid, "laenge": 3000, "stueckzahl": 1}).json()["id"]
-        res = client.post("/api/optimize/mark-plan", json={
+        res = _mark_plan({
             "material_id": mid, "lagerstueck_id": sid, "is_1d": True,
             "lager_laenge": 3000, "kerf": 3,
             "marked_laengen": [820, 820], "marked_x": [0, 1050],
-            "defekte": [[1000, 50]], "prev_consumed": False}).json()
+            "defekte": [[1000, 50]], "prev_consumed": False})
         assert sorted(self._stock(client, mid)) == [(177, 0, 1), (1127, 0, 1)]
         self._mark(client, mid, res["lagerstueck_id"], True, 3000, 0, [], True,
                    res["rest_ids"])
@@ -201,12 +206,12 @@ class TestEinzelstueckVerbrauch:
 
     def _mark(self, client, mid, sid, nr, marked, consumed=False, piece=None,
               rest_ids=()):
-        return client.post("/api/optimize/mark-plan", json={
+        return _mark_plan({
             "material_id": mid, "lagerstueck_id": sid, "is_1d": False,
             "lager_laenge": 2000, "lager_breite": 1000, "kerf": 3,
             "marked_laengen": marked, "prev_consumed": consumed,
             "prev_rest_ids": list(rest_ids), "stueck_nr": nr,
-            "prev_consumed_piece": piece}).json()
+            "prev_consumed_piece": piece})
 
     def test_verbraucht_plan_stueck_und_nimmt_zurueck(self, client):
         mid, sid = self._setup(client)
@@ -251,3 +256,174 @@ class TestEinzelstueckVerbrauch:
         p3 = next(p for p in plaene if p["stueck_nr"] == 3)
         p2 = next(p for p in plaene if p["stueck_nr"] == 2)
         assert len(p3["defekte"]) == 1 and p2["defekte"] == []
+
+
+# =====================================================================
+# Gespeicherte Schnittpläne
+# =====================================================================
+
+class TestGespeichertePlaene:
+
+    def _setup(self, client, typ="Platte", stock=None, teile=None):
+        mid = client.post("/api/materials", json={
+            "name": f"Plan {typ}", "typ": typ}).json()["id"]
+        for laenge, breite, n in stock or [(2000, 1000, 3)]:
+            client.post("/api/stock", json={"material_id": mid, "laenge": laenge,
+                                            "breite": breite, "stueckzahl": n})
+        pid = client.post("/api/projects", json={"name": "Plan"}).json()["id"]
+        for label, laenge, breite, n in teile or [("A", 900, 900, 4)]:
+            client.post(f"/api/projects/{pid}/parts", json={
+                "label": label, "typ": typ, "material_id": mid,
+                "laenge": laenge, "breite": breite, "stueckzahl": n})
+        bid = client.post("/api/blades", json={"name": "B", "schnittbreite": 3}).json()["id"]
+        return mid, pid, bid
+
+    def _optimize(self, client, mid, pid, bid):
+        r = client.post("/api/optimize", json={
+            "project_id": pid, "material_id": mid, "blade_id": bid,
+            "algorithm": "nested"})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    def _teile(self, client, pid):
+        return {t["label"]: t for t in client.get(f"/api/projects/{pid}").json()["teile"]}
+
+    def _stock_total(self, client, mid):
+        return sum(s["stueckzahl"] for s in client.get(f"/api/stock?material_id={mid}").json())
+
+    def test_berechnung_wird_gespeichert_und_geladen(self, client):
+        mid, pid, bid = self._setup(client)
+        plan = self._optimize(client, mid, pid, bid)
+        assert plan["plan_id"] > 0
+        geladen = client.get(f"/api/projects/{pid}/plans/{mid}").json()
+        assert geladen["plan_id"] == plan["plan_id"]
+        assert len(geladen["schnittplaene"]) == len(plan["schnittplaene"])
+        assert all(p["id"] > 0 for sp in geladen["schnittplaene"] for p in sp["platzierungen"])
+        assert not geladen["veraltet"] and not geladen["lager_fehlt"]
+        assert client.get(f"/api/projects/{pid}").json()["plaene"][0]["gesamt"] == 4
+
+    def test_ohne_plan_null(self, client):
+        mid, pid, _ = self._setup(client)
+        assert client.get(f"/api/projects/{pid}/plans/{mid}").json() is None
+
+    def test_abhaken_idempotent_mit_fortschritt_und_lager(self, client):
+        mid, pid, bid = self._setup(client)
+        plan = self._optimize(client, mid, pid, bid)
+        stueck = plan["schnittplaene"][0]["platzierungen"][0]
+        vorher = self._stock_total(client, mid)
+        for _ in range(2):   # zweimal „gesägt“ setzen zählt nur einmal
+            res = client.post(f"/api/plan-pieces/{stueck['id']}", json={"gesaegt": True}).json()
+        assert res["teil"]["gesaegt_anzahl"] == 1
+        assert res["plan"]["schnittplaene"][0]["verbraucht"]
+        voll = [s for s in client.get(f"/api/stock?material_id={mid}").json()
+                if s["laenge"] == 2000 and s["breite"] == 1000]
+        assert voll[0]["stueckzahl"] == 2                   # eine ganze Platte weniger
+        # Stand überlebt das Neuladen
+        geladen = client.get(f"/api/projects/{pid}/plans/{mid}").json()
+        assert geladen["schnittplaene"][0]["platzierungen"][0]["gesaegt"]
+        # Zurücknehmen stellt Fortschritt und Lager wieder her
+        res = client.post(f"/api/plan-pieces/{stueck['id']}", json={"gesaegt": False}).json()
+        assert res["teil"]["gesaegt_anzahl"] == 0
+        assert not res["plan"]["schnittplaene"][0]["verbraucht"]
+        assert self._stock_total(client, mid) == vorher
+
+    def test_alle_bestaetigen(self, client):
+        mid, pid, bid = self._setup(client)
+        plan = self._optimize(client, mid, pid, bid)
+        res = client.post(f"/api/plans/{plan['plan_id']}/confirm-all").json()
+        assert all(p["gesaegt"] for sp in res["schnittplaene"] for p in sp["platzierungen"])
+        assert self._teile(client, pid)["A"]["gesaegt_anzahl"] == 4
+
+    def test_veraltet_nach_teil_aenderung(self, client):
+        mid, pid, bid = self._setup(client)
+        self._optimize(client, mid, pid, bid)
+        teil = self._teile(client, pid)["A"]
+        client.put(f"/api/parts/{teil['id']}", json={**teil, "stueckzahl": 5})
+        assert client.get(f"/api/projects/{pid}/plans/{mid}").json()["veraltet"]
+
+    def test_neu_berechnen_behaelt_angefangene_platte(self, client):
+        mid, pid, bid = self._setup(client, stock=[(2000, 1000, 3)],
+                                    teile=[("A", 900, 900, 4)])
+        plan = self._optimize(client, mid, pid, bid)
+        brett = plan["schnittplaene"][0]
+        client.post(f"/api/plan-pieces/{brett['platzierungen'][0]['id']}",
+                    json={"gesaegt": True})
+        neu = self._optimize(client, mid, pid, bid)
+        erstes = neu["schnittplaene"][0]
+        assert erstes["verbraucht"]
+        assert len(erstes["platzierungen"]) == len(brett["platzierungen"])
+        # Insgesamt weiterhin genau 4 Teile A eingeplant, keines doppelt
+        assert sum(len(sp["platzierungen"]) for sp in neu["schnittplaene"]) == 4
+        assert neu["fehlende_teile"] == []
+
+    def test_neu_berechnen_schliesst_angefangene_stange_ab(self, client):
+        mid, pid, bid = self._setup(client, typ="Stange", stock=[(3000, 0, 2)],
+                                    teile=[("S", 900, 0, 3)])
+        plan = self._optimize(client, mid, pid, bid)
+        stange = next(sp for sp in plan["schnittplaene"] if len(sp["platzierungen"]) == 3)
+        client.post(f"/api/plan-pieces/{stange['platzierungen'][0]['id']}",
+                    json={"gesaegt": True})
+        neu = self._optimize(client, mid, pid, bid)
+        alt = neu["schnittplaene"][0]
+        assert alt["verbraucht"] and len(alt["platzierungen"]) == 1
+        # Die zwei restlichen Teile werden neu verteilt – auch auf das Reststück
+        assert sum(len(sp["platzierungen"]) for sp in neu["schnittplaene"]) == 3
+
+    def test_projekt_neu_starten(self, client):
+        mid, pid, bid = self._setup(client)
+        plan = self._optimize(client, mid, pid, bid)
+        client.post(f"/api/plans/{plan['plan_id']}/confirm-all")
+        lager = self._stock_total(client, mid)
+        res = client.post(f"/api/projects/{pid}/restart").json()
+        assert res["plaene"] == []
+        assert all(t["gesaegt_anzahl"] == 0 for t in res["teile"])
+        assert self._stock_total(client, mid) == lager
+        assert client.get(f"/api/projects/{pid}/plans/{mid}").json() is None
+
+    def test_projekt_und_material_loeschen_mit_plan(self, client):
+        mid, pid, bid = self._setup(client)
+        self._optimize(client, mid, pid, bid)
+        assert client.delete(f"/api/projects/{pid}").status_code == 204
+        mid2, pid2, bid2 = self._setup(client)
+        self._optimize(client, mid2, pid2, bid2)
+        assert client.delete(f"/api/materials/{mid2}").status_code == 204
+
+
+# =====================================================================
+# Update von einer DB ohne Plan-Tabellen: keine Daten verloren
+# =====================================================================
+
+class TestMigrationSchnittplaene:
+
+    def test_alte_db_bleibt_erhalten_und_wird_gesichert(self, tmp_path):
+        import sqlite3
+        from core.db import Database
+        path = tmp_path / "cutstock.db"
+        db = Database(path)
+        mid = db.conn.execute(
+            "INSERT INTO material (name, typ) VALUES ('Alt', 'Platte')").lastrowid
+        db.conn.execute("INSERT INTO projekt (name) VALUES ('P')")
+        db.conn.execute(
+            "INSERT INTO lagerstueck (material_id, laenge, breite, stueckzahl) VALUES (?,1,1,2)",
+            (mid,))
+        db.conn.commit()
+        # Stand einer älteren Version simulieren: Plan-Tabellen gibt es noch nicht
+        for t in ("schnittplan_stueck", "schnittplan_brett", "schnittplan"):
+            db.conn.execute(f"DROP TABLE {t}")
+        db.conn.commit()
+        db.close()
+
+        db = Database(path)
+        tabellen = {r[0] for r in db.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        assert {"schnittplan", "schnittplan_brett", "schnittplan_stueck"} <= tabellen
+        assert db.conn.execute("SELECT COUNT(*) FROM material").fetchone()[0] == 1
+        assert db.conn.execute("SELECT COUNT(*) FROM projekt").fetchone()[0] == 1
+        assert db.conn.execute("SELECT SUM(stueckzahl) FROM lagerstueck").fetchone()[0] == 2
+        db.close()
+
+        sicherung = tmp_path / "cutstock-vor-schnittplaene.db"
+        assert sicherung.exists()
+        conn = sqlite3.connect(str(sicherung))
+        assert conn.execute("SELECT name FROM material").fetchone()[0] == "Alt"
+        conn.close()
