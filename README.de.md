@@ -25,6 +25,7 @@ CutStock gibt es in zwei Varianten, die denselben Optimierungskern teilen:
 - **Gespeicherte Schnittplaene** -- jede Berechnung wird gespeichert; beim Wechsel zwischen Projekten bleibt der Stand erhalten (was schon gesaegt ist). Neu berechnen behaelt angefangene Bretter, Hinweis wenn sich Teile oder Lager geaendert haben, "Projekt neu starten" zum erneuten Saegen
 - **Lager-Reservierung** -- gespeicherte Plaene reservieren ihre noch nicht angefangenen Stuecke, andere Projekte verplanen sie nicht (abschaltbar); "Plan verwerfen" gibt sie frei
 - **Reste zuerst** -- auf Wunsch erst nur Reste verplanen, dann ganze Stangen/Platten
+- **Sammelplan** -- ein Material fuer mehrere Projekte gemeinsam optimieren ("Optimieren nach: Material"), mit Vergleich getrennt/gemeinsam; gesaegte Teile zaehlen direkt im jeweiligen Projekt
 - **Fuellteile** -- Teile anderer Projekte mitsaegen, um den Abfall der Stangen aufzufuellen (ohne zusaetzliches Material); gesaegte Fuellteile kommen in den Teile-Vorrat ("Regal") und werden spaeter vom anderen Projekt uebernommen
 - **Projektverwaltung** -- Teile nach Projekten organisieren, Projekt mehrfach bauen (Anzahl Exemplare), Import/Export als JSON, Teilelisten-Import aus CSV
 - **Visuelle Schnittplaene** -- farbkodierte Zuschnittschemata mit Labels und Massen
@@ -132,6 +133,10 @@ Projekt, Material, Saegeblatt und Algorithmus waehlen. Der Optimierer berechnet 
 Bleibt am Ende einer Stange Abfall, kann CutStock ihn mit Teilen aus anderen Projekten auffuellen ("Fuellteile..."). Es wird nie mehr Material verbraucht; die Fuellteile sind schraffiert und tragen ihr Herkunftsprojekt. Gesaegt kommen sie in den Teile-Vorrat und werden beim anderen Projekt mit einem Klick uebernommen.
 
 ![Fuellteile](docs/screenshot_fuellteile.png)
+
+### Sammelplan
+
+Wird dasselbe Material in mehreren Projekten gebraucht, kann man es gemeinsam optimieren: Im Optimierungs-Tab "Optimieren nach: Material (Sammelplan)" waehlen, Material auswaehlen und die Projekte anhaken. "Vergleichen" zeigt, wie viel Material das gegenueber getrennten Plaenen spart. Im Plan steht bei jedem Teil sein Projekt ("Seite → Regal"); abgehakte Teile zaehlen als Fortschritt dieses Projekts. Nicht angefangene Einzelplaene der Projekte werden ersetzt; Teile, die ungesaegt in einem angefangenen Plan liegen, bleiben dort.
 
 ### Optimierung -- Platten
 
@@ -250,6 +255,9 @@ Anfragen von der eigenen Web-Oberflaeche (Same-Origin) und von localhost sind im
 | POST | `/api/plans/{id}/confirm-all` | Alle offenen Stuecke des Plans als gesaegt markieren |
 | DELETE | `/api/plans/{id}` | Plan verwerfen (gibt reservierte Stuecke frei) |
 | GET | `/api/projects/{id}/fill-candidates/{material_id}` | Moegliche Fuellteile aus anderen Projekten |
+| GET | `/api/sammel/{material_id}` | Sammelplan-Status und moegliche Projekte |
+| POST | `/api/sammel/optimize` | Sammelplan anlegen/ersetzen und berechnen |
+| POST | `/api/sammel/compare` | Vergleich getrennt/gemeinsam (ohne Speichern) |
 | POST | `/api/projects/{id}/take-stock/{material_id}` | Teile-Vorrat ("Regal") als gesaegt uebernehmen |
 | **Export** | | |
 | POST | `/api/pdf` | PDF-Schnittplan erzeugen |

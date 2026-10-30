@@ -10,6 +10,8 @@ const State = {
     translations: {},
     materials: [],
     stock: [],
+    optMode: 'project',   // Optimieren nach 'project' oder 'material' (Sammelplan)
+    sammel: null,         // Sammelplan-Infos des gewählten Materials (Material-Modus)
     blades: [],
     projects: [],
     parts: [],
@@ -222,6 +224,9 @@ const Api = {
     confirmAllPieces: (planId) => fetchJSON(`/api/plans/${planId}/confirm-all`, 'POST'),
     restartProject: (projectId) => fetchJSON(`/api/projects/${projectId}/restart`, 'POST'),
     discardPlan: (planId) => fetchJSON(`/api/plans/${planId}`, 'DELETE'),
+    getSammel: (materialId) => fetchJSON(`/api/sammel/${materialId}`),
+    optimizeSammel: (data) => fetchJSON('/api/sammel/optimize', 'POST', data),
+    compareSammel: (data) => fetchJSON('/api/sammel/compare', 'POST', data),
     getFillCandidates: (projectId, materialId) =>
         fetchJSON(`/api/projects/${projectId}/fill-candidates/${materialId}`),
     takePartStock: (projectId, materialId) =>
@@ -719,6 +724,8 @@ function renderOptDropdowns() {
     const prevBlade = bladeSel?.value;
     const prevAlgo = algoSel?.value;
 
+    applyOptMode();
+
     if (projSel) {
         projSel.innerHTML = State.projects.map(p =>
             `<option value="${p.id}">${escHtml(p.name)}</option>`
@@ -760,13 +767,16 @@ function renderOptDropdowns() {
 
 // Plan des gewählten Projekts/Materials vom Server holen und anzeigen.
 async function loadSavedPlan() {
-    const projId = parseInt(document.getElementById('opt-project')?.value);
     const matId = parseInt(document.getElementById('opt-material')?.value);
+    const mode = State.optMode;
+    if (mode === 'material' && matId) await loadSammel(matId);
+    renderSammelPanel();
+    const projId = optProjId();
     if (!projId || !matId) { clearOptResult(); return; }
     let plan = null;
     try { plan = await Api.getSavedPlan(projId, matId); } catch { /* offline o.ä. */ }
     // Auswahl hat sich während des Ladens geändert → Ergebnis verwerfen
-    if (parseInt(document.getElementById('opt-project')?.value) !== projId ||
+    if (State.optMode !== mode || optProjId() !== projId ||
         parseInt(document.getElementById('opt-material')?.value) !== matId) return;
     if (!plan) { clearOptResult(); return; }
     adoptPlan(plan);
@@ -834,10 +844,200 @@ function clearOptResult() {
     renderOptResults();
 }
 
+// ---------------------------------------------------------------------------
+// Sammelplan: ein Material, mehrere Projekte gemeinsam optimieren
+// ---------------------------------------------------------------------------
+
+// Projekt, dem der angezeigte Plan gehört: im Material-Modus das Sammel-Projekt
+function optProjId() {
+    if (State.optMode === 'material') return State.sammel?.sammel_id || 0;
+    return parseInt(document.getElementById('opt-project')?.value) || 0;
+}
+
+function optProjName() {
+    if (State.optMode === 'material') return State.sammel?.name || '';
+    return document.getElementById('opt-project')?.selectedOptions[0]?.text || '';
+}
+
+// Modus-Umschalter: Projekt-Auswahl bzw. Projektliste und passende Knöpfe zeigen
+function applyOptMode() {
+    const sammel = State.optMode === 'material';
+    const modeSel = document.getElementById('opt-mode');
+    if (modeSel) modeSel.value = State.optMode;
+    document.getElementById('opt-project-group')?.classList.toggle('hidden', sammel);
+    document.getElementById('btn-fill')?.classList.toggle('hidden', sammel);
+    document.getElementById('btn-restart')?.classList.toggle('hidden', sammel);
+}
+
+async function loadSammel(matId) {
+    let info = null;
+    try { info = await Api.getSammel(matId); } catch { /* offline o.ä. */ }
+    if (!info) { State.sammel = null; return; }
+    const alt = State.sammel?.material_id === matId ? State.sammel : null;
+    // Auswahl: bisherige Haken behalten, sonst Mitglieder bzw. alle mit offenen Teilen
+    const mitglieder = info.kandidaten.filter(k => k.mitglied).map(k => k.projekt_id);
+    const auswahl = alt?.auswahl
+        || new Set(mitglieder.length ? mitglieder
+            : info.kandidaten.filter(k => k.offen > 0).map(k => k.projekt_id));
+    State.sammel = { ...info, material_id: matId, auswahl, vergleich: null };
+}
+
+function formatMenge(wert, is1D) {
+    const loc = State.settings.language || undefined;
+    return is1D
+        ? `${(wert / 1000).toLocaleString(loc, { maximumFractionDigits: 2 })} m`
+        : `${(wert / 1e6).toLocaleString(loc, { maximumFractionDigits: 2 })} m²`;
+}
+
+function renderSammelPanel() {
+    const el = document.getElementById('sammel-panel');
+    if (!el) return;
+    const matId = parseInt(document.getElementById('opt-material')?.value);
+
+    if (State.optMode !== 'material') {
+        // Projekt-Modus: Hinweis, wenn dieses Material im Sammelplan gesägt wird
+        const proj = State.projects.find(p => p.id === optProjId());
+        const name = proj?.sammel?.[matId];
+        el.classList.toggle('hidden', !name);
+        el.innerHTML = name ? `<div class="sammel-hint">
+            <span>&#128279; ${escHtml(t('sammel.in_plan_hint', { name }))}</span>
+            <button id="btn-open-sammel" class="fd-button fd-button--compact" type="button">${escHtml(t('sammel.open'))}</button></div>` : '';
+        document.getElementById('btn-open-sammel')?.addEventListener('click', () => {
+            setOptMode('material', matId);
+        });
+        return;
+    }
+
+    el.classList.remove('hidden');
+    const s = State.sammel;
+    if (!s || s.material_id !== matId) { el.innerHTML = ''; return; }
+    if (!s.kandidaten.length) {
+        el.innerHTML = `<p class="sammel-note">${escHtml(t('sammel.none'))}</p>`;
+        return;
+    }
+    const mat = State.materials.find(m => m.id === matId);
+    const is1D = mat?.typ === 'Stange';
+    const rows = s.kandidaten.map(k => {
+        const notes = [];
+        if (k.mitglied) notes.push(t('sammel.member'));
+        if (k.einzelplan === 'offen') notes.push(t('sammel.replaces_single'));
+        if (k.gesperrt > 0) notes.push(t('sammel.locked', { n: k.gesperrt }));
+        const disabled = k.offen <= 0 && !k.mitglied;
+        return `<tr class="fd-table__row${disabled ? ' sammel-row-disabled' : ''}" data-pid="${k.projekt_id}">
+            <td class="fd-table__cell"><input type="checkbox" class="cs-checkbox sammel-check"${s.auswahl.has(k.projekt_id) ? ' checked' : ''}${disabled ? ' disabled' : ''}></td>
+            <td class="fd-table__cell">${escHtml(k.name)}</td>
+            <td class="fd-table__cell num">${k.offen}</td>
+            <td class="fd-table__cell num">${formatMenge(k.bedarf, is1D)}</td>
+            <td class="fd-table__cell sammel-note">${escHtml(notes.join(' · '))}</td>
+        </tr>`;
+    }).join('');
+    el.innerHTML = `
+        <h4 class="fd-title fd-title--h6">${escHtml(t('sammel.projects'))}</h4>
+        <table class="fd-table"><thead class="fd-table__header"><tr class="fd-table__row">
+            <th class="fd-table__cell"></th>
+            <th class="fd-table__cell">${escHtml(t('opt.project').replace(':', ''))}</th>
+            <th class="fd-table__cell num">${escHtml(t('sammel.col_open'))}</th>
+            <th class="fd-table__cell num">${escHtml(t('sammel.col_need'))}</th>
+            <th class="fd-table__cell">${escHtml(t('sammel.col_note'))}</th>
+        </tr></thead><tbody class="fd-table__body">${rows}</tbody></table>
+        <div class="toolbar">
+            <button id="btn-sammel-compare" class="fd-button" type="button">${escHtml(t('sammel.compare'))}</button>
+            <span id="sammel-compare" class="sammel-compare">${sammelVergleichHtml(is1D)}</span>
+        </div>`;
+    el.querySelectorAll('.sammel-check').forEach(cb => cb.addEventListener('change', () => {
+        const pid = parseInt(cb.closest('tr').dataset.pid);
+        if (cb.checked) s.auswahl.add(pid); else s.auswahl.delete(pid);
+        s.vergleich = null;
+        document.getElementById('sammel-compare').innerHTML = '';
+    }));
+    document.getElementById('btn-sammel-compare')?.addEventListener('click', () => compareSammel());
+}
+
+function sammelRequest() {
+    const s = State.sammel;
+    return {
+        material_id: s.material_id,
+        projekt_ids: [...s.auswahl],
+        blade_id: parseInt(document.getElementById('opt-blade')?.value),
+        algorithm: document.getElementById('opt-algorithm')?.value || 'greedy',
+        reste_zuerst: !!document.getElementById('opt-rests-first')?.checked,
+    };
+}
+
+function sammelVergleichHtml(is1D) {
+    const v = State.sammel?.vergleich;
+    if (!v) return '';
+    const anz = n => t(is1D ? 'sammel.bars' : 'sammel.boards', { n });
+    const getrennt = `${anz(v.getrennt_bretter)} (${formatMenge(v.getrennt_menge, is1D)})`;
+    const gemeinsam = `${anz(v.gemeinsam_bretter)} (${formatMenge(v.gemeinsam_menge, is1D)})`;
+    const diff = v.getrennt_menge - v.gemeinsam_menge;
+    const pct = v.getrennt_menge > 0 ? Math.round(diff / v.getrennt_menge * 100) : 0;
+    const saving = diff > 0
+        ? `<span class="sammel-saving">→ ${escHtml(t('sammel.saved', { menge: formatMenge(diff, is1D), pct }))}</span>`
+        : `<span>→ ${escHtml(t('sammel.no_saving'))}</span>`;
+    const missing = v.fehlende_getrennt || v.fehlende_gemeinsam
+        ? `<div class="sammel-note">&#9888; ${escHtml(t('sammel.compare_missing'))}</div>` : '';
+    return `${escHtml(t('sammel.compare_result', { sep: getrennt, tog: gemeinsam }))} ${saving}${missing}`;
+}
+
+async function compareSammel() {
+    const s = State.sammel;
+    if (!s?.auswahl.size) { showToast(t('sammel.select_projects'), 'error'); return; }
+    const out = document.getElementById('sammel-compare');
+    if (out) out.textContent = '…';
+    try { s.vergleich = await Api.compareSammel(sammelRequest()); } catch { if (out) out.textContent = ''; return; }
+    const mat = State.materials.find(m => m.id === s.material_id);
+    if (out) out.innerHTML = sammelVergleichHtml(mat?.typ === 'Stange');
+}
+
+async function optimizeSammel() {
+    const s = State.sammel;
+    if (!s?.auswahl.size) { showToast(t('sammel.select_projects'), 'error'); return; }
+    const ersetzt = s.kandidaten.filter(k => s.auswahl.has(k.projekt_id) && k.einzelplan === 'offen');
+    if (ersetzt.length && !(await confirmAsync(
+        t('sammel.confirm_replace', { names: ersetzt.map(k => k.name).join(', ') })))) return;
+    const cur = State.optimizationResult;
+    const started = cur?.plan_id && s.sammel_id && cur.projekt_id === s.sammel_id &&
+        (cur.schnittplaene || []).some(p => p.verbraucht);
+    if (started && !(await confirmAsync(t('plan.reoptimize_started')))) return;
+    const plan = await Api.optimizeSammel(sammelRequest());
+    await loadSammel(s.material_id);
+    State.sammel.auswahl = s.auswahl;
+    State.sammel.vergleich = s.vergleich;
+    renderSammelPanel();
+    adoptPlan(plan);
+    renderOptResults();
+}
+
+function setOptMode(mode, matId) {
+    State.optMode = mode;
+    storageSet('localStorage', 'cutstock_opt_mode', mode);
+    State.optimizationResult = null;
+    applyOptMode();
+    updateOptMaterialDropdown();
+    const matSel = document.getElementById('opt-material');
+    if (matId && matSel?.querySelector(`option[value="${matId}"]`)) matSel.value = String(matId);
+    updateFillButton();
+    renderOptResults();
+    loadSavedPlan();
+}
+
 function updateOptMaterialDropdown() {
     const projSel = document.getElementById('opt-project');
     const matSel = document.getElementById('opt-material');
     if (!projSel || !matSel) return;
+
+    if (State.optMode === 'material') {
+        // Alle Materialien mit offenen Teilen in irgendeinem Projekt oder mit Sammelplan
+        const ids = new Set();
+        State.projects.forEach(p => {
+            (p.teile || []).forEach(t => { if (t.offen_anzahl > 0) ids.add(t.material_id); });
+            Object.keys(p.sammel || {}).forEach(mid => ids.add(parseInt(mid)));
+        });
+        matSel.innerHTML = State.materials.filter(m => ids.has(m.id)).map(m =>
+            `<option value="${m.id}">${escHtml(m.name)}</option>`).join('');
+        return;
+    }
 
     const projectId = parseInt(projSel.value);
     const project = State.projects.find(p => p.id === projectId);
@@ -1634,7 +1834,8 @@ async function discardPlan() {
     clearOptResult();
     try { State.projects = await Api.getProjects(); } catch { /* ignore */ }
     renderProjects();
-    updateOptMaterialDropdown();
+    if (State.optMode === 'material') { if (State.sammel) State.sammel.material_id = 0; loadSavedPlan(); }
+    else { updateOptMaterialDropdown(); renderSammelPanel(); }
     showToast(t('plan.discarded'), 'info');
 }
 
@@ -1717,16 +1918,19 @@ function dimText(laenge, breite) {
 function printPartLabels() {
     const result = State.optimizationResult;
     if (!result?.schnittplaene?.length) return;
-    const projName = document.getElementById('opt-project')?.selectedOptions[0]?.text || '';
+    const projName = optProjName();
     const matName = document.getElementById('opt-material')?.selectedOptions[0]?.text || '';
 
     const labels = [];
     result.schnittplaene.forEach((plan, i) => {
         plan.platzierungen.forEach(p => {
+            // Füllteile/Sammelplan: „Label → Projekt“ – das Projekt gehört in Zeile 2
+            const [titel, herkunft] = p.teil_label.split(' → ');
             labels.push({
-                title: p.teil_label,
+                title: titel,
                 line1: dimText(p.laenge, p.breite) + (p.gedreht ? '  (R)' : ''),
-                line2: [projName, matName].filter(Boolean).join(' · '),
+                line2: [herkunft || (State.optMode === 'material' ? '' : projName), matName]
+                    .filter(Boolean).join(' · '),
                 id_text: `P${i + 1}`,
             });
         });
@@ -3727,6 +3931,21 @@ function initEvents() {
 
     // ----- Optimization -----
     document.getElementById('btn-optimize')?.addEventListener('click', async () => {
+        if (State.optMode === 'material') {
+            const btn = document.getElementById('btn-optimize');
+            btn.disabled = true;
+            btn.textContent = '...';
+            try {
+                await optimizeSammel();
+                try { State.projects = await Api.getProjects(); renderProjects(); } catch { /* ignore */ }
+            } catch {
+                await loadSavedPlan();
+            } finally {
+                btn.disabled = false;
+                btn.textContent = t('opt.run');
+            }
+            return;
+        }
         const projId = parseInt(document.getElementById('opt-project')?.value);
         const matId = parseInt(document.getElementById('opt-material')?.value);
         const bladeId = parseInt(document.getElementById('opt-blade')?.value);
@@ -3808,7 +4027,6 @@ function initEvents() {
 
     document.getElementById('btn-pdf')?.addEventListener('click', () => {
         if (!State.optimizationResult) return;
-        const projSel = document.getElementById('opt-project');
         const matSel = document.getElementById('opt-material');
         const bladeSel = document.getElementById('opt-blade');
         const matId = parseInt(matSel?.value);
@@ -3822,7 +4040,7 @@ function initEvents() {
 
         Api.downloadPdf({
             ergebnis: State.optimizationResult,
-            projekt_name: projSel?.selectedOptions[0]?.text || '',
+            projekt_name: optProjName(),
             material_name: matSel?.selectedOptions[0]?.text || '',
             material_id: matId || 0,
             saegeblatt_name: bladeSel?.selectedOptions[0]?.text || '',
@@ -3830,6 +4048,10 @@ function initEvents() {
             schnittfolgen,
             schnittfolge_titel: t('seq.title'),
         });
+    });
+
+    document.getElementById('opt-mode')?.addEventListener('change', (e) => {
+        setOptMode(e.target.value, parseInt(document.getElementById('opt-material')?.value));
     });
 
     // ----- Optimization project dropdown changes material filter -----
@@ -4258,6 +4480,8 @@ async function init() {
             if (deskResp.desktop) document.getElementById('btn-quit').style.display = '';
         } catch { /* not available — hide button */ }
 
+        State.optMode = storageGet('localStorage', 'cutstock_opt_mode') === 'material'
+            ? 'material' : 'project';
         initEvents();
         renderMaterials();
         renderSettings();

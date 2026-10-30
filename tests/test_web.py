@@ -795,3 +795,107 @@ class TestFuellteile:
                          fuellteile=[{"teil_id": fid, "modus": "fest", "menge": 5}])
         assert len(self._fuell(plan)) == 5
         assert plan["fehlende_teile"] == []
+
+
+# =====================================================================
+# Sammelplan: ein Material, mehrere Projekte gemeinsam
+# =====================================================================
+
+class TestSammelplan:
+
+    def _setup(self, client):
+        """Beispiel aus dem Design: A 4×695, B 4×600 auf 2000er Stangen, Fuge 3."""
+        mid = client.post("/api/materials", json={"name": "Alu 40x40", "typ": "Stange"}).json()["id"]
+        client.post("/api/stock", json={"material_id": mid, "laenge": 2000, "stueckzahl": 10})
+        bid = client.post("/api/blades", json={"name": "B", "schnittbreite": 3}).json()["id"]
+        ids = {}
+        for name, laenge in (("A", 695), ("B", 600)):
+            pid = client.post("/api/projects", json={"name": name}).json()["id"]
+            client.post(f"/api/projects/{pid}/parts", json={
+                "label": "Seite", "typ": "Stange", "material_id": mid,
+                "laenge": laenge, "stueckzahl": 4})
+            ids[name] = pid
+        return mid, bid, ids["A"], ids["B"]
+
+    def _req(self, mid, bid, pids, **kw):
+        return {"material_id": mid, "blade_id": bid, "projekt_ids": pids,
+                "algorithm": "greedy", **kw}
+
+    def _sammel(self, client, mid, bid, pids):
+        r = client.post("/api/sammel/optimize", json=self._req(mid, bid, pids))
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    def _stuecke(self, plan):
+        return [p for sp in plan["schnittplaene"] for p in sp["platzierungen"]]
+
+    def test_gemeinsam_spart_eine_stange(self, client):
+        mid, bid, a, b = self._setup(client)
+        v = client.post("/api/sammel/compare", json=self._req(mid, bid, [a, b])).json()
+        assert (v["getrennt_bretter"], v["gemeinsam_bretter"]) == (4, 3)
+        plan = self._sammel(client, mid, bid, [a, b])
+        assert len(plan["schnittplaene"]) == 3
+        labels = sorted(p["teil_label"] for p in self._stuecke(plan))
+        assert labels == ["Seite → A"] * 4 + ["Seite → B"] * 4   # gleiche Labels getrennt
+
+    def test_sammel_projekt_unsichtbar_mitglieder_kennen_es(self, client):
+        mid, bid, a, _ = self._setup(client)
+        self._sammel(client, mid, bid, [a])
+        namen = [p["name"] for p in client.get("/api/projects").json()]
+        assert "Sammelplan Alu 40x40" not in namen
+        assert client.get(f"/api/projects/{a}").json()["sammel"] == {str(mid): "Sammelplan Alu 40x40"}
+        s = client.get(f"/api/sammel/{mid}").json()
+        assert s["sammel_id"] and [k["mitglied"] for k in s["kandidaten"]] == [True, False]
+
+    def test_abhaken_bucht_ins_eigene_projekt(self, client):
+        mid, bid, a, b = self._setup(client)
+        plan = self._sammel(client, mid, bid, [a, b])
+        st = next(p for p in self._stuecke(plan) if p["teil_label"] == "Seite → B")
+        teil = client.post(f"/api/plan-pieces/{st['id']}", json={"gesaegt": True}).json()["teil"]
+        assert (teil["projekt_id"], teil["gesaegt_anzahl"], teil["vorrat"]) == (b, 1, 0)
+
+    def test_offener_einzelplan_wird_ersetzt(self, client):
+        mid, bid, a, b = self._setup(client)
+        client.post("/api/optimize", json={"project_id": a, "material_id": mid, "blade_id": bid})
+        assert client.get(f"/api/projects/{a}/plans/{mid}").json()
+        plan = self._sammel(client, mid, bid, [a, b])
+        assert len(self._stuecke(plan)) == 8
+        assert client.get(f"/api/projects/{a}/plans/{mid}").json() is None
+
+    def test_angefangener_einzelplan_sperrt_nur_seine_teile(self, client):
+        mid, bid, a, b = self._setup(client)
+        # A hat 2 Exemplare = 8 Teile; der Einzelplan von A deckt nur 4 davon ab
+        client.put(f"/api/projects/{a}", json={"name": "A", "anzahl": 1})
+        einzel = client.post("/api/optimize", json={
+            "project_id": a, "material_id": mid, "blade_id": bid}).json()
+        client.post(f"/api/plan-pieces/{self._stuecke(einzel)[0]['id']}", json={"gesaegt": True})
+        client.put(f"/api/projects/{a}", json={"name": "A", "anzahl": 2})
+        k = {x["projekt_id"]: x for x in client.get(f"/api/sammel/{mid}").json()["kandidaten"]}
+        assert (k[a]["einzelplan"], k[a]["gesperrt"], k[a]["offen"]) == ("angefangen", 3, 4)
+        plan = self._sammel(client, mid, bid, [a, b])
+        n_a = sum(p["teil_label"] == "Seite → A" for p in self._stuecke(plan))
+        assert n_a == 4                                       # nur das zweite Exemplar
+        assert client.get(f"/api/projects/{a}/plans/{mid}").json()   # Einzelplan bleibt
+
+    def test_einzelplan_nach_sammelplan_nicht_doppelt(self, client):
+        mid, bid, a, b = self._setup(client)
+        self._sammel(client, mid, bid, [a, b])
+        r = client.post("/api/optimize", json={"project_id": a, "material_id": mid, "blade_id": bid})
+        assert r.status_code == 409 and "Sammelplan" in r.json()["detail"]
+
+    def test_verwerfen_loescht_sammelplan(self, client):
+        mid, bid, a, b = self._setup(client)
+        plan = self._sammel(client, mid, bid, [a, b])
+        assert client.delete(f"/api/plans/{plan['plan_id']}").status_code == 204
+        assert client.get(f"/api/sammel/{mid}").json()["sammel_id"] == 0
+        assert client.get(f"/api/projects/{a}").json()["sammel"] == {}
+
+    def test_feste_fuellteile_sperren_sie_im_eigenen_plan(self, client):
+        mid, bid, a, b = self._setup(client)
+        fid = client.get(f"/api/projects/{b}").json()["teile"][0]["id"]
+        client.post("/api/optimize", json={
+            "project_id": a, "material_id": mid, "blade_id": bid,
+            "fuellteile": [{"teil_id": fid, "modus": "fest", "menge": 3}]})
+        plan_b = client.post("/api/optimize", json={
+            "project_id": b, "material_id": mid, "blade_id": bid}).json()
+        assert len(self._stuecke(plan_b)) == 1                  # 3 liegen schon bei A

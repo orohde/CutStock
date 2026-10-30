@@ -88,6 +88,7 @@ class Projekt:
     name: str = ""
     anzahl: int = 1        # Exemplare: das Projekt wird so oft gebaut
     teile: list[Teil] = field(default_factory=list)
+    art: str = ""          # "sammel" = Sammelplan mehrerer Projekte (ohne eigene Teile)
 
 
 @dataclass

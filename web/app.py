@@ -6,7 +6,7 @@ import os
 import signal
 import sys
 import tempfile
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -395,6 +395,8 @@ class ProjectOut(BaseModel):
     anzahl: int = 1
     teile: list[PartOut]
     plaene: list[PlanStatusOut] = []
+    # Materialien, für die das Projekt in einem Sammelplan steckt: {material_id: Name}
+    sammel: dict[int, str] = {}
 
 
 class FuellKandidatOut(BaseModel):
@@ -656,6 +658,7 @@ def _projekt_to_out(p: Projekt) -> ProjectOut:
                               erstellt=r["erstellt"], gesamt=r["gesamt"],
                               gesaegt=r["gesaegt"], angefangen=bool(r["angefangen"]))
                 for r in get_db().list_plan_status(p.id)] if p.id else [],
+        sammel=get_db().sammel_von_projekt(p.id) if p.id else {},
     )
 
 
@@ -1262,81 +1265,28 @@ def delete_part(tid: int):
 # ---------------------------------------------------------------------------
 
 
-@app.post("/api/optimize", response_model=OptimizeResult)
-def run_optimization(req: OptimizeRequest):
-    """Berechnen und als Plan des Projekts für dieses Material speichern.
+@dataclass
+class _Lagerlage:
+    """Was beim Optimieren eines Materials an Lager verfügbar ist."""
+    nrs_map: dict          # Lagerzeile → freie Stücknummern (ohne reservierte)
+    vorrat_alle: list      # alle Lagerzeilen (für den Materialbedarf)
+    vorrat: list           # Lagerzeilen mit Stückzahl = freie Nummern
+    defekte_map: dict      # Lagerzeile → Stücknummer → Defekte
+    defekte_lauf: dict     # wie defekte_map, aber auf laufende Nummern 1..n
 
-    Ist der bisherige Plan schon angefangen, bleiben angefangene Bretter erhalten:
-    2D-Platten samt ihrer ungesägten Teile (deren Fläche steht nicht im Lager),
-    1D-Stangen nur mit den gesägten Teilen – ihr Rest ist bereits eingebucht.
-    Neu verteilt wird nur, was darauf nicht (mehr) liegt.
-    """
-    projekt = get_db().get_projekt(req.project_id)
-    if not projekt:
-        raise HTTPException(404, "Project not found")
 
-    material = get_db().get_material(req.material_id)
-    if not material:
-        raise HTTPException(404, "Material not found")
-
-    blades = get_db().list_saegeblaetter()
-    blade = next((b for b in blades if b.id == req.blade_id), None)
-    if not blade:
-        raise HTTPException(404, "Saw blade not found")
-
-    is_1d = material.typ == MaterialTyp.STANGE
-    alt = get_db().get_plan(req.project_id, req.material_id)
-    fuell_auswahl = ([f.model_dump() for f in req.fuellteile] if req.fuellteile is not None
-                     else (alt.fuellteile if alt else []))
-    fuell_alle = (req.fuell_alle_reste if req.fuell_alle_reste is not None
-                  else (alt.fuell_alle_reste if alt else False))
-    behalten = _angefangene_bretter(alt, is_1d)
-    schon_geplant: dict[int, int] = {}
-    for b in behalten:
-        for st in b.stuecke:
-            if not st.gesaegt and st.teil_id:
-                schon_geplant[st.teil_id] = schon_geplant.get(st.teil_id, 0) + 1
-    offen = {t.id: t.offen_anzahl - schon_geplant.get(t.id, 0) for t in projekt.teile}
-
-    # Filter parts for this material that are not fully cut (or already on a kept board)
-    teile = [t for t in projekt.teile
-             if t.material_id == req.material_id and offen[t.id] > 0]
-    if not teile:
-        if behalten:
-            return _plan_speichern(projekt, material, blade, req.algorithm, behalten,
-                                   [], [], fuell_auswahl, fuell_alle)
-        raise HTTPException(400, "No open parts for this material")
-
-    # Füllteile: Teile anderer Projekte desselben Materials. Im Plan heißen sie
-    # "Label → Projekt", damit sie unterscheidbar sind (der Optimizer kennt nur Labels).
-    fuell_fest: list[Teil] = []
-    fuell_auf: list[tuple[Teil, int]] = []
-    for f in fuell_auswahl:
-        t = get_db().get_teil(f["teil_id"])
-        if not t or t.material_id != material.id or t.projekt_id == projekt.id:
-            continue
-        herkunft = get_db().get_projekt(t.projekt_id)
-        ft = replace(t, label=f"{t.label} → {herkunft.name if herkunft else '?'}")
-        if f.get("modus") == "fest":
-            if int(f.get("menge") or 0) > 0:
-                fuell_fest.append(ft)
-                offen[ft.id] = int(f["menge"])
-        elif is_1d:
-            fuell_auf.append((ft, int(f.get("menge") or 0)))
-    teile = teile + fuell_fest
-    fuell_ids = {t.id for t in fuell_fest} | {t.id for t, _ in fuell_auf}
-
-    db = get_db()
-    kerf = blade.schnittbreite
-    defekte_map = db.list_defekte_for_material(req.material_id)
-    # Verfügbare Stücknummern je Lagerzeile. Reservierung: Noch nicht angefangene
-    # Bretter gespeicherter Pläne ANDERER Projekte sind tabu.
-    nrs_map = db.einzelstueck_nrs_for_material(req.material_id)
+def _lagerlage(db: Database, material_id: int, ausser_projekt: int,
+               auch_ausser: tuple[int, ...] = ()) -> _Lagerlage:
+    """Verfügbares Lager. Reservierung: Noch nicht angefangene Bretter gespeicherter
+    Pläne ANDERER Projekte sind tabu (außer denen in auch_ausser)."""
+    defekte_map = db.list_defekte_for_material(material_id)
+    nrs_map = db.einzelstueck_nrs_for_material(material_id)
     if _lager_einstellungen()["reservierung"]:
-        reserviert = set(db.reservierte_stuecke(req.material_id, ausser_projekt=req.project_id))
+        reserviert = set(db.reservierte_stuecke(
+            material_id, ausser_projekt=ausser_projekt, auch_ausser=auch_ausser))
         nrs_map = {lid: [nr for nr in nrs if (lid, nr) not in reserviert]
                    for lid, nrs in nrs_map.items()}
-    vorrat_alle = db.list_lagerstuecke(req.material_id)
+    vorrat_alle = db.list_lagerstuecke(material_id)
     vorrat = [replace(ls, stueckzahl=len(nrs_map.get(ls.id, []))) for ls in vorrat_alle]
     vorrat = [ls for ls in vorrat if ls.stueckzahl > 0]
     # Der Optimizer zählt die Kopien eines Lagerstücks lückenlos 1..anzahl,
@@ -1347,7 +1297,14 @@ def run_optimization(req: OptimizeRequest):
               if nr in by_nr}
         for lid, by_nr in defekte_map.items()
     }
+    return _Lagerlage(nrs_map, vorrat_alle, vorrat, defekte_map, defekte_lauf)
 
+
+def _berechnen(material: Material, kerf: float, algorithm: str, reste_zuerst: bool,
+               teile: list[Teil], mengen: dict[int, int], lage: _Lagerlage
+               ) -> OptimierungsErgebnis:
+    """Teile (Mengen je ID) auf das freie Lager verteilen, ohne zu speichern."""
+    is_1d = material.typ == MaterialTyp.STANGE
     besaeumung = material.besaeumung
     teil_drehung: dict[str, tuple[bool, bool]] = {}
     for t in teile:
@@ -1361,26 +1318,25 @@ def run_optimization(req: OptimizeRequest):
             teil_tuples = [(t.label, t.laenge, mengen[t.id]) for t in tl]
             stock = [StangenVorrat(ls.id, ls.laenge - 2 * besaeumung, ls.stueckzahl)
                      for ls in lager if ls.laenge - 2 * besaeumung > 0]
-            if req.algorithm == "ga":
-                return optimize_1d_ga(teil_tuples, stock, kerf, defekte_lauf)
-            return optimize_1d(teil_tuples, stock, kerf, defekte_lauf)
+            if algorithm == "ga":
+                return optimize_1d_ga(teil_tuples, stock, kerf, lage.defekte_lauf)
+            return optimize_1d(teil_tuples, stock, kerf, lage.defekte_lauf)
         teil_tuples = [(t.label, t.laenge, t.breite, mengen[t.id]) for t in tl]
         stock = [PlattenVorrat(ls.id, ls.laenge - 2 * besaeumung,
                                ls.breite - 2 * besaeumung, ls.stueckzahl)
                  for ls in lager]
-        if req.algorithm == "ga":
+        if algorithm == "ga":
             return optimize_2d_ga(teil_tuples, stock, kerf, drehung_erlaubt,
-                                  teil_drehung, defekte_lauf)
-        if req.algorithm == "nested":
+                                  teil_drehung, lage.defekte_lauf)
+        if algorithm == "nested":
             return optimize_2d_nested(teil_tuples, stock, kerf, drehung_erlaubt,
-                                      teil_drehung, defekte_lauf)
+                                      teil_drehung, lage.defekte_lauf)
         return optimize_2d(teil_tuples, stock, kerf, drehung_erlaubt,
-                           teil_drehung, defekte_lauf)
+                           teil_drehung, lage.defekte_lauf)
 
-    mengen = {t.id: offen[t.id] for t in teile}
-    reste = [ls for ls in vorrat if ls.ist_rest]
-    ganze = [ls for ls in vorrat if not ls.ist_rest]
-    if req.reste_zuerst and reste and ganze:
+    reste = [ls for ls in lage.vorrat if ls.ist_rest]
+    ganze = [ls for ls in lage.vorrat if not ls.ist_rest]
+    if reste_zuerst and reste and ganze:
         # 1. Durchgang nur mit Resten, 2. Durchgang mit ganzen Stücken für den Rest
         erg_reste = rechnen(reste, mengen)
         noch = _fehlende_mengen(erg_reste.fehlende_teile, teile, mengen)
@@ -1389,14 +1345,101 @@ def run_optimization(req: OptimizeRequest):
             schnittplaene=erg_reste.schnittplaene + erg_ganz.schnittplaene,
             fehlende_teile=erg_ganz.fehlende_teile)
     else:
-        ergebnis = rechnen(vorrat, mengen)
+        ergebnis = rechnen(lage.vorrat, mengen)
 
     for sp in ergebnis.schnittplaene:
-        nrs = nrs_map.get(sp.lagerstueck_id, [])
+        nrs = lage.nrs_map.get(sp.lagerstueck_id, [])
         if 0 < sp.stueck_nr <= len(nrs):
             sp.stueck_nr = nrs[sp.stueck_nr - 1]
+    return ergebnis
 
-    neue = _ergebnis_to_bretter(ergebnis, defekte_map, teile, offen)
+
+def _schon_geplant(behalten: list[PlanBrett]) -> dict[int, int]:
+    """Ungesägte Stücke auf behaltenen (angefangenen) Brettern, je Teil."""
+    n: dict[int, int] = {}
+    for b in behalten:
+        for st in b.stuecke:
+            if not st.gesaegt and st.teil_id:
+                n[st.teil_id] = n.get(st.teil_id, 0) + 1
+    return n
+
+
+@app.post("/api/optimize", response_model=OptimizeResult)
+def run_optimization(req: OptimizeRequest):
+    """Berechnen und als Plan des Projekts für dieses Material speichern.
+
+    Ist der bisherige Plan schon angefangen, bleiben angefangene Bretter erhalten:
+    2D-Platten samt ihrer ungesägten Teile (deren Fläche steht nicht im Lager),
+    1D-Stangen nur mit den gesägten Teilen – ihr Rest ist bereits eingebucht.
+    Neu verteilt wird nur, was darauf nicht (mehr) liegt.
+    """
+    projekt = get_db().get_projekt(req.project_id)
+    if not projekt:
+        raise HTTPException(404, "Project not found")
+    if projekt.art == "sammel":
+        raise HTTPException(400, "Use /api/sammel/optimize for collective plans")
+
+    material = get_db().get_material(req.material_id)
+    if not material:
+        raise HTTPException(404, "Material not found")
+
+    blades = get_db().list_saegeblaetter()
+    blade = next((b for b in blades if b.id == req.blade_id), None)
+    if not blade:
+        raise HTTPException(404, "Saw blade not found")
+
+    db = get_db()
+    is_1d = material.typ == MaterialTyp.STANGE
+    alt = db.get_plan(req.project_id, req.material_id)
+    fuell_auswahl = ([f.model_dump() for f in req.fuellteile] if req.fuellteile is not None
+                     else (alt.fuellteile if alt else []))
+    fuell_alle = (req.fuell_alle_reste if req.fuell_alle_reste is not None
+                  else (alt.fuell_alle_reste if alt else False))
+    behalten = _angefangene_bretter(alt, is_1d)
+    schon_geplant = _schon_geplant(behalten)
+    # Was ungesägt in anderen Plänen liegt (Sammelplan, Füllteil), ist schon verplant
+    anderswo = db.ungesaegt_in_plaenen(req.material_id, ausser_projekt=req.project_id)
+    offen = {t.id: t.offen_anzahl - schon_geplant.get(t.id, 0) - anderswo.get(t.id, 0)
+             for t in projekt.teile}
+
+    # Filter parts for this material that are not fully cut (or already on a kept board)
+    teile = [t for t in projekt.teile
+             if t.material_id == req.material_id and offen[t.id] > 0]
+    if not teile:
+        if behalten:
+            return _plan_speichern(projekt, material, blade, req.algorithm, behalten,
+                                   [], [], fuell_auswahl, fuell_alle)
+        if any(anderswo.get(t.id) for t in projekt.teile if t.material_id == material.id):
+            sammel = db.sammel_von_projekt(projekt.id).get(material.id)
+            raise HTTPException(409, f"All open parts are already in “{sammel}”."
+                                if sammel else "All open parts are already in another plan")
+        raise HTTPException(400, "No open parts for this material")
+
+    # Füllteile: Teile anderer Projekte desselben Materials. Im Plan heißen sie
+    # "Label → Projekt", damit sie unterscheidbar sind (der Optimizer kennt nur Labels).
+    fuell_fest: list[Teil] = []
+    fuell_auf: list[tuple[Teil, int]] = []
+    for f in fuell_auswahl:
+        t = db.get_teil(f["teil_id"])
+        if not t or t.material_id != material.id or t.projekt_id == projekt.id:
+            continue
+        herkunft = db.get_projekt(t.projekt_id)
+        ft = replace(t, label=f"{t.label} → {herkunft.name if herkunft else '?'}")
+        if f.get("modus") == "fest":
+            if int(f.get("menge") or 0) > 0:
+                fuell_fest.append(ft)
+                offen[ft.id] = int(f["menge"])
+        elif is_1d:
+            fuell_auf.append((ft, int(f.get("menge") or 0)))
+    teile = teile + fuell_fest
+    fuell_ids = {t.id for t in fuell_fest} | {t.id for t, _ in fuell_auf}
+
+    kerf = blade.schnittbreite
+    lage = _lagerlage(db, req.material_id, ausser_projekt=req.project_id)
+    ergebnis = _berechnen(material, kerf, req.algorithm, req.reste_zuerst, teile,
+                          {t.id: offen[t.id] for t in teile}, lage)
+
+    neue = _ergebnis_to_bretter(ergebnis, lage.defekte_map, teile, offen)
     for b in neue:
         for st in b.stuecke:
             st.ist_fuellteil = st.teil_id in fuell_ids
@@ -1405,9 +1448,221 @@ def run_optimization(req: OptimizeRequest):
     bedarf = []
     if ergebnis.fehlende_teile:
         bedarf = [m.model_dump() for m in _berechne_materialbedarf(
-            ergebnis.fehlende_teile, teile, vorrat_alle, material, kerf)]
+            ergebnis.fehlende_teile, teile, lage.vorrat_alle, material, kerf)]
     return _plan_speichern(projekt, material, blade, req.algorithm, behalten + neue,
                            ergebnis.fehlende_teile, bedarf, fuell_auswahl, fuell_alle)
+
+
+# ---------------------------------------------------------------------------
+# Sammelplan: ein Material, mehrere Projekte gemeinsam optimieren
+# ---------------------------------------------------------------------------
+
+
+class SammelKandidatOut(BaseModel):
+    projekt_id: int
+    name: str
+    offen: int              # Stück, die in den Sammelplan dürfen
+    bedarf: float           # deren Gesamtlänge (mm) bzw. -fläche (mm²)
+    gesperrt: int = 0       # Stück, die ungesägt in einem anderen Plan liegen
+    einzelplan: str = ""    # "" | "offen" (nicht angefangen) | "angefangen"
+    mitglied: bool = False
+
+
+class SammelOut(BaseModel):
+    sammel_id: int = 0      # 0 = noch kein Sammelplan für dieses Material
+    name: str = ""
+    kandidaten: list[SammelKandidatOut] = []
+
+
+class SammelRequest(BaseModel):
+    material_id: int
+    projekt_ids: list[int]
+    blade_id: int
+    algorithm: str = "greedy"
+    reste_zuerst: bool = False
+
+
+class VergleichOut(BaseModel):
+    getrennt_bretter: int
+    gemeinsam_bretter: int
+    getrennt_menge: float    # verbrauchte Lagerlänge (mm) bzw. -fläche (mm²)
+    gemeinsam_menge: float
+    fehlende_getrennt: int
+    fehlende_gemeinsam: int
+
+
+def _offener_einzelplan(db: Database, projekt_id: int, material_id: int
+                        ) -> GespeicherterPlan | None:
+    """Nicht angefangener Einzelplan – den ersetzt der Sammelplan."""
+    plan = db.get_plan(projekt_id, material_id)
+    return plan if plan and not any(b.verbraucht for b in plan.bretter) else None
+
+
+def _sammel_teile(db: Database, material: Material, projekt_ids: list[int],
+                  ausser_projekt: int, schon_geplant: dict[int, int] | None = None
+                  ) -> tuple[list[Teil], dict[int, int]]:
+    """Offene Teile der Projekte für den Sammelplan, umbenannt in „Label → Projekt“.
+
+    Teilgenaue Sperre: Was ungesägt in einem anderen Plan liegt, bleibt dort –
+    außer im nicht angefangenen Einzelplan des Projekts, den der Sammelplan ersetzt.
+    """
+    anderswo = db.ungesaegt_in_plaenen(material.id, ausser_projekt=ausser_projekt)
+    schon_geplant = schon_geplant or {}
+    teile, offen = [], {}
+    for pid in projekt_ids:
+        pr = db.get_projekt(pid)
+        if not pr or pr.art == "sammel":
+            continue
+        einzel = _offener_einzelplan(db, pid, material.id)
+        eigene = _schon_geplant(einzel.bretter) if einzel else {}
+        for t in pr.teile:
+            if t.material_id != material.id:
+                continue
+            gesperrt = anderswo.get(t.id, 0) - eigene.get(t.id, 0)
+            n = t.offen_anzahl - gesperrt - schon_geplant.get(t.id, 0)
+            if n > 0:
+                teile.append(replace(t, label=f"{t.label} → {pr.name}"))
+                offen[t.id] = n
+    return teile, offen
+
+
+def _verbrauch(erg: OptimierungsErgebnis, is_1d: bool) -> float:
+    return sum(sp.lager_laenge if is_1d else sp.lager_laenge * sp.lager_breite
+               for sp in erg.schnittplaene)
+
+
+@app.get("/api/sammel/{mid}", response_model=SammelOut)
+def get_sammel(mid: int):
+    """Sammelplan-Status eines Materials und alle Projekte, die mitmachen können."""
+    db = get_db()
+    material = db.get_material(mid)
+    if not material:
+        raise HTTPException(404, "Material not found")
+    is_1d = material.typ == MaterialTyp.STANGE
+    sammel = db.get_sammel(mid)
+    sammel_id = sammel.id if sammel else 0
+    mitglieder = set(db.sammel_mitglieder(sammel_id)) if sammel else set()
+    # Gesperrt = ungesägt in Plänen außer dem Sammelplan und dem eigenen, nicht
+    # angefangenen Einzelplan (den verwirft das Optimieren)
+    anderswo = db.ungesaegt_in_plaenen(mid, ausser_projekt=sammel_id)
+    kandidaten = []
+    for pr in db.list_projekte():
+        teile = [t for t in pr.teile if t.material_id == mid]
+        if not teile:
+            continue
+        einzel = db.get_plan(pr.id, mid)
+        angefangen = bool(einzel and any(b.verbraucht for b in einzel.bretter))
+        eigene = _schon_geplant(einzel.bretter) if einzel and not angefangen else {}
+        offen, bedarf, gesperrt = 0, 0.0, 0
+        for t in teile:
+            gesp = anderswo.get(t.id, 0) - eigene.get(t.id, 0)
+            n = max(0, t.offen_anzahl - gesp)
+            gesperrt += min(gesp, t.offen_anzahl)
+            offen += n
+            bedarf += n * (t.laenge if is_1d else t.laenge * t.breite)
+        if offen == 0 and gesperrt == 0 and pr.id not in mitglieder:
+            continue
+        kandidaten.append(SammelKandidatOut(
+            projekt_id=pr.id, name=pr.name, offen=offen, bedarf=bedarf, gesperrt=gesperrt,
+            einzelplan="angefangen" if angefangen else ("offen" if einzel else ""),
+            mitglied=pr.id in mitglieder))
+    return SammelOut(sammel_id=sammel_id, name=sammel.name if sammel else "",
+                     kandidaten=kandidaten)
+
+
+@app.post("/api/sammel/optimize", response_model=OptimizeResult)
+def optimize_sammel(req: SammelRequest):
+    """Sammelplan anlegen bzw. ersetzen und berechnen.
+
+    Nicht angefangene Einzelpläne der Mitglieder für dieses Material werden verworfen,
+    angefangene bleiben (ihre ungesägten Teile sind gesperrt). Ist der bisherige
+    Sammelplan fertig gesägt, beginnt ein neuer; sonst bleiben angefangene Bretter.
+    """
+    db = get_db()
+    material = db.get_material(req.material_id)
+    if not material:
+        raise HTTPException(404, "Material not found")
+    blade = next((b for b in db.list_saegeblaetter() if b.id == req.blade_id), None)
+    if not blade:
+        raise HTTPException(404, "Saw blade not found")
+    projekt_ids = [pid for pid in dict.fromkeys(req.projekt_ids)
+                   if (pr := db.get_projekt(pid)) and pr.art != "sammel"]
+    if not projekt_ids:
+        raise HTTPException(400, "No projects selected")
+
+    is_1d = material.typ == MaterialTyp.STANGE
+    sammel = db.get_sammel(material.id) or db.sammel_anlegen(
+        material.id, f"Sammelplan {material.name}")
+    for pid in projekt_ids:
+        if einzel := _offener_einzelplan(db, pid, material.id):
+            db.delete_plan(einzel.id)
+
+    alt = db.get_plan(sammel.id, material.id)
+    if alt and all(st.gesaegt for b in alt.bretter for st in b.stuecke):
+        db.delete_plan(alt.id)
+        alt = None
+    behalten = _angefangene_bretter(alt, is_1d)
+    db.sammel_mitglieder_setzen(sammel.id, projekt_ids)
+    teile, offen = _sammel_teile(db, material, projekt_ids, sammel.id,
+                                 _schon_geplant(behalten))
+    sammel = db.get_projekt(sammel.id)
+    if not teile:
+        if behalten:
+            return _plan_speichern(sammel, material, blade, req.algorithm, behalten, [], [])
+        raise HTTPException(400, "No open parts for this material")
+
+    kerf = blade.schnittbreite
+    lage = _lagerlage(db, material.id, ausser_projekt=sammel.id)
+    ergebnis = _berechnen(material, kerf, req.algorithm, req.reste_zuerst, teile,
+                          dict(offen), lage)
+    neue = _ergebnis_to_bretter(ergebnis, lage.defekte_map, teile, offen)
+    bedarf = []
+    if ergebnis.fehlende_teile:
+        bedarf = [m.model_dump() for m in _berechne_materialbedarf(
+            ergebnis.fehlende_teile, teile, lage.vorrat_alle, material, kerf)]
+    return _plan_speichern(sammel, material, blade, req.algorithm, behalten + neue,
+                           ergebnis.fehlende_teile, bedarf)
+
+
+@app.post("/api/sammel/compare", response_model=VergleichOut)
+def compare_sammel(req: SammelRequest):
+    """Was spart der Sammelplan? Jedes Projekt einzeln gegen alle gemeinsam rechnen.
+
+    Nichts wird gespeichert. Beide Varianten sehen dasselbe freie Lager; die
+    getrennte Rechnung ist eine Schätzung, weil sich echte Einzelpläne das Lager teilen.
+    """
+    db = get_db()
+    material = db.get_material(req.material_id)
+    if not material:
+        raise HTTPException(404, "Material not found")
+    blade = next((b for b in db.list_saegeblaetter() if b.id == req.blade_id), None)
+    if not blade:
+        raise HTTPException(404, "Saw blade not found")
+    is_1d = material.typ == MaterialTyp.STANGE
+    sammel = db.get_sammel(material.id)
+    ausser = sammel.id if sammel else 0
+    # Nicht angefangene Einzelpläne verschwinden mit dem Sammelplan → ihr Lager zählt mit
+    ersetzt = tuple(pid for pid in req.projekt_ids
+                    if _offener_einzelplan(db, pid, material.id))
+    lage = _lagerlage(db, material.id, ausser_projekt=ausser, auch_ausser=ersetzt)
+    kerf = blade.schnittbreite
+
+    def rechne(pids: list[int]) -> OptimierungsErgebnis:
+        teile, offen = _sammel_teile(db, material, pids, ausser)
+        if not teile:
+            return OptimierungsErgebnis()
+        return _berechnen(material, kerf, req.algorithm, req.reste_zuerst, teile, offen, lage)
+
+    getrennt = [rechne([pid]) for pid in req.projekt_ids]
+    gemeinsam = rechne(req.projekt_ids)
+    return VergleichOut(
+        getrennt_bretter=sum(len(e.schnittplaene) for e in getrennt),
+        gemeinsam_bretter=len(gemeinsam.schnittplaene),
+        getrennt_menge=sum(_verbrauch(e, is_1d) for e in getrennt),
+        gemeinsam_menge=_verbrauch(gemeinsam, is_1d),
+        fehlende_getrennt=sum(len(e.fehlende_teile) for e in getrennt),
+        fehlende_gemeinsam=len(gemeinsam.fehlende_teile),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1487,6 +1742,15 @@ def _ergebnis_to_bretter(erg: OptimierungsErgebnis, defekte_map, teile,
     return bretter
 
 
+def _plan_teile(projekt: Projekt, material_id: int) -> list[Teil]:
+    """Teile, für die ein Plan gilt – beim Sammelplan die aller Mitglieder."""
+    if projekt.art != "sammel":
+        return [t for t in projekt.teile if t.material_id == material_id]
+    db = get_db()
+    return [t for pid in db.sammel_mitglieder(projekt.id)
+            if (pr := db.get_projekt(pid)) for t in pr.teile if t.material_id == material_id]
+
+
 def _eingabe_hash(projekt: Projekt, material: Material, kerf: float) -> str:
     """Fingerabdruck der Eingaben, die sich NICHT durchs Sägen ändern.
 
@@ -1495,7 +1759,7 @@ def _eingabe_hash(projekt: Projekt, material: Material, kerf: float) -> str:
     import hashlib
     import json
     teile = sorted((t.id, t.laenge, t.breite, t.maserung.value, t.gesamt_anzahl)
-                   for t in projekt.teile if t.material_id == material.id)
+                   for t in _plan_teile(projekt, material.id))
     raw = json.dumps([teile, material.besaeumung, material.maserung.value, kerf])
     return hashlib.sha1(raw.encode()).hexdigest()
 
@@ -1708,11 +1972,17 @@ def set_piece_sawn(sid: int, data: PieceSawnIn):
 
 @app.delete("/api/plans/{plan_id}", status_code=204)
 def discard_plan(plan_id: int):
-    """Plan verwerfen: gibt reservierte Bretter frei. Fortschritt und Lager bleiben."""
+    """Plan verwerfen: gibt reservierte Bretter frei. Fortschritt und Lager bleiben.
+
+    Ein verworfener Sammelplan verschwindet samt Mitgliederliste."""
     db = get_db()
-    if not db.get_plan_by_id(plan_id):
+    plan = db.get_plan_by_id(plan_id)
+    if not plan:
         raise HTTPException(404, "Plan not found")
     db.delete_plan(plan_id)
+    projekt = db.get_projekt(plan.projekt_id)
+    if projekt and projekt.art == "sammel":
+        db.delete_projekt(projekt.id)
 
 
 def _gesaegt_buchen(db: Database, st: PlanStueck, delta: int):
@@ -2169,6 +2439,44 @@ WEB_EXTRA_TRANSLATIONS = {
         "fr": "Téléchargez la nouvelle version et remplacez l’application existante. Vos données sont conservées.",
         "it": "Scarica la nuova versione e sostituisci l’app esistente. I tuoi dati restano invariati.",
     },
+    # Sammelplan (Optimieren nach Material)
+    "sammel.mode": {"de": "Optimieren nach", "en": "Optimize by", "fr": "Optimiser par", "it": "Ottimizza per"},
+    "sammel.mode_project": {"de": "Projekt", "en": "Project", "fr": "Projet", "it": "Progetto"},
+    "sammel.mode_material": {"de": "Material (Sammelplan)", "en": "Material (combined plan)", "fr": "Matériau (plan groupé)", "it": "Materiale (piano combinato)"},
+    "sammel.projects": {"de": "Projekte mit diesem Material", "en": "Projects using this material", "fr": "Projets utilisant ce matériau", "it": "Progetti con questo materiale"},
+    "sammel.col_open": {"de": "Offen", "en": "Open", "fr": "Ouvert", "it": "Aperti"},
+    "sammel.col_need": {"de": "Bedarf", "en": "Needed", "fr": "Besoin", "it": "Fabbisogno"},
+    "sammel.col_note": {"de": "Hinweis", "en": "Note", "fr": "Remarque", "it": "Nota"},
+    "sammel.none": {"de": "Kein Projekt braucht dieses Material.", "en": "No project needs this material.", "fr": "Aucun projet n’utilise ce matériau.", "it": "Nessun progetto usa questo materiale."},
+    "sammel.member": {"de": "im Sammelplan", "en": "in combined plan", "fr": "dans le plan groupé", "it": "nel piano combinato"},
+    "sammel.replaces_single": {"de": "Einzelplan wird ersetzt", "en": "replaces its own plan", "fr": "remplace son plan", "it": "sostituisce il suo piano"},
+    "sammel.locked": {"de": "{n} Stück in angefangenem Plan", "en": "{n} pcs in a started plan", "fr": "{n} pièces dans un plan commencé", "it": "{n} pezzi in un piano iniziato"},
+    "sammel.compare": {"de": "Vergleichen", "en": "Compare", "fr": "Comparer", "it": "Confronta"},
+    "sammel.compare_result": {"de": "Getrennt: {sep} · Gemeinsam: {tog}", "en": "Separately: {sep} · Combined: {tog}", "fr": "Séparément : {sep} · Ensemble : {tog}", "it": "Separati: {sep} · Insieme: {tog}"},
+    "sammel.saved": {"de": "{menge} gespart ({pct} %)", "en": "{menge} saved ({pct} %)", "fr": "{menge} économisés ({pct} %)", "it": "{menge} risparmiati ({pct} %)"},
+    "sammel.no_saving": {"de": "keine Ersparnis", "en": "no saving", "fr": "aucune économie", "it": "nessun risparmio"},
+    "sammel.compare_missing": {
+        "de": "Es fehlt Material – der Vergleich ist nur bedingt aussagekräftig.",
+        "en": "Material is missing – the comparison is only indicative.",
+        "fr": "Il manque du matériau – la comparaison n’est qu’indicative.",
+        "it": "Manca materiale – il confronto è solo indicativo.",
+    },
+    "sammel.bars": {"de": "{n} Stangen", "en": "{n} bars", "fr": "{n} barres", "it": "{n} barre"},
+    "sammel.boards": {"de": "{n} Platten", "en": "{n} boards", "fr": "{n} panneaux", "it": "{n} pannelli"},
+    "sammel.select_projects": {"de": "Bitte mindestens ein Projekt auswählen.", "en": "Please select at least one project.", "fr": "Veuillez choisir au moins un projet.", "it": "Seleziona almeno un progetto."},
+    "sammel.confirm_replace": {
+        "de": "Die Einzelpläne von {names} sind noch nicht angefangen und werden durch den Sammelplan ersetzt.",
+        "en": "The plans of {names} have not been started and will be replaced by the combined plan.",
+        "fr": "Les plans de {names} ne sont pas commencés et seront remplacés par le plan groupé.",
+        "it": "I piani di {names} non sono iniziati e saranno sostituiti dal piano combinato.",
+    },
+    "sammel.in_plan_hint": {
+        "de": "Dieses Material wird im „{name}“ gesägt.",
+        "en": "This material is cut in “{name}”.",
+        "fr": "Ce matériau est découpé dans « {name} ».",
+        "it": "Questo materiale viene tagliato in “{name}”.",
+    },
+    "sammel.open": {"de": "Sammelplan öffnen", "en": "Open combined plan", "fr": "Ouvrir le plan groupé", "it": "Apri piano combinato"},
     "upd.download": {"de": "Neue Version herunterladen", "en": "Download new version", "fr": "Télécharger la nouvelle version", "it": "Scarica la nuova versione"},
 }
 

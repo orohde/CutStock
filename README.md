@@ -25,6 +25,7 @@ CutStock comes in two flavors that share the same optimization core:
 - **Saved Cut Plans** -- every calculation is saved; switching between projects keeps your progress (what has already been cut). Re-optimizing keeps started boards, warns when parts or stock have changed, "Restart project" to cut it again
 - **Stock Reservation** -- saved plans reserve their pieces that haven't been started yet, so other projects don't plan them (can be switched off); "Discard plan" releases them
 - **Remnants First** -- optionally plan remnants first, then full bars/panels
+- **Combined Plan** -- optimize one material for several projects at once ("Optimize by: Material"), with a separate/combined comparison; cut parts count directly in their project
 - **Filler Parts** -- cut parts from other projects to fill up the bar waste (no extra material); cut filler parts go into the part stock ("shelf") and are taken over by the other project later
 - **Project Management** -- organize parts by project, build a project several times (number of copies), import/export as JSON, import part lists from CSV
 - **Visual Cut Plans** -- color-coded cutting diagrams with labels and dimensions
@@ -131,6 +132,10 @@ Select a project, material, saw blade, and algorithm. The optimizer calculates t
 If waste remains at the end of a bar, CutStock can fill it with parts from other projects ("Filler parts..."). It never uses more material; filler parts are hatched and show their source project. Once cut, they go into the part stock and are taken over by the other project with one click.
 
 ![Filler Parts](docs/screenshot_fuellteile_en.png)
+
+### Combined Plan
+
+If the same material is used in several projects, it can be optimized together: in the Optimization tab choose "Optimize by: Material (combined plan)", select the material and tick the projects. "Compare" shows how much material this saves over separate plans. Each part in the plan shows its project ("Side → Shelf"); ticked parts count as progress of that project. Unstarted single plans of these projects are replaced; parts lying uncut in a started plan stay there.
 
 ### Optimization -- Panels
 
@@ -249,6 +254,9 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | POST | `/api/plans/{id}/confirm-all` | Mark all open pieces of the plan as cut |
 | DELETE | `/api/plans/{id}` | Discard plan (releases reserved pieces) |
 | GET | `/api/projects/{id}/fill-candidates/{material_id}` | Possible filler parts from other projects |
+| GET | `/api/sammel/{material_id}` | Combined plan status and eligible projects |
+| POST | `/api/sammel/optimize` | Create/replace and compute the combined plan |
+| POST | `/api/sammel/compare` | Compare separate vs. combined (not saved) |
 | POST | `/api/projects/{id}/take-stock/{material_id}` | Take part stock ("shelf") over as cut |
 | **Export** | | |
 | POST | `/api/pdf` | Generate PDF cut plan |

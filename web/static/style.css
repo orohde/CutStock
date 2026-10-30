@@ -955,3 +955,13 @@ td.expand-toggle:hover { background: rgba(255,255,255,0.05); }
 #btn-update-available:hover {
   background: #c35500;
 }
+
+/* Sammelplan (Optimieren nach Material) */
+.sammel-panel { margin-top: 1rem; }
+.sammel-panel .fd-table { max-width: 48rem; }
+.sammel-panel .sammel-note { color: var(--sapNeutralTextColor, #6a6d70); font-size: 0.9em; }
+.sammel-panel .sammel-row-disabled { opacity: 0.55; }
+.sammel-panel .toolbar { margin-top: 0.5rem; align-items: center; }
+.sammel-compare { font-weight: 600; }
+.sammel-compare .sammel-saving { color: var(--sapPositiveColor, #256f3a); }
+.sammel-hint { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }

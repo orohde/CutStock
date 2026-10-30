@@ -131,7 +131,18 @@ CREATE TABLE IF NOT EXISTS saegeblatt (
 CREATE TABLE IF NOT EXISTS projekt (
     id     INTEGER PRIMARY KEY AUTOINCREMENT,
     name   TEXT    NOT NULL,
-    anzahl INTEGER NOT NULL DEFAULT 1
+    anzahl INTEGER NOT NULL DEFAULT 1,
+    -- 'sammel' = Sammelplan: gemeinsamer Plan mehrerer Projekte für ein Material.
+    -- Hat keine eigenen Teile und taucht in der Projektliste nicht auf.
+    art    TEXT    NOT NULL DEFAULT '',
+    sammel_material_id INTEGER NOT NULL DEFAULT 0
+);
+
+-- Mitglieder eines Sammelplans (Sammel-Projekt ↔ beteiligte Projekte)
+CREATE TABLE IF NOT EXISTS sammel_mitglied (
+    sammel_id   INTEGER NOT NULL REFERENCES projekt(id) ON DELETE CASCADE,
+    projekt_id  INTEGER NOT NULL REFERENCES projekt(id) ON DELETE CASCADE,
+    PRIMARY KEY (sammel_id, projekt_id)
 );
 
 CREATE TABLE IF NOT EXISTS einzelstueck (
@@ -260,7 +271,7 @@ class Database:
 
     # Spalten, die per Migration nachgerüstet werden (für die Sicherung vor dem Update)
     PFLICHT_SPALTEN = {
-        "projekt": {"anzahl"},
+        "projekt": {"anzahl", "art", "sammel_material_id"},
         "lagerstueck": {"ist_rest"},
         "teil": {"vorrat"},
         "schnittplan": {"fuell_alle_reste"},
@@ -362,6 +373,11 @@ class Database:
             # ignorieren die Spalte einfach (INSERT ohne anzahl → 1).
             self.conn.execute(
                 "ALTER TABLE projekt ADD COLUMN anzahl INTEGER NOT NULL DEFAULT 1")
+        if "art" not in proj_cols:
+            self.conn.execute("ALTER TABLE projekt ADD COLUMN art TEXT NOT NULL DEFAULT ''")
+        if "sammel_material_id" not in proj_cols:
+            self.conn.execute(
+                "ALTER TABLE projekt ADD COLUMN sammel_material_id INTEGER NOT NULL DEFAULT 0")
         teil_cols = {row[1] for row in
                      self.conn.execute("PRAGMA table_info(teil)").fetchall()}
         if "maserung" not in teil_cols:
@@ -577,6 +593,8 @@ class Database:
 
     def delete_material(self, mid: int):
         self.conn.execute("DELETE FROM schnittplan WHERE material_id=?", (mid,))
+        self.conn.execute(
+            "DELETE FROM projekt WHERE art='sammel' AND sammel_material_id=?", (mid,))
         self.conn.execute("DELETE FROM teil WHERE material_id=?", (mid,))
         self.conn.execute("DELETE FROM lagerstueck WHERE material_id=?", (mid,))
         self.conn.execute("DELETE FROM material WHERE id=?", (mid,))
@@ -912,7 +930,9 @@ class Database:
         return p
 
     def list_projekte(self) -> list[Projekt]:
-        rows = self.conn.execute("SELECT * FROM projekt ORDER BY name").fetchall()
+        """Alle normalen Projekte (ohne Sammelpläne)."""
+        rows = self.conn.execute(
+            "SELECT * FROM projekt WHERE art != 'sammel' ORDER BY name").fetchall()
         projekte = []
         for r in rows:
             p = Projekt(id=r["id"], name=r["name"], anzahl=r["anzahl"])
@@ -926,9 +946,61 @@ class Database:
         ).fetchone()
         if not row:
             return None
-        p = Projekt(id=row["id"], name=row["name"], anzahl=row["anzahl"])
+        p = Projekt(id=row["id"], name=row["name"], anzahl=row["anzahl"], art=row["art"])
         p.teile = self.list_teile(p.id)
         return p
+
+    # ------------------------------------------------------------------
+    # Sammelplan: ein Plan je Material über mehrere Projekte
+    # ------------------------------------------------------------------
+
+    def get_sammel(self, material_id: int) -> Projekt | None:
+        row = self.conn.execute(
+            "SELECT id FROM projekt WHERE art='sammel' AND sammel_material_id=?",
+            (material_id,)).fetchone()
+        return self.get_projekt(row["id"]) if row else None
+
+    def sammel_anlegen(self, material_id: int, name: str) -> Projekt:
+        cur = self.conn.execute(
+            "INSERT INTO projekt (name, anzahl, art, sammel_material_id) VALUES (?,1,'sammel',?)",
+            (name, material_id))
+        self.conn.commit()
+        return self.get_projekt(cur.lastrowid)
+
+    def sammel_mitglieder(self, sammel_id: int) -> list[int]:
+        return [r[0] for r in self.conn.execute(
+            "SELECT projekt_id FROM sammel_mitglied WHERE sammel_id=? ORDER BY projekt_id",
+            (sammel_id,))]
+
+    def sammel_mitglieder_setzen(self, sammel_id: int, projekt_ids: list[int]):
+        self.conn.execute("DELETE FROM sammel_mitglied WHERE sammel_id=?", (sammel_id,))
+        self.conn.executemany(
+            "INSERT INTO sammel_mitglied (sammel_id, projekt_id) VALUES (?,?)",
+            [(sammel_id, pid) for pid in projekt_ids])
+        self.conn.commit()
+
+    def sammel_von_projekt(self, projekt_id: int) -> dict[int, str]:
+        """Sammelpläne, in denen ein Projekt Mitglied ist: {material_id: Name}."""
+        return {r["sammel_material_id"]: r["name"] for r in self.conn.execute(
+            """SELECT p.sammel_material_id, p.name FROM sammel_mitglied m
+               JOIN projekt p ON p.id = m.sammel_id WHERE m.projekt_id=?""",
+            (projekt_id,))}
+
+    def ungesaegt_in_plaenen(self, material_id: int, ausser_projekt: int = 0
+                             ) -> dict[int, int]:
+        """Je Teil: wie oft es ungesägt in gespeicherten Plänen ANDERER Projekte liegt.
+
+        Diese Stücke sind schon verplant und dürfen in keinem zweiten Plan auftauchen
+        (Einzelplan, Sammelplan, Füllteil mit fester Menge), sonst wird doppelt gesägt.
+        """
+        rows = self.conn.execute(
+            """SELECT s.teil_id, COUNT(*) AS n FROM schnittplan_stueck s
+               JOIN schnittplan_brett b ON b.id = s.brett_id
+               JOIN schnittplan p ON p.id = b.schnittplan_id
+               WHERE p.material_id=? AND p.projekt_id != ? AND s.gesaegt=0
+                     AND s.teil_id IS NOT NULL
+               GROUP BY s.teil_id""", (material_id, ausser_projekt)).fetchall()
+        return {r["teil_id"]: r["n"] for r in rows}
 
     def delete_projekt(self, pid: int):
         self.conn.execute("DELETE FROM schnittplan WHERE projekt_id=?", (pid,))
@@ -1145,20 +1217,23 @@ class Database:
             (projekt_id,)).fetchall()
         return [dict(r) for r in rows]
 
-    def reservierte_stuecke(self, material_id: int, ausser_projekt: int = 0
+    def reservierte_stuecke(self, material_id: int, ausser_projekt: int = 0,
+                            auch_ausser: tuple[int, ...] = ()
                             ) -> dict[tuple[int, int], str]:
         """Von gespeicherten Plänen reservierte Stücke: {(lagerstück_id, nr): Projektname}.
 
         Reserviert sind die noch nicht angefangenen Bretter (verbraucht=0);
-        die Pläne von ausser_projekt zählen nicht (der wird gerade neu berechnet).
+        die Pläne von ausser_projekt (und auch_ausser) zählen nicht (die werden gerade
+        neu berechnet bzw. ersetzt).
         """
+        ausser = (ausser_projekt, *auch_ausser)
         rows = self.conn.execute(
-            """SELECT b.lagerstueck_id, b.stueck_nr, pr.name FROM schnittplan_brett b
+            f"""SELECT b.lagerstueck_id, b.stueck_nr, pr.name FROM schnittplan_brett b
                JOIN schnittplan p ON p.id = b.schnittplan_id
                JOIN projekt pr ON pr.id = p.projekt_id
-               WHERE p.material_id=? AND p.projekt_id != ? AND b.verbraucht=0
-                     AND b.stueck_nr > 0""",
-            (material_id, ausser_projekt)).fetchall()
+               WHERE p.material_id=? AND p.projekt_id NOT IN ({",".join("?" * len(ausser))})
+                     AND b.verbraucht=0 AND b.stueck_nr > 0""",
+            (material_id, *ausser)).fetchall()
         return {(r["lagerstueck_id"], r["stueck_nr"]): r["name"] for r in rows}
 
     def delete_plan(self, plan_id: int):

@@ -167,6 +167,13 @@
       <div class="panel opt-controls-panel">
         <div class="opt-controls">
           <div class="form-group">
+            <label class="fd-form-label" for="opt-mode" data-i18n="sammel.mode">Optimieren nach:</label>
+            <select id="opt-mode" class="cs-select">
+              <option value="project" data-i18n="sammel.mode_project">Projekt</option>
+              <option value="material" data-i18n="sammel.mode_material">Material (Sammelplan)</option>
+            </select>
+          </div>
+          <div class="form-group" id="opt-project-group">
             <label class="fd-form-label" for="opt-project" data-i18n="opt.project">Projekt:</label>
             <select id="opt-project" class="cs-select"></select>
           </div>
@@ -189,6 +196,7 @@
           <button id="btn-fill" class="fd-button" type="button" title="" data-i18n-title="fill.button_hint">Füllteile…</button>
           <button id="btn-optimize" class="fd-button fd-button--emphasized" type="button" data-i18n="opt.run">Optimieren</button>
         </div>
+        <div id="sammel-panel" class="sammel-panel hidden"></div>
       </div>
       <div id="opt-results" class="hidden">
         <div id="plan-info" class="plan-info hidden"></div>
