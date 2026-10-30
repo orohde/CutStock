@@ -9,7 +9,7 @@ CutStock comes in two flavors that share the same optimization core:
 - **Desktop app** (macOS, Windows) -- double-click, works offline, data stays local (opens the web UI in your default browser)
 - **Web app** (Docker) -- self-hosted, reachable from any browser or tablet in your network
 
-![CutStock Optimization](docs/screenshot_platten.png)
+![CutStock Optimization](docs/screenshot_platten_en.png)
 
 > **[Deutsche Version](README.de.md)**
 
@@ -20,16 +20,20 @@ CutStock comes in two flavors that share the same optimization core:
 - **Grain Direction** -- respects wood grain per material and part (lengthwise, crosswise, or any)
 - **Edge Trimming** -- configurable trim margin for damaged board edges
 - **Defect Marking** -- mark defects (knots, cracks, discolorations) per individual piece; the optimizer routes cuts around them automatically
-- **Individual Piece Numbering** -- when you have multiple identical boards, specify exactly which board has which defect; expandable piece list in the stock view
-- **Stock Management** -- track inventory, auto-deduct used pieces, auto-add usable remnants
-- **Project Management** -- organize parts by project, import/export as JSON, import part lists from CSV
+- **Piece Codes and Storage Locations** -- every piece has a unique code per material (e.g. `AP40-07`, short code of your choice) and a storage location (rack, remnant box, ...); labels per piece with code and location; freed numbers are reused after a configurable lock period
+- **Stock Management** -- track inventory; when sawing, exactly the piece from the plan is deducted, usable remnants are added automatically, marked as remnants and placed in the remnant location; the largest remnant keeps its board's code
+- **Saved Cut Plans** -- every calculation is saved; switching between projects keeps your progress (what has already been cut). Re-optimizing keeps started boards, warns when parts or stock have changed, "Restart project" to cut it again
+- **Stock Reservation** -- saved plans reserve their pieces that haven't been started yet, so other projects don't plan them (can be switched off); "Discard plan" releases them
+- **Remnants First** -- optionally plan remnants first, then full bars/panels
+- **Filler Parts** -- cut parts from other projects to fill up the bar waste (no extra material); cut filler parts go into the part stock ("shelf") and are taken over by the other project later
+- **Project Management** -- organize parts by project, build a project several times (number of copies), import/export as JSON, import part lists from CSV
 - **Visual Cut Plans** -- color-coded cutting diagrams with labels and dimensions
 - **Cutting Sequence** -- numbered, kerf-accurate step-by-step sawing order per cut plan (on screen and in the PDF)
-- **Workshop Mode** -- full-screen touch view for a tablet at the saw: big targets, progress bar, tap pieces as you cut
+- **Workshop Mode** -- full-screen touch view for a tablet at the saw: which piece to take and where it is ("Take SP19-01 · Panel rack"), big targets, progress bar, tap pieces as you cut, label new remnants right away and print their labels
 - **Labels** -- printable labels for sawn parts and remnants (A4 sheets like Avery 3475/L7160 or Dymo/Brother label printers, custom sizes)
-- **PDF Export** -- compact multi-page layout (2-column for bars, proportional for panels)
+- **PDF Export** -- compact multi-page layout: parts list with quantities, identical cutting patterns combined, material requirements with piece codes, storage location and material image
 - **Statistics** -- detailed waste analysis per stock piece and totals
-- **Backup/Restore** -- full database + settings as ZIP (desktop)
+- **Backup/Restore** -- full database + settings as ZIP; before every update that changes the database, CutStock automatically creates a backup copy
 - **Multi-language** -- English, Deutsch, Francais, Italiano
 - **SAP Horizon Design** -- identical Fiori look in desktop and web, light and dark theme
 - **Keyboard Shortcuts** -- fully keyboard-driven workflow, remappable in the web app
@@ -91,6 +95,8 @@ docker run -d -p 8420:8000 -v "$(pwd)/data:/data" cutstock
 | Port | Container listens on `8000`; map any host port you like (`8420` in the examples) |
 | Data | SQLite database + `settings.json` live in the `/data` volume |
 | Unraid | Use `/mnt/user/appdata/cutstock:/data` as the volume mapping |
+| Synology | In Container Manager, create the `data` folder next to `compose.yml` in File Station first -- otherwise startup fails with "Bind mount failed" |
+| Updates | New versions extend the database automatically; a copy `cutstock-vor-update-<date>.db` is created in the data folder beforehand |
 | API key | Optional; set in Settings to protect the REST API from external access. The web UI works without it. |
 | Reverse proxy | Plain HTTP backend, works behind nginx, Traefik, Zoraxy, Caddy, ... |
 | Users | Single-user by design -- no authentication built in; use your reverse proxy/SSO if exposed |
@@ -103,39 +109,45 @@ Settings page and can be remapped there (click a key, press the new one).
 
 ### Material & Stock
 
-Manage materials (panels, bars) with thickness, cross-section, grain direction, edge trim, and minimum remnant thresholds. Stock pieces are shown for the selected material -- for multiple identical boards, expand the row to see individual pieces with defect badges.
+Manage materials (panels, bars) with thickness, cross-section, grain direction, edge trim, minimum remnant thresholds, short code and storage location. Stock pieces are shown for the selected material -- expand a row to see each piece with its code, location, note and defect badges. Remnants are marked, reserved pieces show the project they are planned for. Double-click a piece to change its note and location.
 
-![Material & Stock](docs/screenshot_material.png)
+![Material & Stock](docs/screenshot_material_en.png)
 
 ### Projects
 
-Organize parts by project. Each part has a label, type, material, dimensions, quantity, and grain direction. Import/export projects as JSON.
+Organize parts by project. Each part has a label, type, material, dimensions, quantity, and grain direction. If a project is built several times, just set the number of copies on the project -- all copies are optimized together. Import/export projects as JSON.
 
-![Projects](docs/screenshot_projekte.png)
+![Projects](docs/screenshot_projekte_en.png)
 
 ### Optimization -- Bars
 
-Select a project, material, saw blade, and algorithm. The optimizer calculates the best cutting layout and displays color-coded cut plans with statistics.
+Select a project, material, saw blade, and algorithm. The optimizer calculates the best cutting layout, saves it and displays color-coded cut plans with statistics. Each board shows which piece to take and where it is stored. Optionally use up "remnants first".
 
-![Optimization Bars](docs/screenshot_optimierung.png)
+![Optimization Bars](docs/screenshot_optimierung_en.png)
+
+### Filler Parts
+
+If waste remains at the end of a bar, CutStock can fill it with parts from other projects ("Filler parts..."). It never uses more material; filler parts are hatched and show their source project. Once cut, they go into the part stock and are taken over by the other project with one click.
+
+![Filler Parts](docs/screenshot_fuellteile_en.png)
 
 ### Optimization -- Panels
 
 2D guillotine packing for panels. All cuts go edge-to-edge, keeping every remnant rectangular and reusable. The numbered cutting sequence below each plan tells you exactly where to cut, with the saw kerf already accounted for.
 
-![Optimization Panels](docs/screenshot_platten.png)
+![Optimization Panels](docs/screenshot_platten_en.png)
 
 ### Workshop Mode
 
-Full-screen view for a tablet next to the saw: one panel per page, large touch targets, overall progress, and an "up next" marker. Marking a piece updates part progress and stock live.
+Full-screen view for a tablet next to the saw: one panel per page with piece code and storage location, large touch targets, overall progress, and an "up next" marker. Marking a piece updates part progress and stock live; new remnants are shown with their new code and can be printed as labels right away.
 
-![Workshop Mode](docs/screenshot_werkstatt.png)
+![Workshop Mode](docs/screenshot_werkstatt_en.png)
 
 ### Settings
 
-Configure language, color theme (Horizon light/dark), unit (mm/cm), label paper format (A4 sheets or label printers), saw blades, keyboard shortcuts, and backup/restore.
+Configure language, color theme (Horizon light/dark), unit (mm/cm), label paper format (A4 sheets or label printers), stock (reservation, number lock period), saw blades, keyboard shortcuts, and backup/restore.
 
-![Settings](docs/screenshot_einstellungen.png)
+![Settings](docs/screenshot_einstellungen_en.png)
 
 ## Algorithms
 
@@ -154,7 +166,7 @@ Guillotine cuts can be made with any standard saw. The remnants are always clean
 
 ### 1D -- Bars / Profiles
 
-- **Fast (Greedy FFD):** First-Fit-Decreasing -- sorts parts by length, places each on the first bar that fits. Instant results.
+- **Fast:** cutting patterns via column generation, selected by integer linear programming (ILP) for minimal material use; waste is bundled onto one remnant bar where possible, with few distinct patterns. Results in about one second.
 - **Thorough (GA):** Genetic Algorithm -- evolves 80 permutations over 200 generations to find better combinations.
 
 ### 2D -- Panels / Boards
@@ -168,7 +180,9 @@ Guillotine cuts can be made with any standard saw. The remnants are always clean
 - **Saw blade kerf** -- subtracted at every cut
 - **Edge trimming** -- damaged edges removed before cutting
 - **Grain direction** -- parts placed only in orientations that match the wood grain
-- **Finite stock** -- uses smallest/remnant pieces first, reports parts that don't fit
+- **Finite stock** -- prefers small pieces and remnants, reports parts that don't fit; with "remnants first", pieces marked as remnants are planned first
+- **Reservation** -- pieces reserved by saved plans of other projects are not planned
+- **Defects** -- defect zones are avoided, pieces with defects are listed individually in the plan
 - **Material requirements** -- when parts don't fit, estimates how many additional boards/bars are needed
 
 ## REST API
@@ -199,8 +213,9 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | POST | `/api/stock` | Create stock entry |
 | PUT | `/api/stock/{id}` | Update stock entry |
 | DELETE | `/api/stock/{id}` | Delete stock entry |
-| GET | `/api/stock/{id}/pieces` | List individual pieces |
-| PUT | `/api/pieces/{id}` | Update an individual piece |
+| GET | `/api/stock/{id}/pieces` | List individual pieces (code, location, reserved for) |
+| PUT | `/api/pieces/{id}` | Update an individual piece (note, location) |
+| GET/POST/DELETE | `/api/materials/{id}/image` | Read, upload, remove material image |
 | **Defects** | | |
 | GET | `/api/stock/{id}/defects` | Defects on a stock entry |
 | GET | `/api/pieces/{id}/defects` | Defects on a piece |
@@ -216,22 +231,30 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | GET | `/api/projects` | List projects |
 | GET | `/api/projects/{id}` | Get a project |
 | POST | `/api/projects` | Create a project |
-| PUT | `/api/projects/{id}` | Update a project |
+| PUT | `/api/projects/{id}` | Update a project (name, number of copies) |
 | DELETE | `/api/projects/{id}` | Delete a project |
+| POST | `/api/projects/{id}/clone` | Duplicate a project |
+| POST | `/api/projects/{id}/copy-parts` | Copy parts into a project |
+| POST | `/api/projects/{id}/restart` | Restart project (progress 0, plans removed, stock unchanged) |
 | **Parts** | | |
 | GET | `/api/projects/{id}/parts` | List parts of a project |
 | POST | `/api/projects/{id}/parts` | Add a part |
 | PUT | `/api/parts/{id}` | Update a part |
 | DELETE | `/api/parts/{id}` | Delete a part |
-| **Optimization** | | |
-| POST | `/api/optimize` | Run optimization |
-| POST | `/api/optimize/confirm` | Confirm cut plans (update stock) |
-| POST | `/api/optimize/mark-plan` | Mark a single plan as cut |
+| **Optimization and Plans** | | |
+| POST | `/api/optimize` | Optimize and save as the project's plan for the material |
+| GET | `/api/projects/{id}/plans/{material_id}` | Get the saved plan (`null` if there is none) |
+| POST | `/api/plan-pieces/{id}` | Mark a piece as cut / undo (`{"gesaegt": true}`), updates progress and stock |
+| POST | `/api/plans/{id}/confirm-all` | Mark all open pieces of the plan as cut |
+| DELETE | `/api/plans/{id}` | Discard plan (releases reserved pieces) |
+| GET | `/api/projects/{id}/fill-candidates/{material_id}` | Possible filler parts from other projects |
+| POST | `/api/projects/{id}/take-stock/{material_id}` | Take part stock ("shelf") over as cut |
 | **Export** | | |
 | POST | `/api/pdf` | Generate PDF cut plan |
 | POST | `/api/labels` | Generate label PDF |
 | **System** | | |
 | GET | `/api/version` | App version and links |
+| GET | `/api/license` | License status |
 | GET | `/api/settings` | Read settings |
 | PUT | `/api/settings` | Update settings |
 | GET | `/api/backup` | Download database backup (ZIP) |
@@ -246,13 +269,16 @@ POST /api/optimize
   "project_id": 1,
   "material_id": 3,
   "blade_id": 1,
-  "algorithm": "nested"
+  "algorithm": "nested",
+  "reste_zuerst": false,
+  "fuellteile": [{"teil_id": 42, "modus": "auffuellen", "menge": 0}],
+  "fuell_alle_reste": false
 }
 ```
 
-Algorithm choices: `greedy`, `nested`, `ga`
+Algorithm choices: `greedy`, `nested`, `ga`. `reste_zuerst` (remnants first), `fuellteile` (filler parts) and `fuell_alle_reste` are optional (filler mode `auffuellen` = fill or `fest` = fixed quantity; without `fuellteile` the saved plan's selection is kept).
 
-The response includes `schnittplaene` (cut plans), `fehlende_teile` (parts that didn't fit), `gesamt_verschnitt_prozent` (total waste %), and `materialbedarf` (additional material needed -- empty when everything fits).
+The response is the saved plan: `plan_id`, `schnittplaene` (per board e.g. `stueck_code`, `lagerort`, `platzierungen` with `id` and `gesaegt`), `fehlende_teile` (parts that didn't fit), `gesamt_verschnitt_prozent` (total waste %), `materialbedarf` (additional material needed -- empty when everything fits) and the hints `veraltet` (outdated) and `lager_fehlt` (stock missing).
 
 ## Download (Desktop)
 
@@ -310,6 +336,8 @@ CUTSTOCK_DB=./data/cutstock.db uvicorn web.app:app --host 0.0.0.0 --port 8000
 
 On macOS, the desktop database and settings sync automatically via iCloud Drive between Macs. A heartbeat-based lock mechanism prevents concurrent access.
 
+Before an update that extends the database, CutStock automatically creates a copy `cutstock-vor-update-<date>.db` next to the database. Updates only add tables and columns; older versions can still open the same database.
+
 The desktop app and the web app share the exact same interface: the desktop
 build runs the same FastAPI backend locally and opens it in your default
 browser. There is no separate "app window" -- what you see on macOS, Windows,
@@ -356,8 +384,9 @@ CutStock/
       vendor/              -- bundled Fundamental Styles + Horizon themes + fonts
   ui/
     i18n.py                -- translations (EN/DE/FR/IT), shared by backend
-  tests/
-    test_optimize.py       -- algorithm tests
+  tests/                   -- tests (algorithms, PDF, REST API)
+  tools/
+    testdaten.py           -- extensive test data via REST into a test instance
   desktop.py               -- desktop entry point (local FastAPI + browser)
   desktop.spec             -- PyInstaller spec (macOS)
   desktop_win.spec         -- PyInstaller spec (Windows)

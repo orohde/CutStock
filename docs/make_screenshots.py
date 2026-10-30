@@ -67,6 +67,13 @@ EN = {
     "Diagonalstrebe": "Diagonal brace",
     "Fußleiste": "Foot rail",
     "Konsole": "Bracket",
+    "Plattenständer": "Panel rack",
+    "Plattenwagen Reste": "Remnant cart",
+    "Holzregal": "Timber rack",
+    "Restekiste Holz": "Timber remnant box",
+    "Hocker Kiefer": "Pine stool",
+    "Hockerbein": "Stool leg",
+    "Zarge": "Apron",
 }
 
 
@@ -111,22 +118,25 @@ def seed_demo_data() -> dict:
     if api("GET", "/api/materials"):
         raise SystemExit("Database is not empty – use a fresh throwaway DB!")
 
+    # Kürzel → Stück-Codes (SP19-01 …); Lagerorte für Stücke und neue Reste
+    platten_ort = {"lagerort": tr("Plattenständer"), "lagerort_reste": tr("Plattenwagen Reste")}
+    holz_ort = {"lagerort": tr("Holzregal"), "lagerort_reste": tr("Restekiste Holz")}
     span = api("POST", "/api/materials", {
         "name": tr("Spanplatte weiß 19mm"), "typ": "Platte", "dicke": 19.0,
-        "maserung": "keine", "besaeumung": 10.0,
-        "rest_min_laenge": 300.0, "rest_min_breite": 200.0})
+        "maserung": "keine", "besaeumung": 10.0, "kuerzel": "SP19",
+        "rest_min_laenge": 300.0, "rest_min_breite": 200.0, **platten_ort})
     eiche = api("POST", "/api/materials", {
         "name": tr("Eiche Leimholz 18mm"), "typ": "Platte", "dicke": 18.0,
-        "maserung": "längs", "besaeumung": 5.0,
-        "rest_min_laenge": 200.0, "rest_min_breite": 150.0})
+        "maserung": "längs", "besaeumung": 5.0, "kuerzel": "EI18",
+        "rest_min_laenge": 200.0, "rest_min_breite": 150.0, **platten_ort})
     leiste = api("POST", "/api/materials", {
         "name": tr("Buchenleiste 20x40"), "typ": "Stange",
-        "querschnitt_breite": 20.0, "querschnitt_tiefe": 40.0,
-        "rest_min_laenge": 150.0})
+        "querschnitt_breite": 20.0, "querschnitt_tiefe": 40.0, "kuerzel": "BU2040",
+        "rest_min_laenge": 150.0, **holz_ort})
     kiefer = api("POST", "/api/materials", {
         "name": tr("Kiefer Kantholz 44x44"), "typ": "Stange",
-        "querschnitt_breite": 44.0, "querschnitt_tiefe": 44.0,
-        "rest_min_laenge": 200.0})
+        "querschnitt_breite": 44.0, "querschnitt_tiefe": 44.0, "kuerzel": "KI44",
+        "rest_min_laenge": 200.0, **holz_ort})
 
     for mat, img in [(span, "spanplatte.jpg"), (eiche, "eiche.jpg"),
                      (leiste, "buche.jpg"), (kiefer, "kiefer.jpg")]:
@@ -136,10 +146,12 @@ def seed_demo_data() -> dict:
         {"material_id": span["id"], "laenge": 2800, "breite": 2070, "stueckzahl": 8},
         # Remnant in stock (visible in the material tab) but deliberately too
         # small for any part, so the cut plans show full-size panels
-        {"material_id": span["id"], "laenge": 350, "breite": 250, "stueckzahl": 1},
+        {"material_id": span["id"], "laenge": 350, "breite": 250, "stueckzahl": 1,
+         "ist_rest": True},
         {"material_id": eiche["id"], "laenge": 2500, "breite": 1250, "stueckzahl": 3},
         {"material_id": leiste["id"], "laenge": 2400, "breite": 0, "stueckzahl": 12},
-        {"material_id": leiste["id"], "laenge": 1000, "breite": 0, "stueckzahl": 2},
+        {"material_id": leiste["id"], "laenge": 1000, "breite": 0, "stueckzahl": 2,
+         "ist_rest": True},
         {"material_id": kiefer["id"], "laenge": 3000, "breite": 0, "stueckzahl": 10},
     ]:
         created = api("POST", "/api/stock", stock)
@@ -203,6 +215,15 @@ def seed_demo_data() -> dict:
         ("Konsole", 320, 4),
     ]:
         api("POST", f"/api/projects/{regal['id']}/parts", {
+            "label": tr(label), "typ": S, "material_id": kiefer["id"],
+            "laenge": l, "breite": 0, "stueckzahl": n,
+            "gesaegt_anzahl": 0, "maserung": "egal"})
+
+    # Small second project on the same timber: its legs are used as filler
+    # parts in the remnants of the workshop shelf (screenshot "fuellteile")
+    hocker = api("POST", "/api/projects", {"name": tr("Hocker Kiefer")})
+    for label, l, n in [("Hockerbein", 450, 4), ("Zarge", 300, 4)]:
+        api("POST", f"/api/projects/{hocker['id']}/parts", {
             "label": tr(label), "typ": S, "material_id": kiefer["id"],
             "laenge": l, "breite": 0, "stueckzahl": n,
             "gesaegt_anzahl": 0, "maserung": "egal"})
@@ -318,6 +339,28 @@ def shoot(ids: dict):
         page.wait_for_timeout(300)
         page.screenshot(path=shot("optimierung"))
 
+        # 6b) Füllteile: Hockerbeine aus dem anderen Projekt füllen die Reste
+        # der Regal-Stangen (schraffiert), gesägt gehen sie ins Regal
+        page.click("#btn-fill")
+        page.wait_for_selector("#modal-body tr[data-teil]")
+        page.check(f'#modal-body tr[data-teil]:has-text("{tr("Hockerbein")}") .fill-check')
+        page.check("#fill-all-rests")
+        page.click("#modal-save")
+        page.wait_for_timeout(300)
+        # Direkt optimieren: ein erneutes Auswählen von Projekt/Material würde
+        # den gespeicherten Plan neu laden und die Füllteil-Auswahl ersetzen
+        page.click("#btn-optimize")
+        page.wait_for_selector("#btn-fill:has-text('(1)')")
+        page.wait_for_timeout(1200)
+        hide_toasts(page)
+        # Erste Stange mit Füllteil (schraffiert, "Hockerbein → Hocker Kiefer")
+        idx = page.evaluate("""(State.optimizationResult.schnittplaene || [])
+            .findIndex(sp => sp.platzierungen.some(p => p.ist_fuellteil))""")
+        card = page.locator(".cut-plan-card").nth(max(idx, 0))
+        card.scroll_into_view_if_needed()
+        page.wait_for_timeout(300)
+        card.screenshot(path=shot("fuellteile"))
+
         # 7) Defekt im Schnittplan: Gartenbank auf Eiche mit Astloch (#1)
         optimize(page, ids["bank"], ids["eiche"])
         hide_toasts(page)
@@ -327,6 +370,7 @@ def shoot(ids: dict):
         # 8) Einstellungen (ganze Seite inkl. Etiketten + Tastenkürzel)
         page.click('.tab-btn[data-tab="settings"]')
         page.wait_for_selector("#settings-label-format")
+        page.evaluate("document.activeElement && document.activeElement.blur()")
         page.wait_for_timeout(400)
         page.screenshot(path=shot("einstellungen"), full_page=True)
 

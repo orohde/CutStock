@@ -20,16 +20,20 @@ CutStock gibt es in zwei Varianten, die denselben Optimierungskern teilen:
 - **Maserungsrichtung** -- beruecksichtigt Holzmaserung pro Material und Teil (laengs, quer oder egal)
 - **Besaeumung** -- konfigurierbarer Rand fuer beschaedigte Plattenkanten
 - **Defekte markieren** -- Defektstellen (Astloecher, Risse, Verfaerbungen) pro Einzelstueck erfassen; der Optimierer umgeht sie automatisch
-- **Einzelstueck-Nummerierung** -- bei mehreren gleichen Brettern gezielt angeben, welches Brett welchen Defekt hat; aufklappbare Stueckliste im Lagerbestand
-- **Lagerverwaltung** -- Bestand verfolgen, verbrauchte Stuecke automatisch austragen, verwertbare Reste automatisch einbuchen
-- **Projektverwaltung** -- Teile nach Projekten organisieren, Import/Export als JSON, Teilelisten-Import aus CSV
+- **Stueck-Codes und Lagerorte** -- jedes Stueck hat einen eindeutigen Code je Material (z. B. `AP40-07`, Kuerzel frei waehlbar) und einen Lagerort (Regal, Restekiste, ...); Etiketten je Stueck mit Code und Lagerort; frei gewordene Nummern werden nach einer einstellbaren Sperrfrist wieder vergeben
+- **Lagerverwaltung** -- Bestand verfolgen; beim Saegen wird genau das Stueck aus dem Plan ausgetragen, verwertbare Reste werden automatisch eingebucht, als Rest markiert und an den Reste-Lagerort gelegt; der groesste Rest behaelt den Code seines Bretts
+- **Gespeicherte Schnittplaene** -- jede Berechnung wird gespeichert; beim Wechsel zwischen Projekten bleibt der Stand erhalten (was schon gesaegt ist). Neu berechnen behaelt angefangene Bretter, Hinweis wenn sich Teile oder Lager geaendert haben, "Projekt neu starten" zum erneuten Saegen
+- **Lager-Reservierung** -- gespeicherte Plaene reservieren ihre noch nicht angefangenen Stuecke, andere Projekte verplanen sie nicht (abschaltbar); "Plan verwerfen" gibt sie frei
+- **Reste zuerst** -- auf Wunsch erst nur Reste verplanen, dann ganze Stangen/Platten
+- **Fuellteile** -- Teile anderer Projekte mitsaegen, um den Abfall der Stangen aufzufuellen (ohne zusaetzliches Material); gesaegte Fuellteile kommen in den Teile-Vorrat ("Regal") und werden spaeter vom anderen Projekt uebernommen
+- **Projektverwaltung** -- Teile nach Projekten organisieren, Projekt mehrfach bauen (Anzahl Exemplare), Import/Export als JSON, Teilelisten-Import aus CSV
 - **Visuelle Schnittplaene** -- farbkodierte Zuschnittschemata mit Labels und Massen
 - **Schnittfolge** -- nummerierte, massgenaue Schrittliste pro Schnittplan (Kerf eingerechnet, auch im PDF)
-- **Werkstatt-Modus** -- Vollbild-Touch-Ansicht fuers Tablet an der Saege: grosse Ziele, Fortschritt, Teile beim Saegen abhaken
+- **Werkstatt-Modus** -- Vollbild-Touch-Ansicht fuers Tablet an der Saege: welches Stueck wo liegt ("Nimm SP19-01 · Plattenstaender"), grosse Ziele, Fortschritt, Teile beim Saegen abhaken, entstehende Reste direkt beschriften und Etiketten drucken
 - **Etiketten** -- druckbare Etiketten fuer Teile und Reste (A4-Boegen wie Avery 3475/L7160 oder Dymo/Brother-Etikettendrucker, freie Masse)
-- **PDF-Export** -- kompaktes mehrseitiges Layout (2-spaltig fuer Stangen, proportional fuer Platten)
+- **PDF-Export** -- kompaktes mehrseitiges Layout: Teileliste mit Anzahl, gleiche Schnittmuster zusammengefasst, Materialbedarf mit Stueck-Codes, Lagerort und Materialbild
 - **Statistik** -- detaillierte Verschnittanalyse pro Lagerstueck und Gesamtwerte
-- **Backup/Restore** -- komplette Datenbank + Einstellungen als ZIP (Desktop)
+- **Backup/Restore** -- komplette Datenbank + Einstellungen als ZIP; vor jedem Update mit Datenbank-Aenderung legt CutStock automatisch eine Sicherung an
 - **Mehrsprachig** -- Deutsch, English, Francais, Italiano
 - **SAP Horizon Design** -- identischer Fiori-Look in Desktop und Web, helles und dunkles Farbschema
 - **Tastenkuerzel** -- komplett per Tastatur bedienbar, in der Web-App frei belegbar
@@ -91,6 +95,8 @@ docker run -d -p 8420:8000 -v "$(pwd)/data:/data" cutstock
 | Port | Container lauscht auf `8000`; Host-Port frei waehlbar (`8420` in den Beispielen) |
 | Daten | SQLite-Datenbank + `settings.json` liegen im `/data`-Volume |
 | Unraid | Als Volume-Mapping `/mnt/user/appdata/cutstock:/data` verwenden |
+| Synology | Im Container Manager den Ordner `data` neben der `compose.yml` vorher in der File Station anlegen -- sonst bricht der Start mit "Bind mount failed" ab |
+| Updates | Neue Versionen erweitern die Datenbank automatisch; vorher entsteht im Datenordner eine Kopie `cutstock-vor-update-<Datum>.db` |
 | API-Key | Optional; unter Einstellungen setzen, um die REST-API vor externem Zugriff zu schuetzen. Die Web-Oberflaeche funktioniert ohne. |
 | Reverse Proxy | Reines HTTP-Backend, laeuft hinter nginx, Traefik, Zoraxy, Caddy, ... |
 | Benutzer | Bewusst Single-User -- keine eingebaute Anmeldung; bei Veroeffentlichung Reverse Proxy/SSO vorschalten |
@@ -104,21 +110,27 @@ anklicken, neue Taste druecken).
 
 ### Material & Lager
 
-Materialien (Platten, Stangen) mit Dicke, Querschnitt, Maserungsrichtung, Besaeumung und Rest-Schwellen verwalten. Der Lagerbestand zeigt die Stuecke des gewaehlten Materials -- bei mehreren gleichen Brettern aufklappbar mit Einzelstueck-Nummerierung und Defekt-Badges.
+Materialien (Platten, Stangen) mit Dicke, Querschnitt, Maserungsrichtung, Besaeumung, Rest-Schwellen, Kuerzel und Lagerort verwalten. Der Lagerbestand zeigt die Stuecke des gewaehlten Materials -- aufklappbar mit Stueck-Code, Lagerort, Notiz und Defekt-Badges. Reste sind markiert, reservierte Stuecke zeigen das Projekt, fuer das sie verplant sind. Doppelklick auf ein Stueck aendert Notiz und Lagerort.
 
 ![Material & Lager](docs/screenshot_material.png)
 
 ### Projekte
 
-Teile nach Projekten organisieren. Jedes Teil hat ein Label, Typ, Material, Masse, Stueckzahl und Maserungsrichtung. Projekte als JSON importieren/exportieren.
+Teile nach Projekten organisieren. Jedes Teil hat ein Label, Typ, Material, Masse, Stueckzahl und Maserungsrichtung. Wird ein Projekt mehrfach gebaut, genuegt die Anzahl Exemplare am Projekt -- alle Exemplare werden gemeinsam optimiert. Projekte als JSON importieren/exportieren.
 
 ![Projekte](docs/screenshot_projekte.png)
 
 ### Optimierung -- Stangen
 
-Projekt, Material, Saegeblatt und Algorithmus waehlen. Der Optimierer berechnet den besten Schnittplan und zeigt farbkodierte Zuschnittschemata mit Statistik.
+Projekt, Material, Saegeblatt und Algorithmus waehlen. Der Optimierer berechnet den besten Schnittplan, speichert ihn und zeigt farbkodierte Zuschnittschemata mit Statistik. Ueber jedem Brett steht, welches Stueck man nehmen soll und wo es liegt. Optional "Reste zuerst" aufbrauchen.
 
 ![Optimierung Stangen](docs/screenshot_optimierung.png)
+
+### Fuellteile
+
+Bleibt am Ende einer Stange Abfall, kann CutStock ihn mit Teilen aus anderen Projekten auffuellen ("Fuellteile..."). Es wird nie mehr Material verbraucht; die Fuellteile sind schraffiert und tragen ihr Herkunftsprojekt. Gesaegt kommen sie in den Teile-Vorrat und werden beim anderen Projekt mit einem Klick uebernommen.
+
+![Fuellteile](docs/screenshot_fuellteile.png)
 
 ### Optimierung -- Platten
 
@@ -128,13 +140,13 @@ Projekt, Material, Saegeblatt und Algorithmus waehlen. Der Optimierer berechnet 
 
 ### Werkstatt-Modus
 
-Vollbild-Ansicht fuers Tablet neben der Saege: eine Platte pro Seite, grosse Touch-Ziele, Gesamtfortschritt und "Als Naechstes"-Markierung. Abhaken aktualisiert Teile-Fortschritt und Lager live.
+Vollbild-Ansicht fuers Tablet neben der Saege: eine Platte pro Seite mit Stueck-Code und Lagerort, grosse Touch-Ziele, Gesamtfortschritt und "Als Naechstes"-Markierung. Abhaken aktualisiert Teile-Fortschritt und Lager live; entstehende Reste werden mit ihrem neuen Code angezeigt und koennen gleich als Etikett gedruckt werden.
 
 ![Werkstatt-Modus](docs/screenshot_werkstatt.png)
 
 ### Einstellungen
 
-Sprache, Farbschema (Horizon hell/dunkel), Masseinheit (mm/cm), Etiketten-Papierformat (A4-Boegen oder Etikettendrucker), Saegeblaetter, Tastenkuerzel und Backup/Restore konfigurieren.
+Sprache, Farbschema (Horizon hell/dunkel), Masseinheit (mm/cm), Etiketten-Papierformat (A4-Boegen oder Etikettendrucker), Lager (Reservierung, Nummern-Sperrfrist), Saegeblaetter, Tastenkuerzel und Backup/Restore konfigurieren.
 
 ![Einstellungen](docs/screenshot_einstellungen.png)
 
@@ -155,7 +167,7 @@ Guillotine-Schnitte lassen sich mit jeder normalen Saege ausfuehren. Die Reste s
 
 ### 1D -- Stangen / Profile
 
-- **Schnell (Greedy FFD):** First-Fit-Decreasing -- sortiert Teile nach Laenge, platziert jedes auf der ersten Stange, auf die es passt. Sofortiges Ergebnis.
+- **Schnell:** Schnittmuster per Column Generation, Auswahl per ganzzahliger Optimierung (ILP) mit minimalem Materialverbrauch; der Verschnitt wird moeglichst auf eine Reststange gebuendelt, mit wenigen unterschiedlichen Schnittmustern. Ergebnis in etwa einer Sekunde.
 - **Gruendlich (GA):** Genetischer Algorithmus -- entwickelt 80 Permutationen ueber 200 Generationen, um bessere Kombinationen zu finden.
 
 ### 2D -- Platten
@@ -169,7 +181,9 @@ Guillotine-Schnitte lassen sich mit jeder normalen Saege ausfuehren. Die Reste s
 - **Saegeblatt-Schnittbreite** -- wird bei jedem Schnitt abgezogen
 - **Besaeumung** -- beschaedigte Kanten werden vor dem Zuschnitt entfernt
 - **Maserungsrichtung** -- Teile werden nur in Orientierungen platziert, die zur Holzmaserung passen
-- **Endlicher Bestand** -- verwendet kleinste/Rest-Stuecke zuerst, meldet Teile, die nicht passen
+- **Endlicher Bestand** -- bevorzugt kleine Stuecke und Reste, meldet Teile, die nicht passen; mit "Reste zuerst" werden als Rest markierte Stuecke vorrangig verplant
+- **Reservierung** -- von gespeicherten Plaenen anderer Projekte reservierte Stuecke werden nicht verplant
+- **Defekte** -- Defektzonen werden umgangen, Stuecke mit Defekt im Plan einzeln gekennzeichnet
 - **Materialbedarf** -- wenn Teile nicht passen, wird geschaetzt, wie viele zusaetzliche Bretter/Stangen benoetigt werden
 
 ## REST-API
@@ -200,8 +214,9 @@ Anfragen von der eigenen Web-Oberflaeche (Same-Origin) und von localhost sind im
 | POST | `/api/stock` | Lagereintrag anlegen |
 | PUT | `/api/stock/{id}` | Lagereintrag aktualisieren |
 | DELETE | `/api/stock/{id}` | Lagereintrag loeschen |
-| GET | `/api/stock/{id}/pieces` | Einzelstuecke auflisten |
-| PUT | `/api/pieces/{id}` | Einzelstueck aktualisieren |
+| GET | `/api/stock/{id}/pieces` | Einzelstuecke auflisten (Code, Lagerort, reserviert fuer) |
+| PUT | `/api/pieces/{id}` | Einzelstueck aktualisieren (Notiz, Lagerort) |
+| GET/POST/DELETE | `/api/materials/{id}/image` | Materialbild lesen, hochladen, entfernen |
 | **Defekte** | | |
 | GET | `/api/stock/{id}/defects` | Defekte eines Lagerstuecks |
 | GET | `/api/pieces/{id}/defects` | Defekte eines Einzelstuecks |
@@ -217,22 +232,30 @@ Anfragen von der eigenen Web-Oberflaeche (Same-Origin) und von localhost sind im
 | GET | `/api/projects` | Projekte auflisten |
 | GET | `/api/projects/{id}` | Projekt abrufen |
 | POST | `/api/projects` | Projekt anlegen |
-| PUT | `/api/projects/{id}` | Projekt aktualisieren |
+| PUT | `/api/projects/{id}` | Projekt aktualisieren (Name, Anzahl Exemplare) |
 | DELETE | `/api/projects/{id}` | Projekt loeschen |
+| POST | `/api/projects/{id}/clone` | Projekt kopieren |
+| POST | `/api/projects/{id}/copy-parts` | Teile in ein Projekt kopieren |
+| POST | `/api/projects/{id}/restart` | Projekt neu starten (Fortschritt 0, Plaene weg, Lager bleibt) |
 | **Teile** | | |
 | GET | `/api/projects/{id}/parts` | Teile eines Projekts auflisten |
 | POST | `/api/projects/{id}/parts` | Teil hinzufuegen |
 | PUT | `/api/parts/{id}` | Teil aktualisieren |
 | DELETE | `/api/parts/{id}` | Teil loeschen |
-| **Optimierung** | | |
-| POST | `/api/optimize` | Optimierung ausfuehren |
-| POST | `/api/optimize/confirm` | Schnittplaene bestaetigen (Lager aktualisieren) |
-| POST | `/api/optimize/mark-plan` | Einzelnen Plan als gesaegt markieren |
+| **Optimierung und Plaene** | | |
+| POST | `/api/optimize` | Optimieren und als Plan des Projekts fuer das Material speichern |
+| GET | `/api/projects/{id}/plans/{material_id}` | Gespeicherten Plan abrufen (`null`, wenn keiner existiert) |
+| POST | `/api/plan-pieces/{id}` | Stueck als gesaegt markieren/zuruecknehmen (`{"gesaegt": true}`), aktualisiert Fortschritt und Lager |
+| POST | `/api/plans/{id}/confirm-all` | Alle offenen Stuecke des Plans als gesaegt markieren |
+| DELETE | `/api/plans/{id}` | Plan verwerfen (gibt reservierte Stuecke frei) |
+| GET | `/api/projects/{id}/fill-candidates/{material_id}` | Moegliche Fuellteile aus anderen Projekten |
+| POST | `/api/projects/{id}/take-stock/{material_id}` | Teile-Vorrat ("Regal") als gesaegt uebernehmen |
 | **Export** | | |
 | POST | `/api/pdf` | PDF-Schnittplan erzeugen |
 | POST | `/api/labels` | Etiketten-PDF erzeugen |
 | **System** | | |
 | GET | `/api/version` | App-Version und Links |
+| GET | `/api/license` | Lizenzstatus |
 | GET | `/api/settings` | Einstellungen lesen |
 | PUT | `/api/settings` | Einstellungen aendern |
 | GET | `/api/backup` | Datenbank-Backup herunterladen (ZIP) |
@@ -247,13 +270,16 @@ POST /api/optimize
   "project_id": 1,
   "material_id": 3,
   "blade_id": 1,
-  "algorithm": "nested"
+  "algorithm": "nested",
+  "reste_zuerst": false,
+  "fuellteile": [{"teil_id": 42, "modus": "auffuellen", "menge": 0}],
+  "fuell_alle_reste": false
 }
 ```
 
-Algorithmus-Optionen: `greedy`, `nested`, `ga`
+Algorithmus-Optionen: `greedy`, `nested`, `ga`. `reste_zuerst`, `fuellteile` und `fuell_alle_reste` sind optional (Fuellteil-Modus `auffuellen` oder `fest`; ohne `fuellteile` bleibt die Auswahl des gespeicherten Plans).
 
-Die Antwort enthaelt `schnittplaene` (Schnittplaene), `fehlende_teile` (nicht platzierte Teile), `gesamt_verschnitt_prozent` (Gesamtverschnitt in %) und `materialbedarf` (zusaetzlich benoetigtes Material -- leer wenn alles passt).
+Die Antwort ist der gespeicherte Plan: `plan_id`, `schnittplaene` (je Brett u. a. `stueck_code`, `lagerort`, `platzierungen` mit `id` und `gesaegt`), `fehlende_teile`, `gesamt_verschnitt_prozent`, `materialbedarf` (zusaetzlich benoetigtes Material -- leer wenn alles passt) sowie Hinweise `veraltet` und `lager_fehlt`.
 
 ## Download (Desktop)
 
@@ -311,6 +337,8 @@ CUTSTOCK_DB=./data/cutstock.db uvicorn web.app:app --host 0.0.0.0 --port 8000
 
 Auf macOS synchronisieren Desktop-Datenbank und Einstellungen automatisch ueber iCloud Drive zwischen Macs. Ein Heartbeat-basierter Lock-Mechanismus verhindert gleichzeitigen Zugriff.
 
+Bei einem Update, das die Datenbank erweitert, legt CutStock vorher automatisch eine Kopie `cutstock-vor-update-<Datum>.db` neben der Datenbank an. Updates fuegen nur Tabellen und Spalten hinzu; aeltere Versionen koennen dieselbe Datenbank weiter oeffnen.
+
 Desktop-App und Web-App teilen sich exakt dieselbe Oberflaeche: Der Desktop-Build
 startet dasselbe FastAPI-Backend lokal und oeffnet es im Standard-Browser.
 Es gibt kein separates "App-Fenster" -- was man auf macOS, Windows und Docker
@@ -358,8 +386,9 @@ CutStock/
       vendor/              -- gebuendelte Fundamental Styles + Horizon-Themes + Fonts
   ui/
     i18n.py                -- Uebersetzungen (DE/EN/FR/IT), auch vom Backend genutzt
-  tests/
-    test_optimize.py       -- Algorithmus-Tests
+  tests/                   -- Tests (Algorithmen, PDF, REST-API)
+  tools/
+    testdaten.py           -- umfangreiche Testdaten per REST in eine Test-Instanz
   desktop.py               -- Desktop-Einstiegspunkt (lokales FastAPI + Browser)
   desktop.spec             -- PyInstaller-Spec (macOS)
   desktop_win.spec         -- PyInstaller-Spec (Windows)
