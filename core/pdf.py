@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
+from typing import Callable
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
@@ -28,6 +29,10 @@ PAGE_W, PAGE_H = landscape(A4)
 MARGIN = 15 * mm
 USABLE_W = PAGE_W - 2 * MARGIN
 USABLE_H = PAGE_H - 2 * MARGIN
+
+# Wohin ein Abschnitt gehört (siehe _rest_ziel in web/app.py)
+ZIEL_TEXT = {"lager": "ins Lager", "abfallkiste": "in die Abfallkiste", "weg": "wegwerfen"}
+RestZiel = Callable[[float, float], str]
 
 FARBEN = [
     colors.HexColor("#4CAF50"), colors.HexColor("#2196F3"),
@@ -166,6 +171,7 @@ def export_pdf(
     schnittfolge_titel: str = "Schnittfolge",
     material_bild: bytes = b"",
     nach_projekt: bool = False,
+    rest_ziel: RestZiel | None = None,
 ):
     c = canvas.Canvas(str(path), pagesize=landscape(A4))
     c.setTitle(f"CutStock – {projekt_name}")
@@ -189,9 +195,9 @@ def export_pdf(
 
     muster = _muster_bilden(ergebnis.schnittplaene, schnittfolgen or [], is_1d)
     if is_1d:
-        _draw_1d_plans(c, cur, muster, farb_map)
+        _draw_1d_plans(c, cur, muster, farb_map, rest_ziel)
     else:
-        _draw_2d_plans(c, cur, muster, farb_map, schnittfolge_titel)
+        _draw_2d_plans(c, cur, muster, farb_map, schnittfolge_titel, rest_ziel)
 
     c.save()
 
@@ -364,9 +370,27 @@ def _draw_materialbedarf(c: canvas.Canvas, cur: _PageCursor,
 # 2D Platten – so viele wie möglich pro Seite
 # =====================================================================
 
+def _reste_text_2d(plan: Schnittplan, rest_ziel: RestZiel | None) -> str:
+    """'Reste: 600 × 400 ins Lager, 2 × wegwerfen' – was mit den Abschnitten passiert."""
+    reste = [r for r in plan.reste if len(r) >= 2 and r[0] > 0.5 and r[1] > 0.5]
+    if not reste or rest_ziel is None:
+        return ""
+    teile: list[str] = []
+    klein: dict[str, int] = {}
+    for laenge, breite in ((r[0], r[1]) for r in reste):
+        ziel = rest_ziel(laenge, breite)
+        if ziel == "lager":
+            teile.append(f"{_fmt(laenge)} × {_fmt(breite)} mm {ZIEL_TEXT[ziel]}")
+        else:
+            klein[ziel] = klein.get(ziel, 0) + 1
+    teile += [f"{n} × {ZIEL_TEXT[z]}" for z, n in klein.items()]
+    return "Reste: " + ", ".join(teile)
+
+
 def _draw_2d_plans(c: canvas.Canvas, cur: _PageCursor,
                    muster: list[_Muster], farb_map: dict,
-                   schnittfolge_titel: str = "Schnittfolge"):
+                   schnittfolge_titel: str = "Schnittfolge",
+                   rest_ziel: RestZiel | None = None):
     gap = 8
     for m in muster:
         plan = m.plan
@@ -387,8 +411,12 @@ def _draw_2d_plans(c: canvas.Canvas, cur: _PageCursor,
         titel = _muster_titel(m, "Platte")
         c.drawString(MARGIN, cur.y, titel)
         c.setFont("Helvetica", 9)
+        info = f"Verschnitt: {plan.verschnitt_prozent:.1f}%"
+        reste_text = _reste_text_2d(plan, rest_ziel)
+        if reste_text:
+            info += "   ·   " + reste_text
         c.drawString(MARGIN + stringWidth(titel + "   ", "Helvetica-Bold", 9),
-                     cur.y, f"Verschnitt: {plan.verschnitt_prozent:.1f}%")
+                     cur.y, _latin1(info))
         cur.advance(14)
 
         _draw_2d_rect(c, plan, farb_map, MARGIN, cur.y - draw_h, draw_w, draw_h)
@@ -472,17 +500,23 @@ def _draw_2d_rect(c: canvas.Canvas, plan: Schnittplan, farb_map: dict,
 # 1D Stangen – volle Breite, ein Block je Schnittmuster
 # =====================================================================
 
-def _schnittliste_zeilen(plan: Schnittplan, max_w: float) -> list[str]:
-    """'2 × Label (375.5 mm)   ·   …   ·   Rest 19 mm', auf max_w umbrochen."""
+def _schnittliste_zeilen(plan: Schnittplan, max_w: float,
+                         rest_ziel: RestZiel | None = None) -> list[str]:
+    """'2 × Label (375.5 mm)   ·   …   ·   Rest 19 mm ins Lager', auf max_w umbrochen."""
     anzahl: dict[tuple[str, float], int] = {}
     for p in plan.platzierungen:
         key = (p.teil_label, round(p.laenge, 1))
         anzahl[key] = anzahl.get(key, 0) + 1
     teile = [f"{n} × {_latin1(label)} ({_fmt(laenge)} mm)"
              for (label, laenge), n in anzahl.items()]
-    rest = sum(r[0] for r in plan.reste if r)
-    if rest > 0:
-        teile.append(f"Rest {_fmt(rest)} mm")
+    if rest_ziel is None:
+        rest = sum(r[0] for r in plan.reste if r)
+        if rest > 0:
+            teile.append(f"Rest {_fmt(rest)} mm")
+    else:
+        for r in plan.reste:
+            if r and r[0] > 0.5:
+                teile.append(f"Rest {_fmt(r[0])} mm {ZIEL_TEXT[rest_ziel(r[0], 0.0)]}")
 
     sep = "   ·   "
     zeilen: list[str] = []
@@ -500,7 +534,8 @@ def _schnittliste_zeilen(plan: Schnittplan, max_w: float) -> list[str]:
 
 
 def _draw_1d_plans(c: canvas.Canvas, cur: _PageCursor,
-                   muster: list[_Muster], farb_map: dict):
+                   muster: list[_Muster], farb_map: dict,
+                   rest_ziel: RestZiel | None = None):
     bar_w = USABLE_W
     bar_h = 26
     zeile_h = 10
@@ -508,7 +543,7 @@ def _draw_1d_plans(c: canvas.Canvas, cur: _PageCursor,
 
     for m in muster:
         plan = m.plan
-        zeilen = _schnittliste_zeilen(plan, bar_w)
+        zeilen = _schnittliste_zeilen(plan, bar_w, rest_ziel)
         cur.need(6 + bar_h + 4 + len(zeilen) * zeile_h)
 
         # Titel: "10 × Stange 2000 mm   Verschnitt: 1.0%"

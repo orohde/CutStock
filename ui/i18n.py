@@ -34,6 +34,9 @@ TRANSLATIONS = {
         "fr": "Matériau && Stock",
         "it": "Materiale && Magazzino",
     },
+    "loc.default": {
+        "de": "Lager", "en": "Stock", "fr": "Stock", "it": "Magazzino",
+    },
     "tab.projects": {
         "de": "Projekte", "en": "Projects", "fr": "Projets", "it": "Progetti",
     },

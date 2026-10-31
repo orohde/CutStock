@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.db import Database, seed_data
+from core.db import Database, LagerortInBenutzung, seed_data
 from core.models import (
     Defekt,
     Einzelstueck,
@@ -77,6 +77,7 @@ def _read_version() -> str:
 APP_VERSION = _read_version()
 
 import threading
+from contextvars import ContextVar
 
 _db_local = threading.local()
 # Wird bei einem Restore hochgezählt, damit alle Threads ihre veralteten
@@ -99,6 +100,9 @@ def _lager_einstellungen() -> dict:
         _lager_cache = (mtime, {
             "nr_sperrfrist_tage": float(s.value("stock/nr_lock_days", 1) or 0),
             "reservierung": bool(s.value("stock/reservation", True)),
+            "abfall_aufheben": bool(s.value("stock/waste_keep", False)),
+            "abfall_untergrenze": float(s.value("stock/waste_min", 50) or 0),
+            "sprache": s.value("appearance/language", "en") or "en",
         })
     return _lager_cache[1]
 
@@ -106,11 +110,17 @@ def _lager_einstellungen() -> dict:
 _lager_cache: tuple[float, dict] = (-1.0, {})
 
 
+# Woher die laufende Anfrage kommt ("ui" = eigene Oberfläche, "api" = andere
+# Programme), wird von der API-Key-Middleware gesetzt und landet im Lagerjournal.
+_quelle: ContextVar[str] = ContextVar("cutstock_quelle", default="api")
+
+
 def get_db() -> Database:
     """Thread-local Database instance — SQLite connections can't cross threads."""
     db = getattr(_db_local, "db", None)
     if db is not None and getattr(_db_local, "gen", None) == _db_generation:
         db.nr_sperrfrist_tage = _lager_einstellungen()["nr_sperrfrist_tage"]
+        db.quelle = _quelle.get()
         return db
     if db is not None:
         try:
@@ -118,10 +128,20 @@ def get_db() -> Database:
         except Exception:
             pass
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _db_local.db = Database(DB_PATH, app_version=APP_VERSION)
+    _db_local.db = Database(DB_PATH, app_version=APP_VERSION,
+                            lagerort_standard=_standard_lagerort_name())
     _db_local.gen = _db_generation
     _db_local.db.nr_sperrfrist_tage = _lager_einstellungen()["nr_sperrfrist_tage"]
+    _db_local.db.quelle = _quelle.get()
     return _db_local.db
+
+
+def _standard_lagerort_name() -> str:
+    """Name des automatisch angelegten Lagerorts in der eingestellten Sprache."""
+    from ui.i18n import TRANSLATIONS as _T
+    sprache = _lager_einstellungen()["sprache"]
+    namen = _T.get("loc.default", {})
+    return namen.get(sprache) or namen.get("en") or "Stock"
 
 
 # Eagerly create tables / seed on import (main thread)
@@ -243,6 +263,10 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
                 content={"detail": "Invalid or missing API key"},
             )
 
+        # Eigene Oberfläche = Browser-Anfrage von derselben Seite ohne Bearer-Key
+        von_ui = ("authorization" not in request.headers
+                  and request.headers.get("sec-fetch-site") == "same-origin")
+        _quelle.set("ui" if von_ui else "api")
         response = await call_next(request)
         # Der Key kann sich durch diesen Request geändert haben (Einstellungen,
         # Backup-Restore) – dann bekommt die Oberfläche sofort das neue Cookie.
@@ -275,8 +299,10 @@ class MaterialIn(BaseModel):
     rest_min_laenge: float = 0.0
     rest_min_breite: float = 0.0
     kuerzel: str = ""          # leer → Vorschlag aus dem Namen
-    lagerort: str = ""
-    lagerort_reste: str = ""
+    # Name aus der Lagerort-Liste (unbekannt → wird angelegt). Beim Ändern:
+    # None = unverändert lassen; lagerort_reste "" = gleicher Ort wie das Material.
+    lagerort: Optional[str] = None
+    lagerort_reste: Optional[str] = None
 
 
 class MaterialOut(BaseModel):
@@ -321,14 +347,18 @@ class EinzelstueckOut(BaseModel):
     notiz: str
     defekt_count: int = 0
     code: str = ""               # Aufschrift, z.B. "AP4040-07"
-    lagerort: str = ""           # eigener Lagerort (leer = Material)
-    lagerort_effektiv: str = ""  # eigener oder der des Materials
+    lagerort: str = ""           # Lagerort des Materials (Reste: Reste-Ort)
+    lagerort_effektiv: str = ""  # wie lagerort (Feld bleibt für ältere Clients)
     reserviert_fuer: str = ""    # Projekt, dessen gespeicherter Plan das Stück reserviert
+    material_id: int = 0
+    material: str = ""
+    laenge: float = 0.0
+    breite: float = 0.0
+    ist_rest: bool = False
 
 
 class EinzelstueckIn(BaseModel):
     notiz: str = ""
-    lagerort: str = ""
 
 
 class DefectIn(BaseModel):
@@ -474,6 +504,8 @@ class SchnittplanOut(BaseModel):
     lagerort: str = ""
     ist_rest: bool = False  # Stück ist ein Rest (sonst ganze Stange/Platte)
     reste_stuecke: list[RestStueckOut] = []   # eingebuchte Reste (nach dem Anfangen)
+    # Wohin jeder Rest aus `reste` gehört: "lager" | "abfallkiste" | "weg"
+    reste_ziel: list[str] = []
 
 
 class MaterialBedarfOut(BaseModel):
@@ -497,6 +529,7 @@ class OptimizeResult(BaseModel):
     version: int = 0
     veraltet: bool = False      # Teile/Material/Sägeblatt seit der Berechnung geändert
     lager_fehlt: bool = False   # eingeplante, noch unbenutzte Lagerstücke fehlen
+    fehlende_stuecke: list[str] = []   # deren Codes, z.B. ["AP4040-07"]
     fuellteile: list[dict] = []          # Auswahl [{teil_id, modus, menge}]
     fuell_alle_reste: bool = False
     vorrat_verfuegbar: list[dict] = []   # eigene Teile mit Vorrat: [{teil_id, label, anzahl}]
@@ -548,6 +581,7 @@ class MarkPlanRequest(BaseModel):
     # Schnappschuss (Nummer, Notiz, Defekte) kommt beim Zurücknehmen zurück.
     stueck_nr: int = 0
     prev_consumed_piece: dict | None = None
+    prev_abfall: list[list[float]] = []   # vorher in die Abfallkiste gelegt [[l, b]]
 
 
 class PdfRequest(BaseModel):
@@ -591,6 +625,8 @@ class SettingsIn(BaseModel):
     license_key: Optional[str] = None
     nr_lock_days: Optional[float] = None    # Sperrfrist frei gewordener Stücknummern
     reservation: Optional[bool] = None      # gespeicherte Pläne reservieren ihr Lager
+    waste_keep: Optional[bool] = None       # Abfallstücke in der Abfallkiste aufheben
+    waste_min: Optional[float] = None       # ... erst ab diesem Maß (mm)
 
 
 # ---------------------------------------------------------------------------
@@ -631,8 +667,8 @@ def _material_from_in(data: MaterialIn, mid: int | None = None) -> Material:
         rest_min_laenge=data.rest_min_laenge,
         rest_min_breite=data.rest_min_breite,
         kuerzel=data.kuerzel,
-        lagerort=data.lagerort,
-        lagerort_reste=data.lagerort_reste,
+        lagerort=data.lagerort or "",
+        lagerort_reste=data.lagerort_reste or "",
     )
 
 
@@ -821,6 +857,8 @@ def _get_settings_dict() -> dict:
         "license_key": s.value("license/key", ""),
         "nr_lock_days": s.value("stock/nr_lock_days", 1),
         "reservation": s.value("stock/reservation", True),
+        "waste_keep": s.value("stock/waste_keep", False),
+        "waste_min": s.value("stock/waste_min", 50),
     }
 
 
@@ -853,6 +891,10 @@ def _update_settings(data: SettingsIn):
         s.setValue("stock/nr_lock_days", max(0.0, data.nr_lock_days))
     if data.reservation is not None:
         s.setValue("stock/reservation", data.reservation)
+    if data.waste_keep is not None:
+        s.setValue("stock/waste_keep", data.waste_keep)
+    if data.waste_min is not None:
+        s.setValue("stock/waste_min", max(0.0, data.waste_min))
     if data.license_key is not None:
         s.setValue("license/key", data.license_key)
 
@@ -883,15 +925,29 @@ def create_material(data: MaterialIn):
 
 @app.put("/api/materials/{mid}", response_model=MaterialOut)
 def update_material(mid: int, data: MaterialIn):
-    existing = get_db().get_material(mid)
+    db = get_db()
+    existing = db.get_material(mid)
     if not existing:
         raise HTTPException(404, "Material not found")
     m = _material_from_in(data, mid)
+    if data.lagerort is None:
+        m.lagerort = existing.lagerort
+    if data.lagerort_reste is None:
+        m.lagerort_reste = existing.lagerort_reste
     try:
-        m = get_db().save_material(m)
+        m = db.save_material(m)
     except ValueError as e:
         raise HTTPException(409, str(e))
+    _lagerort_wechsel_buchen(db, existing, m)
     return _material_to_out(m)
+
+
+def _lagerort_wechsel_buchen(db: Database, vorher: Material, nachher: Material):
+    if (vorher.lagerort, vorher.lagerort_reste) != (nachher.lagerort, nachher.lagerort_reste):
+        db.journal("material_lagerort", nachher.id,
+                   notiz=f"{vorher.lagerort}/{vorher.lagerort_reste or '–'} → "
+                         f"{nachher.lagerort}/{nachher.lagerort_reste or '–'}")
+        db.conn.commit()
 
 
 @app.delete("/api/materials/{mid}", status_code=204)
@@ -944,6 +1000,9 @@ def list_stock(material_id: Optional[int] = Query(None)):
 
 @app.post("/api/stock", response_model=StockOut, status_code=201)
 def create_stock(data: StockIn):
+    db = get_db()
+    if not db.get_material(data.material_id):
+        raise HTTPException(404, "Material not found")
     ls = Lagerstueck(
         material_id=data.material_id,
         laenge=data.laenge,
@@ -951,15 +1010,26 @@ def create_stock(data: StockIn):
         stueckzahl=data.stueckzahl,
         ist_rest=data.ist_rest,
     )
-    ls = get_db().save_lagerstueck(ls)
+    ls = db.save_lagerstueck(ls)
+    _zugang_buchen(db, ls, db.einzelstueck_nrs_for_lagerstueck(ls.id))
     return _stock_to_out(ls)
+
+
+def _zugang_buchen(db: Database, ls: Lagerstueck, nrs: list[int], art: str = "zugang"):
+    m = db.get_material(ls.material_id)
+    for nr in nrs:
+        db.journal(art, ls.material_id, stueck_code(m.kuerzel if m else "", nr),
+                   ls.laenge, ls.breite, 1)
+    db.conn.commit()
 
 
 @app.put("/api/stock/{sid}", response_model=StockOut)
 def update_stock(sid: int, data: StockIn):
-    existing = get_db().get_lagerstueck(sid)
+    db = get_db()
+    existing = db.get_lagerstueck(sid)
     if not existing:
         raise HTTPException(404, "Stock piece not found")
+    vorher = set(db.einzelstueck_nrs_for_lagerstueck(sid))
     ls = Lagerstueck(
         id=sid,
         material_id=data.material_id,
@@ -968,16 +1038,21 @@ def update_stock(sid: int, data: StockIn):
         stueckzahl=data.stueckzahl,
         ist_rest=data.ist_rest,
     )
-    ls = get_db().save_lagerstueck(ls)
+    ls = db.save_lagerstueck(ls)
+    nachher = set(db.einzelstueck_nrs_for_lagerstueck(sid))
+    _zugang_buchen(db, ls, sorted(nachher - vorher))
+    _zugang_buchen(db, existing, sorted(vorher - nachher), art="korrektur_ab")
     return _stock_to_out(ls)
 
 
 @app.delete("/api/stock/{sid}", status_code=204)
 def delete_stock(sid: int):
-    existing = get_db().get_lagerstueck(sid)
+    db = get_db()
+    existing = db.get_lagerstueck(sid)
     if not existing:
         raise HTTPException(404, "Stock piece not found")
-    get_db().delete_lagerstueck(sid)
+    _zugang_buchen(db, existing, db.einzelstueck_nrs_for_lagerstueck(sid), art="korrektur_ab")
+    db.delete_lagerstueck(sid)
 
 
 # ---------------------------------------------------------------------------
@@ -987,13 +1062,34 @@ def delete_stock(sid: int):
 
 def _piece_out(db: Database, e: Einzelstueck, material: Material | None,
                reserviert: dict | None = None) -> EinzelstueckOut:
+    ls = db.get_lagerstueck(e.lagerstueck_id)
+    ort = db.stueck_lagerort(material, ls) if material and ls else ""
     return EinzelstueckOut(
         reserviert_fuer=(reserviert or {}).get((e.lagerstueck_id, e.nr), ""),
         id=e.id, lagerstueck_id=e.lagerstueck_id, nr=e.nr, notiz=e.notiz,
         defekt_count=len(db.list_defekte(e.id)),
         code=stueck_code(material.kuerzel if material else "", e.nr),
-        lagerort=e.lagerort,
-        lagerort_effektiv=e.lagerort or (material.lagerort if material else ""))
+        lagerort=ort, lagerort_effektiv=ort,
+        material_id=material.id if material else 0,
+        material=material.name if material else "",
+        laenge=ls.laenge if ls else 0.0, breite=ls.breite if ls else 0.0,
+        ist_rest=bool(ls and ls.ist_rest))
+
+
+def _stueck_ref(db: Database, ref: str) -> Einzelstueck:
+    """Einzelstück über interne ID oder Code ("AP4040-07")."""
+    e = db.get_einzelstueck(int(ref)) if ref.isdigit() else None
+    if e is None:
+        gefunden = db.stueck_finden(ref)
+        e = gefunden[2] if gefunden else None
+    if e is None:
+        raise _fehler(404, "stueck_unbekannt", f"Piece {ref} not found")
+    return e
+
+
+def _fehler(status: int, code: str, message: str, **extra) -> HTTPException:
+    """Fehler mit festem Code für Programme: {"detail": {"code", "message", ...}}."""
+    return HTTPException(status, {"code": code, "message": message, **extra})
 
 
 def _material_of_stock(db: Database, sid: int) -> Material | None:
@@ -1010,16 +1106,24 @@ def list_pieces(sid: int):
     return [_piece_out(db, e, material, reserviert) for e in db.list_einzelstuecke(sid)]
 
 
-@app.put("/api/pieces/{eid}", response_model=EinzelstueckOut)
-def update_piece(eid: int, data: EinzelstueckIn):
+@app.get("/api/pieces/{ref}", response_model=EinzelstueckOut)
+def get_piece(ref: str):
+    """Stück über ID oder Code: Material, Maß, Lagerort, Reservierung."""
     db = get_db()
-    e = db.get_einzelstueck(eid)
-    if not e:
-        raise HTTPException(404, "Piece not found")
+    e = _stueck_ref(db, ref)
+    material = _material_of_stock(db, e.lagerstueck_id)
+    reserviert = (db.reservierte_stuecke(material.id)
+                  if material and _lager_einstellungen()["reservierung"] else {})
+    return _piece_out(db, e, material, reserviert)
+
+
+@app.put("/api/pieces/{ref}", response_model=EinzelstueckOut)
+def update_piece(ref: str, data: EinzelstueckIn):
+    db = get_db()
+    e = _stueck_ref(db, ref)
     e.notiz = data.notiz
-    e.lagerort = data.lagerort
     e = db.save_einzelstueck(e)
-    return _piece_out(db, db.get_einzelstueck(eid), _material_of_stock(db, e.lagerstueck_id))
+    return _piece_out(db, db.get_einzelstueck(e.id), _material_of_stock(db, e.lagerstueck_id))
 
 
 # ---------------------------------------------------------------------------
@@ -1092,6 +1196,321 @@ def delete_defect(did: int):
     if not existing:
         raise HTTPException(404, "Defect not found")
     get_db().delete_defekt(did)
+
+
+# ---------------------------------------------------------------------------
+# Lager: Lagerorte, Zugang/Entnahme, Abfallkiste, Journal
+#
+# Für Programme gedacht (Scanner, Maschinen, Skripte) wie für die Oberfläche:
+# Materialien gehen über ID oder Kürzel, Stücke über ID oder Code ("AP4040-07"),
+# Lagerorte über ID oder Namen. Fehler kommen als {"detail": {"code", "message"}}.
+# ---------------------------------------------------------------------------
+
+
+class LocationIn(BaseModel):
+    name: str
+
+
+class LocationOut(BaseModel):
+    id: int
+    name: str
+    materialien: int = 0   # Materialien, deren Bestand oder Reste hier liegen
+    stuecke: int = 0       # Stücke an diesem Ort
+
+
+class LocationStockOut(BaseModel):
+    stock_id: int
+    laenge: float
+    breite: float
+    stueckzahl: int
+    ist_rest: bool
+    stuecke: list[EinzelstueckOut] = []
+
+
+class LocationMaterialOut(BaseModel):
+    material_id: int
+    name: str
+    kuerzel: str
+    typ: str
+    rolle: str             # "bestand" = Ort des Materials, "reste" = nur seine Reste
+    bestand: list[LocationStockOut] = []
+
+
+class MaterialLocationIn(BaseModel):
+    lagerort: Optional[str] = None        # Name oder ID; None = unverändert
+    lagerort_reste: Optional[str] = None  # "" = gleicher Ort wie das Material
+
+
+class ReceiveIn(BaseModel):
+    material: str          # ID oder Kürzel
+    laenge: float = Field(gt=0)
+    breite: float = 0.0
+    anzahl: int = Field(1, ge=1, le=1000)
+    ist_rest: bool = False
+
+
+class ReceiveOut(BaseModel):
+    stock_id: int
+    codes: list[str]
+    lagerort: str
+
+
+class TakeIn(BaseModel):
+    # verbraucht | verkauft | defekt | abfall (= in die Abfallkiste, falls eingeschaltet)
+    grund: str = "verbraucht"
+    notiz: str = ""
+    trotzdem: bool = False   # auch wenn ein gespeicherter Plan das Stück reserviert
+
+
+class TakeOut(BaseModel):
+    code: str
+    grund: str
+    reserviert_fuer: str = ""
+    abfallkiste: bool = False
+
+
+class WasteIn(BaseModel):
+    material: str          # ID oder Kürzel
+    laenge: float = Field(gt=0)
+    breite: float = 0.0
+    anzahl: int = Field(1, ge=1, le=1000)
+
+
+class WasteOut(BaseModel):
+    material_id: int
+    material: str
+    kuerzel: str
+    typ: str
+    laenge: float
+    breite: float
+    anzahl: int
+
+
+class JournalOut(BaseModel):
+    id: int
+    zeit: float
+    art: str
+    material_id: int
+    material: str
+    code: str
+    laenge: float
+    breite: float
+    anzahl: int
+    quelle: str
+    notiz: str
+
+
+TAKE_GRUENDE = ("verbraucht", "verkauft", "defekt", "abfall")
+
+
+def _lagerort_ref(db: Database, ref: str) -> dict:
+    ort = db.get_lagerort(ref)
+    if not ort:
+        raise _fehler(404, "lagerort_unbekannt", f"Location {ref} not found")
+    return ort
+
+
+def _material_ref(db: Database, ref: str) -> Material:
+    m = db.material_finden(ref)
+    if not m:
+        raise _fehler(404, "material_unbekannt", f"Material {ref} not found")
+    return m
+
+
+def _lagerort_fehler(e: ValueError) -> HTTPException:
+    texte = {"name_leer": "Name is empty",
+             "lagerort_vorhanden": "A location with this name already exists",
+             "letzter_lagerort": "The last location cannot be deleted",
+             "ziel_ungueltig": "Invalid target location"}
+    return _fehler(409, str(e), texte.get(str(e), str(e)))
+
+
+@app.get("/api/locations", response_model=list[LocationOut])
+def list_locations():
+    return [LocationOut(**o) for o in get_db().list_lagerorte()]
+
+
+@app.post("/api/locations", response_model=LocationOut, status_code=201)
+def create_location(data: LocationIn):
+    try:
+        return LocationOut(**get_db().lagerort_anlegen(data.name))
+    except ValueError as e:
+        raise _lagerort_fehler(e)
+
+
+@app.put("/api/locations/{ref}", response_model=LocationOut)
+def rename_location(ref: str, data: LocationIn):
+    db = get_db()
+    ort = _lagerort_ref(db, ref)
+    try:
+        db.lagerort_umbenennen(ort["id"], data.name)
+    except ValueError as e:
+        raise _lagerort_fehler(e)
+    return next(LocationOut(**o) for o in db.list_lagerorte() if o["id"] == ort["id"])
+
+
+@app.delete("/api/locations/{ref}", status_code=204)
+def delete_location(ref: str, ziel: Optional[str] = Query(None)):
+    """Lagerort löschen. Nutzen ihn noch Materialien, muss `ziel` (ID oder Name)
+    sagen, wohin sie kommen – sonst 409 mit code "lagerort_in_benutzung"."""
+    db = get_db()
+    ort = _lagerort_ref(db, ref)
+    ziel_id = _lagerort_ref(db, ziel)["id"] if ziel else 0
+    try:
+        db.lagerort_loeschen(ort["id"], ziel_id)
+    except LagerortInBenutzung as e:
+        raise _fehler(409, "lagerort_in_benutzung", "Location is still used by materials",
+                      materialien=e.materialien)
+    except ValueError as e:
+        raise _lagerort_fehler(e)
+
+
+@app.get("/api/locations/{ref}/contents", response_model=list[LocationMaterialOut])
+def location_contents(ref: str):
+    """Was an einem Lagerort liegt: Materialien mit ihren Stücken."""
+    db = get_db()
+    ort = _lagerort_ref(db, ref)
+    reservierung = _lager_einstellungen()["reservierung"]
+    out = []
+    for m, rolle in db.lagerort_inhalt(ort["name"]):
+        reserviert = db.reservierte_stuecke(m.id) if reservierung else {}
+        out.append(LocationMaterialOut(
+            material_id=m.id, name=m.name, kuerzel=m.kuerzel, typ=m.typ.value, rolle=rolle,
+            bestand=[LocationStockOut(
+                stock_id=ls.id, laenge=ls.laenge, breite=ls.breite,
+                stueckzahl=ls.stueckzahl, ist_rest=ls.ist_rest,
+                stuecke=[_piece_out(db, e, m, reserviert)
+                         for e in db.list_einzelstuecke(ls.id)])
+                for ls in db.lagerort_stuecke(m, rolle)]))
+    return out
+
+
+@app.put("/api/materials/{ref}/location", response_model=MaterialOut)
+def assign_material_location(ref: str, data: MaterialLocationIn):
+    """Material einem Lagerort zuweisen (und optional einem Ort für seine Reste)."""
+    db = get_db()
+    vorher = _material_ref(db, ref)
+    m = replace(vorher)
+    if data.lagerort is not None:
+        m.lagerort = _lagerort_ref(db, data.lagerort)["name"]
+    if data.lagerort_reste is not None:
+        m.lagerort_reste = (_lagerort_ref(db, data.lagerort_reste)["name"]
+                            if data.lagerort_reste.strip() else "")
+    m = db.save_material(m)
+    _lagerort_wechsel_buchen(db, vorher, m)
+    return _material_to_out(m)
+
+
+@app.post("/api/stock/receive", response_model=ReceiveOut, status_code=201)
+def receive_stock(data: ReceiveIn):
+    """Zugang: Stücke einbuchen (gleiche Maße werden zusammengefasst).
+    Liefert die Codes der neuen Stücke fürs Beschriften."""
+    db = get_db()
+    m = _material_ref(db, data.material)
+    breite = data.breite if m.typ == MaterialTyp.PLATTE else 0.0
+    ls = next((e for e in db.list_lagerstuecke(m.id)
+               if abs(e.laenge - data.laenge) < 0.1 and abs(e.breite - breite) < 0.1
+               and e.ist_rest == data.ist_rest), None) or Lagerstueck(
+        material_id=m.id, laenge=data.laenge, breite=breite, stueckzahl=0,
+        ist_rest=data.ist_rest)
+    vorher = set(db.einzelstueck_nrs_for_lagerstueck(ls.id)) if ls.id else set()
+    ls.stueckzahl += data.anzahl
+    ls = db.save_lagerstueck(ls)
+    neu = sorted(set(db.einzelstueck_nrs_for_lagerstueck(ls.id)) - vorher)
+    _zugang_buchen(db, ls, neu)
+    return ReceiveOut(stock_id=ls.id, codes=[stueck_code(m.kuerzel, nr) for nr in neu],
+                      lagerort=db.stueck_lagerort(m, ls))
+
+
+@app.post("/api/pieces/{ref}/take", response_model=TakeOut)
+def take_piece(ref: str, data: TakeIn):
+    """Ein Stück aus dem Lager nehmen. Reserviert es ein gespeicherter Plan, gibt es
+    409 "stueck_reserviert" – mit trotzdem=true wird es dennoch entnommen."""
+    if data.grund not in TAKE_GRUENDE:
+        raise _fehler(400, "grund_ungueltig", f"grund must be one of {', '.join(TAKE_GRUENDE)}")
+    db = get_db()
+    e = _stueck_ref(db, ref)
+    ls = db.get_lagerstueck(e.lagerstueck_id)
+    m = db.get_material(ls.material_id)
+    code = stueck_code(m.kuerzel, e.nr)
+    projekt = (db.reservierte_stuecke(m.id).get((ls.id, e.nr), "")
+               if _lager_einstellungen()["reservierung"] else "")
+    if projekt and not data.trotzdem:
+        raise _fehler(409, "stueck_reserviert", f"{code} is reserved by “{projekt}”",
+                      projekt=projekt)
+    notiz = data.notiz.strip()
+    if projekt:
+        notiz = (notiz + " · " if notiz else "") + f"reserviert: {projekt}"
+    db.lager_verbrauchen(ls.id, stueck_nr=e.nr)
+    db.journal("entnahme", m.id, code, ls.laenge, ls.breite, 1,
+               notiz=f"{data.grund}" + (f" · {notiz}" if notiz else ""))
+    in_kiste = data.grund == "abfall" and _lager_einstellungen()["abfall_aufheben"]
+    if in_kiste:
+        db.abfall_aendern(m.id, ls.laenge, ls.breite, 1, commit=False)
+        db.journal("abfall_ein", m.id, "", ls.laenge, ls.breite, 1)
+    db.conn.commit()
+    return TakeOut(code=code, grund=data.grund, reserviert_fuer=projekt, abfallkiste=in_kiste)
+
+
+@app.get("/api/waste", response_model=list[WasteOut])
+def list_waste(material: Optional[str] = Query(None)):
+    db = get_db()
+    mid = _material_ref(db, material).id if material else None
+    return [WasteOut(**w) for w in db.abfall_liste(mid)]
+
+
+@app.post("/api/waste", response_model=list[WasteOut], status_code=201)
+def add_waste(data: WasteIn):
+    """Abschnitte in die Abfallkiste legen (ohne Code, nur Material + Maß + Anzahl)."""
+    db = get_db()
+    m = _material_ref(db, data.material)
+    breite = data.breite if m.typ == MaterialTyp.PLATTE else 0.0
+    db.abfall_aendern(m.id, data.laenge, breite, data.anzahl, commit=False)
+    db.journal("abfall_ein", m.id, "", data.laenge, breite, data.anzahl)
+    db.conn.commit()
+    return [WasteOut(**w) for w in db.abfall_liste(m.id)]
+
+
+@app.post("/api/waste/take", response_model=list[WasteOut])
+def take_waste(data: WasteIn):
+    """Abschnitte aus der Abfallkiste nehmen."""
+    db = get_db()
+    m = _material_ref(db, data.material)
+    breite = data.breite if m.typ == MaterialTyp.PLATTE else 0.0
+    vorhanden = next((w["anzahl"] for w in db.abfall_liste(m.id)
+                      if _mass_schluessel(w["laenge"], w["breite"])
+                      == _mass_schluessel(data.laenge, breite)), 0)
+    if vorhanden < data.anzahl:
+        raise _fehler(409, "abfall_zu_wenig", f"Only {vorhanden} piece(s) of this size in the bin",
+                      vorhanden=vorhanden)
+    db.abfall_aendern(m.id, data.laenge, breite, -data.anzahl, commit=False)
+    db.journal("abfall_ab", m.id, "", data.laenge, breite, data.anzahl)
+    db.conn.commit()
+    return [WasteOut(**w) for w in db.abfall_liste(m.id)]
+
+
+@app.delete("/api/waste", status_code=204)
+def empty_waste(material: Optional[str] = Query(None)):
+    """Abfallkiste leeren – ganz oder nur für ein Material."""
+    db = get_db()
+    m = _material_ref(db, material) if material else None
+    if m:
+        n = db.abfall_leeren(m.id)
+        db.journal("abfall_leer", m.id, "", 0, 0, n)
+    else:
+        for mid in {w["material_id"] for w in db.abfall_liste()}:
+            n = db.abfall_leeren(mid)
+            db.journal("abfall_leer", mid, "", 0, 0, n)
+    db.conn.commit()
+
+
+@app.get("/api/journal", response_model=list[JournalOut])
+def stock_journal(material: Optional[str] = Query(None), seit: float = Query(0.0),
+                  limit: int = Query(200)):
+    """Lagerbuchungen, neueste zuerst. `seit` = Unix-Zeit."""
+    db = get_db()
+    mid = _material_ref(db, material).id if material else None
+    return [JournalOut(**j) for j in db.journal_liste(mid, seit, limit)]
 
 
 # ---------------------------------------------------------------------------
@@ -2115,26 +2534,28 @@ def _plan_to_out(plan: GespeicherterPlan) -> OptimizeResult:
 
     # Noch nicht angefangene Bretter: gibt es genau diese Stücke noch im Lager?
     nrs_map = db.einzelstueck_nrs_for_material(plan.material_id)
+    kuerzel = material.kuerzel if material else ""
     lager_fehlt = False
+    fehlende_stuecke: list[str] = []
     for b in plan.bretter:
         if b.verbraucht:
             continue
         nrs = nrs_map.get(b.lagerstueck_id)
         if not nrs or (b.stueck_nr and b.stueck_nr not in nrs):
             lager_fehlt = True
+            if b.stueck_nr:
+                fehlende_stuecke.append(stueck_code(kuerzel, b.stueck_nr))
 
-    kuerzel = material.kuerzel if material else ""
     mat_ort = material.lagerort if material else ""
+    reste_ort = (material.lagerort_reste or mat_ort) if material else ""
 
     def stueck_ort(lagerstueck_id: int, nr: int) -> str:
-        row = db.conn.execute(
-            "SELECT lagerort FROM einzelstueck WHERE lagerstueck_id=? AND nr=?",
-            (lagerstueck_id, nr)).fetchone()
-        return (row["lagerort"] if row else "") or mat_ort
+        ls = db.get_lagerstueck(lagerstueck_id)
+        return reste_ort if ls and ls.ist_rest else mat_ort
 
     def brett_ort(b: PlanBrett) -> str:
         if b.verbraucht:
-            return (b.verbrauchtes_stueck or {}).get("lagerort") or mat_ort
+            return reste_ort if (b.verbrauchtes_stueck or {}).get("ist_rest") else mat_ort
         return stueck_ort(b.lagerstueck_id, b.stueck_nr)
 
     def reste(b: PlanBrett) -> list[RestStueckOut]:
@@ -2181,6 +2602,8 @@ def _plan_to_out(plan: GespeicherterPlan) -> OptimizeResult:
                 ist_rest=(b.lagerstueck_id in rest_zeilen
                           or bool((b.verbrauchtes_stueck or {}).get("ist_rest"))),
                 reste_stuecke=reste(b),
+                reste_ziel=[_rest_ziel(material, r[0], r[1] if len(r) > 1 else 0.0)
+                            if material and r else "weg" for r in b.reste],
             )
             for b in plan.bretter],
         fehlende_teile=plan.fehlende_teile,
@@ -2192,6 +2615,7 @@ def _plan_to_out(plan: GespeicherterPlan) -> OptimizeResult:
         veraltet=(projekt is None or material is None or
                   _eingabe_hash(projekt, material, plan.kerf) != plan.eingabe_hash),
         lager_fehlt=lager_fehlt,
+        fehlende_stuecke=fehlende_stuecke,
         fuellteile=plan.fuellteile,
         fuell_alle_reste=plan.fuell_alle_reste,
         max_pro_stange=plan.max_pro_stange,
@@ -2219,12 +2643,14 @@ def _brett_abgleichen(db: Database, plan: GespeicherterPlan, brett: PlanBrett,
         prev_rest_ids=[r[0] for r in brett.rest_ids],
         prev_rest_nrs=[r[1] for r in brett.rest_ids],
         stueck_nr=brett.stueck_nr, prev_consumed_piece=brett.verbrauchtes_stueck,
+        prev_abfall=brett.abfall,
     ))
     alte_id = brett.lagerstueck_id
     brett.verbraucht = res["consumed"]
     brett.rest_ids = [[rid, nr] for rid, nr in zip(res["rest_ids"], res["rest_nrs"])]
     brett.lagerstueck_id = res["lagerstueck_id"]
     brett.verbrauchtes_stueck = res["consumed_piece"]
+    brett.abfall = res["abfall"]
     db.save_brett_zustand(brett)
     if brett.lagerstueck_id != alte_id:
         # Zurückgebucht in eine neue Lagerzeile: unbenutzte Bretter aller Pläne mitziehen
@@ -2367,19 +2793,35 @@ def _mark_plan_core(db: Database, req: MarkPlanRequest) -> dict:
     consumed = req.prev_consumed
     consumed_piece = req.prev_consumed_piece
     lagerstueck_id = req.lagerstueck_id
-    # Zuvor gebuchte Reste immer entfernen und ggf. neu buchen
+    material = db.get_material(req.material_id)
+    kuerzel = material.kuerzel if material else ""
+    # Zuvor gebuchte Reste immer entfernen und ggf. neu buchen. Fürs Journal
+    # merken, was vorher da war – gebucht wird nur der Unterschied.
+    reste_vorher: list[tuple[float, float, str]] = []
     for i, rid in enumerate(req.prev_rest_ids):
         nr = req.prev_rest_nrs[i] if i < len(req.prev_rest_nrs) else 0
+        ls = db.get_lagerstueck(rid)
+        if ls:
+            reste_vorher.append((ls.laenge, ls.breite, stueck_code(kuerzel, nr)))
         db.lager_verbrauchen(rid, stueck_nr=nr)
+    for l, b in req.prev_abfall:
+        db.abfall_aendern(req.material_id, l, b, -1, commit=False)
     rest_ids: list[int] = []
     rest_nrs: list[int] = []
+    abfall: list[list[float]] = []
+    reste_nachher: list[tuple[float, float, str]] = []
+    plan_stueck = stueck_code(kuerzel, req.stueck_nr)
 
     n_marked = len(req.marked_laengen)
     if n_marked > 0:
         if not consumed:
+            ls = db.get_lagerstueck(req.lagerstueck_id)
             consumed_piece = db.lager_verbrauchen(req.lagerstueck_id,
                                                   stueck_nr=req.stueck_nr)
             consumed = True
+            if ls:
+                db.journal("plan_verbrauch", req.material_id, plan_stueck,
+                           ls.laenge, ls.breite, 1)
         # Der größte Rest erbt den Code des angesägten Stücks – dessen Etikett
         # klebt ja noch drauf. Weitere Reste bekommen freie Nummern.
         erbe_nr = (consumed_piece or {}).get("nr", 0) or req.stueck_nr
@@ -2402,16 +2844,80 @@ def _mark_plan_core(db: Database, req: MarkPlanRequest) -> dict:
             if r:
                 rest_ids.append(r[0].id)
                 rest_nrs.append(r[1])
+                reste_nachher.append((r[0].laenge, r[0].breite, stueck_code(kuerzel, r[1])))
                 if r[1] == erbe_nr:
                     erbe_nr = 0
+            elif material and _rest_ziel(material, laenge, breite) == "abfallkiste":
+                db.abfall_aendern(req.material_id, laenge, breite, 1, commit=False)
+                abfall.append([laenge, breite])
     elif consumed:
         # Alle Markierungen entfernt → Original-Lagerstück zurückbuchen
         lagerstueck_id = _lagerstueck_zurueckbuchen(db, req)
         consumed = False
         consumed_piece = None
+        ls = db.get_lagerstueck(lagerstueck_id)
+        if ls:
+            db.journal("plan_zurueck", req.material_id, plan_stueck, ls.laenge, ls.breite, 1)
 
+    _reste_journal(db, req.material_id, reste_vorher, reste_nachher)
+    _abfall_journal(db, req.material_id, req.prev_abfall, abfall)
+    db.conn.commit()
     return {"consumed": consumed, "rest_ids": rest_ids, "rest_nrs": rest_nrs,
-            "lagerstueck_id": lagerstueck_id, "consumed_piece": consumed_piece}
+            "lagerstueck_id": lagerstueck_id, "consumed_piece": consumed_piece,
+            "abfall": abfall}
+
+
+def _rest_ziel(material: Material, laenge: float, breite: float = 0.0) -> str:
+    """Wohin ein Abschnitt gehört: "lager", "abfallkiste" oder "weg".
+
+    Gleiche Regel wie db.rest_einbuchen: ab dem Mindest-Restmaß ins Lager. Darunter
+    in die Abfallkiste, wenn sie eingeschaltet ist und das Stück die Untergrenze
+    erreicht (Platten: die schmalere Seite).
+    """
+    if material.typ == MaterialTyp.STANGE:
+        if laenge >= material.rest_min_laenge:
+            return "lager"
+        mass = laenge
+    else:
+        if laenge >= material.rest_min_laenge and breite >= material.rest_min_breite:
+            return "lager"
+        mass = min(laenge, breite)
+    e = _lager_einstellungen()
+    if e["abfall_aufheben"] and mass > 0 and mass >= e["abfall_untergrenze"]:
+        return "abfallkiste"
+    return "weg"
+
+
+def _mass_schluessel(l: float, b: float) -> tuple[float, float]:
+    return round(l, 1), round(b or 0.0, 1)
+
+
+def _reste_journal(db: Database, mid: int, vorher: list, nachher: list):
+    """Nur geänderte Reste buchen – das Neu-Einbuchen beim Abhaken ist sonst Rauschen."""
+    rest = [_mass_schluessel(l, b) for l, b, _ in vorher]
+    for l, b, code in nachher:
+        k = _mass_schluessel(l, b)
+        if k in rest:
+            rest.remove(k)
+        else:
+            db.journal("rest_ein", mid, code, l, b, 1)
+    for l, b, code in vorher:
+        k = _mass_schluessel(l, b)
+        if k in rest:
+            rest.remove(k)
+            db.journal("rest_zurueck", mid, code, l, b, 1)
+
+
+def _abfall_journal(db: Database, mid: int, vorher: list, nachher: list):
+    alt = [_mass_schluessel(l, b) for l, b in vorher]
+    for l, b in nachher:
+        k = _mass_schluessel(l, b)
+        if k in alt:
+            alt.remove(k)
+        else:
+            db.journal("abfall_ein", mid, "", l, b, 1)
+    for l, b in alt:
+        db.journal("abfall_zurueck", mid, "", l, b, 1)
 
 
 def _reste_1d_mit_defekten(req: MarkPlanRequest) -> list[float]:
@@ -2465,6 +2971,14 @@ def _lagerstueck_zurueckbuchen(db: Database, req: MarkPlanRequest) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _pdf_rest_ziel(material_id: int):
+    """Wohin die Abschnitte im PDF gehören; ohne Material keine Angabe."""
+    material = get_db().get_material(material_id) if material_id else None
+    if material is None:
+        return None
+    return lambda laenge, breite: _rest_ziel(material, laenge, breite)
+
+
 @app.post("/api/pdf")
 def generate_pdf(req: PdfRequest):
     ergebnis = _out_to_ergebnis(req.ergebnis)
@@ -2485,6 +2999,7 @@ def generate_pdf(req: PdfRequest):
             nach_projekt=req.nach_projekt,
             material_bild=(get_db().get_material_image(req.material_id) or b""
                            if req.material_id else b""),
+            rest_ziel=_pdf_rest_ziel(req.material_id),
         )
         return FileResponse(
             tmp_path,
@@ -2818,14 +3333,17 @@ WEB_EXTRA_TRANSLATIONS = {
     "bar.n_parts": {"de": "{n} Teile", "en": "{n} parts", "fr": "{n} pièces", "it": "{n} pezzi"},
     "bar.left": {"de": "übrig {menge}", "en": "{menge} left", "fr": "reste {menge}", "it": "avanzo {menge}"},
     "bar.to_stock": {"de": "zurück ins Lager", "en": "back to stock", "fr": "retour en stock", "it": "torna in magazzino"},
-    "bar.to_waste": {"de": "Abfall", "en": "waste", "fr": "déchet", "it": "scarto"},
+    "bar.to_waste": {"de": "wegwerfen", "en": "throw away", "fr": "à jeter", "it": "da buttare"},
+    "bar.to_box": {"de": "in die Abfallkiste", "en": "into the offcut bin", "fr": "dans le bac à chutes", "it": "nella cassa degli sfridi"},
     "bar.no_left": {"de": "kein Rest", "en": "no offcut", "fr": "aucune chute", "it": "nessun ritaglio"},
     "plate.title": {"de": "Platte {n}", "en": "Panel {n}", "fr": "Panneau {n}", "it": "Pannello {n}"},
     "plate.whole": {"de": "ganze Platte", "en": "full panel", "fr": "panneau entier", "it": "pannello intero"},
     "plate.used": {"de": "{p} % genutzt", "en": "{p} % used", "fr": "{p} % utilisé", "it": "{p} % usato"},
     "plate.rest_to_stock": {"de": "Rest {masse} → zurück ins Lager", "en": "offcut {masse} → back to stock", "fr": "chute {masse} → retour en stock", "it": "ritaglio {masse} → torna in magazzino"},
-    "plate.small_one": {"de": "1 kleines Stück → Abfall", "en": "1 small piece → waste", "fr": "1 petite chute → déchet", "it": "1 pezzo piccolo → scarto"},
-    "plate.small_n": {"de": "{n} kleine Stücke → Abfall", "en": "{n} small pieces → waste", "fr": "{n} petites chutes → déchet", "it": "{n} pezzi piccoli → scarto"},
+    "plate.small_one": {"de": "1 kleines Stück → wegwerfen", "en": "1 small piece → throw away", "fr": "1 petite chute → à jeter", "it": "1 pezzo piccolo → da buttare"},
+    "plate.small_n": {"de": "{n} kleine Stücke → wegwerfen", "en": "{n} small pieces → throw away", "fr": "{n} petites chutes → à jeter", "it": "{n} pezzi piccoli → da buttare"},
+    "plate.box_one": {"de": "1 kleines Stück → Abfallkiste", "en": "1 small piece → offcut bin", "fr": "1 petite chute → bac à chutes", "it": "1 pezzo piccolo → cassa sfridi"},
+    "plate.box_n": {"de": "{n} kleine Stücke → Abfallkiste", "en": "{n} small pieces → offcut bin", "fr": "{n} petites chutes → bac à chutes", "it": "{n} pezzi piccoli → cassa sfridi"},
     "sammel.select_projects": {"de": "Bitte mindestens ein Projekt auswählen.", "en": "Please select at least one project.", "fr": "Veuillez choisir au moins un projet.", "it": "Seleziona almeno un progetto."},
     "sammel.confirm_replace": {
         "de": "Die Einzelpläne von {names} sind noch nicht angefangen und werden durch den Sammelplan ersetzt.",
@@ -2890,6 +3408,70 @@ WEB_EXTRA_TRANSLATIONS = {
     },
     "sammel.badge": {"de": "Sammelplan", "en": "Combined plan", "fr": "Plan groupé", "it": "Piano combinato"},
     "sammel.open": {"de": "Sammelplan öffnen", "en": "Open combined plan", "fr": "Ouvrir le plan groupé", "it": "Apri piano combinato"},
+    # ---- Lager: Reiter, Lagerorte, Abfallkiste, Entnahme ----
+    "tab.material": {"de": "Material", "en": "Material", "fr": "Matériau", "it": "Materiale"},
+    "tab.stock": {"de": "Lager", "en": "Stock", "fr": "Stock", "it": "Magazzino"},
+    "loc.title": {"de": "Lagerorte", "en": "Locations", "fr": "Emplacements", "it": "Ubicazioni"},
+    "loc.name": {"de": "Name", "en": "Name", "fr": "Nom", "it": "Nome"},
+    "loc.materials": {"de": "Materialien", "en": "Materials", "fr": "Matériaux", "it": "Materiali"},
+    "loc.pieces": {"de": "Stücke", "en": "Pieces", "fr": "Pièces", "it": "Pezzi"},
+    "loc.contents": {"de": "Inhalt", "en": "Contents", "fr": "Contenu", "it": "Contenuto"},
+    "loc.rename_btn": {"de": "Umbenennen", "en": "Rename", "fr": "Renommer", "it": "Rinomina"},
+    "loc.new": {"de": "Neuer Lagerort", "en": "New location", "fr": "Nouvel emplacement", "it": "Nuova ubicazione"},
+    "loc.new_option": {"de": "+ Neuer Lagerort …", "en": "+ New location …", "fr": "+ Nouvel emplacement …", "it": "+ Nuova ubicazione …"},
+    "loc.new_placeholder": {"de": "Name des neuen Lagerorts", "en": "Name of the new location", "fr": "Nom du nouvel emplacement", "it": "Nome della nuova ubicazione"},
+    "loc.rename": {"de": "Lagerort umbenennen", "en": "Rename location", "fr": "Renommer l’emplacement", "it": "Rinomina ubicazione"},
+    "loc.select": {"de": "Bitte einen Lagerort wählen.", "en": "Please select a location.", "fr": "Veuillez choisir un emplacement.", "it": "Seleziona un’ubicazione."},
+    "loc.empty": {"de": "An diesem Lagerort liegt nichts.", "en": "Nothing is stored at this location.", "fr": "Rien n’est stocké à cet emplacement.", "it": "In questa ubicazione non c’è nulla."},
+    "loc.rests_only": {"de": "nur Reste", "en": "offcuts only", "fr": "chutes seulement", "it": "solo ritagli"},
+    "loc.to_material": {"de": "Zum Material", "en": "Go to material", "fr": "Vers le matériau", "it": "Al materiale"},
+    "loc.piece_hint": {"de": "Klicken: Notiz oder entnehmen", "en": "Click: note or take out", "fr": "Cliquer : note ou retirer", "it": "Clic: nota o preleva"},
+    "loc.delete_confirm": {"de": "Lagerort „{name}“ löschen?", "en": "Delete location “{name}”?", "fr": "Supprimer l’emplacement « {name} » ?", "it": "Eliminare l’ubicazione “{name}”?"},
+    "loc.delete_title": {"de": "„{name}“ löschen", "en": "Delete “{name}”", "fr": "Supprimer « {name} »", "it": "Elimina “{name}”"},
+    "loc.move_to": {"de": "Materialien verschieben nach", "en": "Move materials to", "fr": "Déplacer les matériaux vers", "it": "Sposta i materiali in"},
+    "loc.in_use": {"de": "Hier liegt noch: {list}. Diese Materialien kommen an den gewählten Ort.", "en": "Still stored here: {list}. These materials move to the chosen location.", "fr": "Encore stocké ici : {list}. Ces matériaux vont à l’emplacement choisi.", "it": "Qui c’è ancora: {list}. Questi materiali vanno nell’ubicazione scelta."},
+    "loc.waste_box": {"de": "Abfallkiste", "en": "Offcut bin", "fr": "Bac à chutes", "it": "Cassa sfridi"},
+    "loc.waste_empty": {"de": "Die Abfallkiste ist leer.", "en": "The offcut bin is empty.", "fr": "Le bac à chutes est vide.", "it": "La cassa sfridi è vuota."},
+    "loc.waste_off_hint": {"de": "Die Abfallkiste ist ausgeschaltet – neue Abschnitte werden weggeworfen (Einstellungen > Lager).", "en": "The offcut bin is switched off – new offcuts are thrown away (Settings > Stock).", "fr": "Le bac à chutes est désactivé – les nouvelles chutes sont jetées (Paramètres > Stock).", "it": "La cassa sfridi è disattivata – i nuovi ritagli vengono buttati (Impostazioni > Magazzino)."},
+    "loc.waste_take": {"de": "1 entnehmen", "en": "Take 1", "fr": "En retirer 1", "it": "Preleva 1"},
+    "loc.waste_clear": {"de": "Kiste leeren", "en": "Empty bin", "fr": "Vider le bac", "it": "Svuota cassa"},
+    "loc.waste_clear_mat": {"de": "Wegwerfen", "en": "Throw away", "fr": "Jeter", "it": "Butta"},
+    "loc.waste_clear_confirm": {"de": "Die ganze Abfallkiste leeren?", "en": "Empty the whole offcut bin?", "fr": "Vider tout le bac à chutes ?", "it": "Svuotare tutta la cassa sfridi?"},
+    "loc.waste_clear_mat_confirm": {"de": "Alle Abschnitte von {name} wegwerfen?", "en": "Throw away all offcuts of {name}?", "fr": "Jeter toutes les chutes de {name} ?", "it": "Buttare tutti i ritagli di {name}?"},
+    "stock.rests_at": {"de": "Reste: {ort}", "en": "Offcuts: {ort}", "fr": "Chutes : {ort}", "it": "Ritagli: {ort}"},
+    "stock.waste_hint": {"de": "+ {n} in der Abfallkiste", "en": "+ {n} in the offcut bin", "fr": "+ {n} dans le bac à chutes", "it": "+ {n} nella cassa sfridi"},
+    "mat.location_rest_same": {"de": "(gleicher Ort)", "en": "(same location)", "fr": "(même emplacement)", "it": "(stessa ubicazione)"},
+    "piece.take": {"de": "Entnehmen …", "en": "Take out …", "fr": "Retirer …", "it": "Preleva …"},
+    "piece.take_btn": {"de": "Entnehmen", "en": "Take out", "fr": "Retirer", "it": "Preleva"},
+    "piece.take_hint": {"de": "Nimmt das Stück aus dem Lager (wird im Lagerjournal vermerkt).", "en": "Removes the piece from stock (recorded in the stock journal).", "fr": "Retire la pièce du stock (noté dans le journal).", "it": "Toglie il pezzo dal magazzino (registrato nel giornale)."},
+    "piece.take_title": {"de": "{code} entnehmen", "en": "Take out {code}", "fr": "Retirer {code}", "it": "Preleva {code}"},
+    "piece.take_reason": {"de": "Grund", "en": "Reason", "fr": "Motif", "it": "Motivo"},
+    "piece.take_reserved": {
+        "de": "{code} ist für „{projekt}“ reserviert.\nTrotzdem entnehmen? Der Plan von „{projekt}“ muss danach neu optimiert werden.",
+        "en": "{code} is reserved for “{projekt}”.\nTake it out anyway? The plan of “{projekt}” will need to be optimized again.",
+        "fr": "{code} est réservé pour « {projekt} ».\nLe retirer quand même ? Le plan de « {projekt} » devra être réoptimisé.",
+        "it": "{code} è riservato per “{projekt}”.\nPrelevarlo comunque? Il piano di “{projekt}” andrà ottimizzato di nuovo.",
+    },
+    "piece.taken": {"de": "{code} entnommen", "en": "{code} taken out", "fr": "{code} retiré", "it": "{code} prelevato"},
+    "piece.taken_box": {"de": "{code} liegt jetzt in der Abfallkiste", "en": "{code} is now in the offcut bin", "fr": "{code} est maintenant dans le bac à chutes", "it": "{code} ora è nella cassa sfridi"},
+    "take.verbraucht": {"de": "Verbraucht", "en": "Used", "fr": "Utilisé", "it": "Usato"},
+    "take.verkauft": {"de": "Verkauft / abgegeben", "en": "Sold / given away", "fr": "Vendu / donné", "it": "Venduto / ceduto"},
+    "take.defekt": {"de": "Defekt, entsorgt", "en": "Defective, disposed of", "fr": "Défectueux, jeté", "it": "Difettoso, smaltito"},
+    "take.abfall": {"de": "In die Abfallkiste", "en": "Into the offcut bin", "fr": "Dans le bac à chutes", "it": "Nella cassa sfridi"},
+    "set.waste_keep": {"de": "Abfallstücke in der Abfallkiste aufheben:", "en": "Keep offcuts in the offcut bin:", "fr": "Garder les chutes dans le bac à chutes :", "it": "Conserva gli sfridi nella cassa:"},
+    "set.waste_keep_hint": {
+        "de": "Abschnitte unter dem Mindest-Restmaß werden nicht weggeworfen, sondern ohne Code in der Abfallkiste geführt (nur zur Übersicht, die Optimierung nutzt sie nicht).",
+        "en": "Offcuts below the minimum remnant size are not thrown away but listed without a code in the offcut bin (overview only, optimization does not use them).",
+        "fr": "Les chutes sous la taille minimale ne sont pas jetées mais listées sans code dans le bac à chutes (aperçu seulement, l’optimisation ne les utilise pas).",
+        "it": "Gli sfridi sotto la misura minima non vengono buttati ma elencati senza codice nella cassa (solo panoramica, l’ottimizzazione non li usa).",
+    },
+    "set.waste_min": {"de": "Abfall erst ab ({unit}):", "en": "Only offcuts from ({unit}):", "fr": "Chutes seulement à partir de ({unit}) :", "it": "Sfridi solo da ({unit}):"},
+    "plan.stock_missing_codes": {"de": "Nicht mehr im Lager: {codes} – ggf. neu optimieren", "en": "No longer in stock: {codes} – consider optimizing again", "fr": "Plus en stock : {codes} – réoptimiser si nécessaire", "it": "Non più in magazzino: {codes} – eventualmente ottimizzare di nuovo"},
+    "err.lagerort_vorhanden": {"de": "Diesen Lagerort gibt es schon.", "en": "This location already exists.", "fr": "Cet emplacement existe déjà.", "it": "Questa ubicazione esiste già."},
+    "err.letzter_lagerort": {"de": "Der letzte Lagerort kann nicht gelöscht werden.", "en": "The last location cannot be deleted.", "fr": "Le dernier emplacement ne peut pas être supprimé.", "it": "L’ultima ubicazione non può essere eliminata."},
+    "err.name_leer": {"de": "Bitte einen Namen eingeben.", "en": "Please enter a name.", "fr": "Veuillez saisir un nom.", "it": "Inserisci un nome."},
+    "err.stueck_unbekannt": {"de": "Stück nicht gefunden.", "en": "Piece not found.", "fr": "Pièce introuvable.", "it": "Pezzo non trovato."},
+    "err.abfall_zu_wenig": {"de": "Davon liegen nur {vorhanden} in der Abfallkiste.", "en": "Only {vorhanden} of these are in the offcut bin.", "fr": "Il n’y en a que {vorhanden} dans le bac à chutes.", "it": "Nella cassa ce ne sono solo {vorhanden}."},
     "upd.download": {"de": "Neue Version herunterladen", "en": "Download new version", "fr": "Télécharger la nouvelle version", "it": "Scarica la nuova versione"},
 }
 

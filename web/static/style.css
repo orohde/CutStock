@@ -1010,3 +1010,89 @@ td.expand-toggle:hover { background: rgba(255,255,255,0.05); }
 .fill-sug-rest { color: var(--sapContent_LabelColor, #556b82); font-size: 0.8125rem; }
 .fill-sug-badge { color: var(--sapPositiveColor, #256f3a); font-weight: 600; font-size: 0.8125rem; }
 .fill-sug-actions { display: flex; gap: 0.5rem; }
+
+/* Lager: Lagerort des Materials über dem Bestand, Inhalt eines Lagerorts */
+.panel-subinfo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: -0.25rem 0 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--sapContent_LabelColor, #556b82);
+}
+
+.panel-subinfo:empty {
+  display: none;
+}
+
+.waste-hint {
+  color: var(--sapCriticalTextColor, #aa5808);
+}
+
+.loc-row-waste .fd-table__cell:first-child {
+  font-style: italic;
+}
+
+.loc-group {
+  margin-bottom: 1rem;
+}
+
+.loc-group-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--sapList_BorderColor, #d9d9d9);
+  font-weight: 600;
+}
+
+.loc-group-head .loc-role {
+  font-weight: 400;
+  font-size: 0.8125rem;
+  color: var(--sapCriticalTextColor, #aa5808);
+}
+
+.loc-group-head .fd-button {
+  margin-left: auto;
+}
+
+.loc-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  padding: 0.375rem 0 0.375rem 1rem;
+  border-bottom: 1px solid var(--sapList_BorderColor, #eeeeee);
+  font-size: 0.875rem;
+}
+
+.loc-line .loc-dim {
+  min-width: 9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.loc-line .loc-codes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  color: var(--sapContent_LabelColor, #556b82);
+}
+
+.loc-line .loc-codes .piece-code {
+  cursor: pointer;
+  color: var(--sapLinkColor, #0064d9);
+}
+
+.loc-line .fd-button {
+  margin-left: auto;
+}
+
+.piece-take {
+  margin-top: 0.75rem;
+}
+
+.piece-take .fd-button {
+  width: auto;
+  align-self: flex-start;
+}

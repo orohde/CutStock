@@ -20,8 +20,10 @@ CutStock gibt es in zwei Varianten, die denselben Optimierungskern teilen:
 - **Maserungsrichtung** -- beruecksichtigt Holzmaserung pro Material und Teil (laengs, quer oder egal)
 - **Besaeumung** -- konfigurierbarer Rand fuer beschaedigte Plattenkanten
 - **Defekte markieren** -- Defektstellen (Astloecher, Risse, Verfaerbungen) pro Einzelstueck erfassen; der Optimierer umgeht sie automatisch
-- **Stueck-Codes und Lagerorte** -- jedes Stueck hat einen eindeutigen Code je Material (z. B. `AP40-07`, Kuerzel frei waehlbar) und einen Lagerort (Regal, Restekiste, ...); Etiketten je Stueck mit Code und Lagerort; frei gewordene Nummern werden nach einer einstellbaren Sperrfrist wieder vergeben
-- **Lagerverwaltung** -- Bestand verfolgen; beim Saegen wird genau das Stueck aus dem Plan ausgetragen, verwertbare Reste werden automatisch eingebucht, als Rest markiert und an den Reste-Lagerort gelegt; der groesste Rest behaelt den Code seines Bretts
+- **Stueck-Codes** -- jedes Stueck hat einen eindeutigen Code je Material (z. B. `AP40-07`, Kuerzel frei waehlbar); Etiketten je Stueck mit Code und Lagerort; frei gewordene Nummern werden nach einer einstellbaren Sperrfrist wieder vergeben
+- **Lagerorte** -- eigener Reiter "Lager": feste Liste von Lagerorten, jedes Material liegt an einem Ort (Reste optional an einem eigenen), auf einen Blick sehen was wo liegt, Etiketten je Lagerort, Stuecke mit Grund entnehmen
+- **Lagerverwaltung** -- Bestand verfolgen; beim Saegen wird genau das Stueck aus dem Plan ausgetragen, verwertbare Reste werden automatisch eingebucht und an den Reste-Lagerort gelegt; der groesste Rest behaelt den Code seines Bretts; jede Buchung landet im Lagerjournal
+- **Abfallkiste** -- auf Wunsch werden Abschnitte unter dem Mindest-Restmass (ab einer Untergrenze) ohne Code in der Abfallkiste gefuehrt statt weggeworfen; Plan und PDF sagen bei jedem Abschnitt "ins Lager", "in die Abfallkiste" oder "wegwerfen"
 - **Gespeicherte Schnittplaene** -- jede Berechnung wird gespeichert; beim Wechsel zwischen Projekten bleibt der Stand erhalten (was schon gesaegt ist). Neu berechnen behaelt angefangene Bretter, Hinweis wenn sich Teile oder Lager geaendert haben, "Projekt neu starten" zum erneuten Saegen
 - **Lager-Reservierung** -- gespeicherte Plaene reservieren ihre noch nicht angefangenen Stuecke, andere Projekte verplanen sie nicht (abschaltbar); "Plan verwerfen" gibt sie frei
 - **Reste zuerst** -- auf Wunsch erst nur Reste verplanen, dann ganze Stangen/Platten
@@ -42,7 +44,7 @@ CutStock gibt es in zwei Varianten, die denselben Optimierungskern teilen:
 - **Tastenkuerzel** -- komplett per Tastatur bedienbar, in der Web-App frei belegbar
 - **Plattformuebergreifend** -- macOS (.app), Windows (.exe), Docker
 - **Materialbedarf** -- wenn der Lagerbestand nicht reicht, wird eine Einkaufsliste angezeigt; per Klick direkt ins Lager uebernehmen
-- **REST-API** -- vollstaendige API fuer externen Zugriff (Automatisierung, Skripte, Integrationen); optional per API-Key (Bearer-Token) geschuetzt
+- **REST-API** -- jede Funktion ist per API steuerbar (Automatisierung, Skripte, Scanner, Maschinen); Stuecke ueber ihren Code, Materialien ueber ihr Kuerzel; optional per API-Key (Bearer-Token) geschuetzt
 - **iCloud-Sync** -- Desktop-Datenbank und Einstellungen synchronisieren automatisch zwischen Macs
 
 ## Web-App (Docker)
@@ -109,65 +111,21 @@ mit visuellen Schnittplaenen, PDF-Export und Einstellungen. Die Tastenkuerzel
 stehen auf der Einstellungen-Seite und lassen sich dort umbelegen (Taste
 anklicken, neue Taste druecken).
 
-## Screenshots
+## Handbuch
 
-### Material & Lager
+Das Handbuch ist nach den Reitern der Oberflaeche aufgeteilt: **[docs/handbuch](docs/handbuch/README.md)**
 
-Materialien (Platten, Stangen) mit Dicke, Querschnitt, Maserungsrichtung, Besaeumung, Rest-Schwellen, Kuerzel und Lagerort verwalten. Der Lagerbestand zeigt die Stuecke des gewaehlten Materials -- aufklappbar mit Stueck-Code, Lagerort, Notiz und Defekt-Badges. Reste sind markiert, reservierte Stuecke zeigen das Projekt, fuer das sie verplant sind. Doppelklick auf ein Stueck aendert Notiz und Lagerort.
-
-![Material & Lager](docs/screenshot_material.png)
-
-### Projekte
-
-Teile nach Projekten organisieren. Jedes Teil hat ein Label, Typ, Material, Masse, Stueckzahl und Maserungsrichtung. Wird ein Projekt mehrfach gebaut, genuegt die Anzahl Exemplare am Projekt -- alle Exemplare werden gemeinsam optimiert. Projekte als JSON importieren/exportieren.
-
-![Projekte](docs/screenshot_projekte.png)
-
-### Optimierung -- Stangen
-
-Projekt, Material, Saegeblatt und Algorithmus waehlen. Der Optimierer berechnet den besten Schnittplan, speichert ihn und zeigt farbkodierte Zuschnittschemata mit Statistik. Ueber jedem Brett steht, welches Stueck man nehmen soll und wo es liegt. Optional "Reste zuerst" aufbrauchen.
+| Reiter | Inhalt |
+|--------|--------|
+| [Material](docs/handbuch/1-material.md) | Materialien, Lagerbestand je Material, Defekte, Etiketten |
+| [Lager](docs/handbuch/2-lager.md) | Lagerorte, was liegt wo, Stuecke entnehmen, Abfallkiste, Lagerjournal |
+| [Projekte](docs/handbuch/3-projekte.md) | Projekte und ihre Teile |
+| [Teile](docs/handbuch/4-teile.md) | Teile aller Projekte, Schnittlisten, Regal-Vorrat |
+| [Optimierung](docs/handbuch/5-optimierung.md) | Schnittplaene, Fuellteile, Sammelplan, Werkstatt-Modus, PDF |
+| [Einstellungen](docs/handbuch/6-einstellungen.md) | Sprache, Etiketten, Lager, REST-API, Backup, Saegeblaetter |
+| [REST-API](docs/handbuch/api.md) | alle Endpoints, Lager-Befehle fuer Scanner und Maschinen |
 
 ![Optimierung Stangen](docs/screenshot_optimierung.png)
-
-### Fuellteile
-
-Bleibt am Ende einer Stange oder auf einer Platte Abfall, kann CutStock ihn mit Teilen aus anderen Projekten auffuellen ("Fuellteile..."). Es wird nie mehr Material verbraucht; standardmaessig wird nur Abfall unter dem Mindest-Restmass belegt, per Haekchen auch verwertbare Reste. Die Fuellteile sind schraffiert (auch im PDF, dort mit eigenem Abschnitt in der Stueckliste) und tragen ihr Herkunftsprojekt. Gesaegt kommen sie in den Teile-Vorrat und werden beim anderen Projekt mit einem Klick uebernommen. Fuellteile lassen sich auch im Reiter "Teile" auswaehlen ("Als Fuellteile...").
-
-![Fuellteile](docs/screenshot_fuellteile.png)
-
-### Sammelplan
-
-Wird dasselbe Material in mehreren Projekten gebraucht, kann man es gemeinsam optimieren: Im Optimierungs-Tab "Optimieren nach: Material (Sammelplan)" waehlen, Material auswaehlen und die Projekte anhaken. "Vergleichen" zeigt, wie viel Material das gegenueber getrennten Plaenen spart. Im Plan steht bei jedem Teil sein Projekt ("Seite → Regal"); abgehakte Teile zaehlen als Fortschritt dieses Projekts. Nicht angefangene Einzelplaene der Projekte werden ersetzt; Teile, die ungesaegt in einem angefangenen Plan liegen, bleiben dort. Jedes Projekt bekommt im Plan eine eigene Farbe (Legende mit Stueckzahl in der Statistik), das PDF listet die Teile nach Projekt gruppiert, und im Projekte-Tab markiert ein Hinweis "Sammelplan" die beteiligten Projekte.
-
-![Sammelplan](docs/screenshot_sammelplan.png)
-
-### Teile und Schnittlisten
-
-Der Reiter "Teile" zeigt die Teile aller Projekte, filterbar nach Material und Projekt, mit offener Stueckzahl und Regal-Vorrat. Teile anhaken, Menge eintragen und "Schnittliste erstellen": Es entsteht eine Schnittliste, die im Projekte-Tab erscheint und wie ein Projekt optimiert, gesaegt und gedruckt wird. Abgehakte Teile kommen ins Regal (Vorrat) ihres Herkunftsprojekts, das sie spaeter per Klick uebernimmt. Ist alles gesaegt, bietet CutStock an, die Liste zu loeschen. Beim Duplizieren bleibt eine Schnittliste eine Schnittliste.
-
-Der Regal-Vorrat eines Teils laesst sich im Dialog "Teil bearbeiten" auch von Hand korrigieren ("Im Regal"), etwa nach einer Inventur.
-
-![Teile](docs/screenshot_teile.png)
-
-Die Kopfzeile jedes Plans sagt, was man in der Hand hat: "Stange 2 · Rest 960 mm" bzw. "Platte 1 · ganze Platte 2800 × 2070 mm", wie viele Teile darauf liegen und was uebrig bleibt (zurueck ins Lager oder Abfall). In der Zeichnung steht bei jedem Teil sein Name und seine Masse.
-
-### Optimierung -- Platten
-
-2D Guillotine-Packing fuer Plattenwerkstoffe. Alle Schnitte gehen von Kante zu Kante, so dass alle Reste Rechtecke bleiben und wiederverwendbar sind. Die nummerierte Schnittfolge unter jedem Plan sagt exakt, wo gesaegt wird -- die Saegeblattbreite ist bereits eingerechnet.
-
-![Optimierung Platten](docs/screenshot_platten.png)
-
-### Werkstatt-Modus
-
-Vollbild-Ansicht fuers Tablet neben der Saege: eine Platte pro Seite mit Stueck-Code und Lagerort, grosse Touch-Ziele, Gesamtfortschritt und "Als Naechstes"-Markierung. Abhaken aktualisiert Teile-Fortschritt und Lager live; entstehende Reste werden mit ihrem neuen Code angezeigt und koennen gleich als Etikett gedruckt werden.
-
-![Werkstatt-Modus](docs/screenshot_werkstatt.png)
-
-### Einstellungen
-
-Sprache, Farbschema (Horizon hell/dunkel), Masseinheit (mm/cm), Etiketten-Papierformat (A4-Boegen oder Etikettendrucker), Lager (Reservierung, Nummern-Sperrfrist), Saegeblaetter, Tastenkuerzel und Backup/Restore konfigurieren.
-
-![Einstellungen](docs/screenshot_einstellungen.png)
 
 ## Algorithmen
 
@@ -207,103 +165,7 @@ Guillotine-Schnitte lassen sich mit jeder normalen Saege ausfuehren. Die Reste s
 
 ## REST-API
 
-Die Web-App stellt eine vollstaendige REST-API unter `/api/` bereit. Alle Endpoints akzeptieren und liefern JSON.
-
-### Authentifizierung
-
-Wenn ein API-Key konfiguriert ist (Einstellungen-Seite), muessen externe Anfragen ihn als Bearer-Token mitschicken:
-
-```bash
-curl -H "Authorization: Bearer DEIN_API_KEY" http://cutstock:8420/api/materials
-```
-
-Anfragen von der eigenen Web-Oberflaeche (Same-Origin) und von localhost sind immer ohne Key erlaubt.
-
-### Endpoints
-
-| Methode | Pfad | Beschreibung |
-|---------|------|-------------|
-| **Materialien** | | |
-| GET | `/api/materials` | Alle Materialien auflisten |
-| POST | `/api/materials` | Material anlegen |
-| PUT | `/api/materials/{id}` | Material aktualisieren |
-| DELETE | `/api/materials/{id}` | Material loeschen |
-| **Lagerbestand** | | |
-| GET | `/api/stock?material_id=N` | Lagerbestand auflisten (optionaler Filter) |
-| POST | `/api/stock` | Lagereintrag anlegen |
-| PUT | `/api/stock/{id}` | Lagereintrag aktualisieren |
-| DELETE | `/api/stock/{id}` | Lagereintrag loeschen |
-| GET | `/api/stock/{id}/pieces` | Einzelstuecke auflisten (Code, Lagerort, reserviert fuer) |
-| PUT | `/api/pieces/{id}` | Einzelstueck aktualisieren (Notiz, Lagerort) |
-| GET/POST/DELETE | `/api/materials/{id}/image` | Materialbild lesen, hochladen, entfernen |
-| **Defekte** | | |
-| GET | `/api/stock/{id}/defects` | Defekte eines Lagerstuecks |
-| GET | `/api/pieces/{id}/defects` | Defekte eines Einzelstuecks |
-| POST | `/api/pieces/{id}/defects` | Defekt hinzufuegen |
-| PUT | `/api/defects/{id}` | Defekt aktualisieren |
-| DELETE | `/api/defects/{id}` | Defekt loeschen |
-| **Saegeblaetter** | | |
-| GET | `/api/blades` | Saegeblaetter auflisten |
-| POST | `/api/blades` | Saegeblatt anlegen |
-| PUT | `/api/blades/{id}` | Saegeblatt aktualisieren |
-| DELETE | `/api/blades/{id}` | Saegeblatt loeschen |
-| **Projekte** | | |
-| GET | `/api/projects` | Projekte auflisten |
-| GET | `/api/projects/{id}` | Projekt abrufen |
-| POST | `/api/projects` | Projekt anlegen |
-| PUT | `/api/projects/{id}` | Projekt aktualisieren (Name, Anzahl Exemplare) |
-| DELETE | `/api/projects/{id}` | Projekt loeschen |
-| POST | `/api/projects/{id}/clone` | Projekt kopieren |
-| POST | `/api/projects/{id}/copy-parts` | Teile in ein Projekt kopieren |
-| POST | `/api/projects/{id}/restart` | Projekt neu starten (Fortschritt 0, Plaene weg, Lager bleibt) |
-| **Teile** | | |
-| GET | `/api/projects/{id}/parts` | Teile eines Projekts auflisten |
-| POST | `/api/projects/{id}/parts` | Teil hinzufuegen |
-| PUT | `/api/parts/{id}` | Teil aktualisieren (optional `vorrat`: Regal-Bestand setzen) |
-| DELETE | `/api/parts/{id}` | Teil loeschen |
-| **Optimierung und Plaene** | | |
-| POST | `/api/optimize` | Optimieren und als Plan des Projekts fuer das Material speichern |
-| GET | `/api/projects/{id}/plans/{material_id}` | Gespeicherten Plan abrufen (`null`, wenn keiner existiert) |
-| POST | `/api/plan-pieces/{id}` | Stueck als gesaegt markieren/zuruecknehmen (`{"gesaegt": true}`), aktualisiert Fortschritt und Lager |
-| POST | `/api/plans/{id}/confirm-all` | Alle offenen Stuecke des Plans als gesaegt markieren |
-| DELETE | `/api/plans/{id}` | Plan verwerfen (gibt reservierte Stuecke frei) |
-| GET | `/api/projects/{id}/fill-candidates/{material_id}` | Moegliche Fuellteile aus anderen Projekten |
-| GET | `/api/sammel/{material_id}` | Sammelplan-Status und moegliche Projekte |
-| POST | `/api/sammel/optimize` | Sammelplan anlegen/ersetzen und berechnen |
-| GET | `/api/parts` | Teile aller Projekte (Reiter "Teile") |
-| POST | `/api/cut-lists` | Schnittliste aus einzelnen Teilen anlegen |
-| POST | `/api/sammel/compare` | Vergleich getrennt/gemeinsam (ohne Speichern) |
-| POST | `/api/projects/{id}/take-stock/{material_id}` | Teile-Vorrat ("Regal") als gesaegt uebernehmen |
-| **Export** | | |
-| POST | `/api/pdf` | PDF-Schnittplan erzeugen |
-| POST | `/api/labels` | Etiketten-PDF erzeugen |
-| **System** | | |
-| GET | `/api/version` | App-Version und Links |
-| GET | `/api/license` | Lizenzstatus |
-| GET | `/api/settings` | Einstellungen lesen |
-| PUT | `/api/settings` | Einstellungen aendern |
-| GET | `/api/backup` | Datenbank-Backup herunterladen (ZIP) |
-| POST | `/api/restore` | Aus Backup wiederherstellen (ZIP) |
-| GET | `/api/i18n/{lang}` | Uebersetzungen fuer eine Sprache |
-
-### Optimierungsanfrage
-
-```json
-POST /api/optimize
-{
-  "project_id": 1,
-  "material_id": 3,
-  "blade_id": 1,
-  "algorithm": "nested",
-  "reste_zuerst": false,
-  "fuellteile": [{"teil_id": 42, "modus": "auffuellen", "menge": 0}],
-  "fuell_alle_reste": false
-}
-```
-
-Algorithmus-Optionen: `greedy`, `nested`, `ga`. `reste_zuerst`, `fuellteile` und `fuell_alle_reste` sind optional (Fuellteil-Modus `auffuellen` oder `fest`; ohne `fuellteile` bleibt die Auswahl des gespeicherten Plans).
-
-Die Antwort ist der gespeicherte Plan: `plan_id`, `schnittplaene` (je Brett u. a. `stueck_code`, `lagerort`, `platzierungen` mit `id` und `gesaegt`), `fehlende_teile`, `gesamt_verschnitt_prozent`, `materialbedarf` (zusaetzlich benoetigtes Material -- leer wenn alles passt) sowie Hinweise `veraltet` und `lager_fehlt`.
+Jede Funktion ist auch per REST-API unter `/api/` erreichbar, optional mit API-Key (Bearer-Token). Alle Endpoints und Beispiele: **[docs/handbuch/api.md](docs/handbuch/api.md)**. Eine ausprobierbare Beschreibung liefert CutStock selbst unter `/docs`.
 
 ## Download (Desktop)
 

@@ -57,7 +57,7 @@ class Material:
     bild: bytes = b""
     # Kürzel für Stück-Codes (z.B. "AP4040" → Stück "AP4040-07"), eindeutig
     kuerzel: str = ""
-    # Standard-Lagerort der Stücke bzw. neu entstehender Reste (Freitext)
+    # Lagerort (Name aus der Lagerort-Liste, Pflicht) und Ort der Reste (leer = gleicher Ort)
     lagerort: str = ""
     lagerort_reste: str = ""
 
@@ -133,7 +133,7 @@ class Einzelstueck:
     lagerstueck_id: int = 0
     nr: int = 1           # eindeutig je Material, frei gewordene Nummern werden wieder vergeben
     notiz: str = ""
-    lagerort: str = ""    # leer = Lagerort des Materials
+    lagerort: str = ""    # nicht mehr genutzt: Stücke liegen am Lagerort ihres Materials
 
 
 @dataclass
@@ -179,6 +179,7 @@ class PlanBrett:
     verbraucht: bool = False                         # Lagerstück schon ausgetragen
     rest_ids: list = field(default_factory=list)     # eingebuchte Reste [[lagerstück_id, nr]]
     verbrauchtes_stueck: dict | None = None          # Schnappschuss fürs Zurückbuchen
+    abfall: list = field(default_factory=list)       # in die Abfallkiste gelegt [[l, b]]
     stuecke: list[PlanStueck] = field(default_factory=list)
 
 

@@ -10,6 +10,8 @@ const State = {
     translations: {},
     materials: [],
     stock: [],
+    locations: [],
+    selectedLocation: null,   // Name des gewählten Lagerorts, WASTE_BOX = Abfallkiste
     optMode: 'project',   // Optimieren nach 'project' oder 'material' (Sammelplan)
     sammel: null,         // Sammelplan-Infos des gewählten Materials (Material-Modus)
     blades: [],
@@ -28,6 +30,9 @@ const State = {
 // ===========================================================================
 
 const API_BASE = '';
+
+// Pseudo-Eintrag für die Abfallkiste in der Lagerort-Liste
+const WASTE_BOX = '\u{1F5D1}:abfallkiste';
 
 const PART_COLORS = [
     'hsl(210, 70%, 50%)', 'hsl(150, 60%, 40%)', 'hsl(30, 80%, 50%)',
@@ -49,7 +54,7 @@ const DEFAULT_HOTKEYS = {
     optimize: 'r',
 };
 // Fuer Umbelegung gesperrt (fest vergeben)
-const RESERVED_KEYS = ['1', '2', '3', '4', 'enter', 'escape'];
+const RESERVED_KEYS = ['1', '2', '3', '4', '5', '6', 'enter', 'escape'];
 
 const hotkey = (action) =>
     (State.settings.hotkeys || {})[action] || DEFAULT_HOTKEYS[action];
@@ -159,12 +164,24 @@ async function fetchJSON(url, method = 'GET', body = null) {
     storageRemove('sessionStorage', 'cutstock_401_reload');
     if (!resp.ok) {
         let msg = `HTTP ${resp.status}`;
+        let detail = null;
         try {
             const err = await resp.json();
+            detail = err.detail;
             msg = err.detail || err.message || msg;
         } catch { /* ignore parse error */ }
-        showToast(msg, 'error');
-        throw new Error(msg);
+        // Lager-API: {"code", "message"} – bekannte Codes übersetzt anzeigen
+        if (detail && typeof detail === 'object' && detail.code) {
+            const key = `err.${detail.code}`;
+            msg = State.translations[key] ? t(key, detail) : (detail.message || detail.code);
+        } else if (typeof msg !== 'string') {
+            msg = JSON.stringify(msg);
+        }
+        const error = new Error(msg);
+        error.status = resp.status;
+        error.detail = detail;
+        if (!fetchJSON.silent?.(error)) showToast(msg, 'error');
+        throw error;
     }
     return resp.json();
 }
@@ -191,6 +208,18 @@ const Api = {
 
     getPieces: (stockId) => fetchJSON(`/api/stock/${stockId}/pieces`),
     updatePiece: (id, data) => fetchJSON(`/api/pieces/${id}`, 'PUT', data),
+    takePiece: (ref, data) => fetchJSON(`/api/pieces/${encodeURIComponent(ref)}/take`, 'POST', data),
+
+    getLocations: () => fetchJSON('/api/locations'),
+    createLocation: (name) => fetchJSON('/api/locations', 'POST', { name }),
+    renameLocation: (id, name) => fetchJSON(`/api/locations/${id}`, 'PUT', { name }),
+    deleteLocation: (id, ziel) => fetchJSON(
+        `/api/locations/${id}${ziel ? `?ziel=${encodeURIComponent(ziel)}` : ''}`, 'DELETE'),
+    getLocationContents: (id) => fetchJSON(`/api/locations/${id}/contents`),
+    getWaste: () => fetchJSON('/api/waste'),
+    takeWaste: (data) => fetchJSON('/api/waste/take', 'POST', data),
+    emptyWaste: (materialId) => fetchJSON(
+        `/api/waste${materialId ? `?material=${materialId}` : ''}`, 'DELETE'),
 
     getDefects: (stockId) => fetchJSON(`/api/stock/${stockId}/defects`),
     getDefectsForPiece: (pieceId) => fetchJSON(`/api/pieces/${pieceId}/defects`),
@@ -468,6 +497,7 @@ async function renderStock() {
         el.style.display = isPlatte ? '' : 'none';
     });
 
+    renderStockLocationInfo(mat);
     if (!mat) {
         tbody.innerHTML = `<tr><td colspan="3" class="empty-state">${t('dlg.select_material')}</td></tr>`;
         State.stock = [];
@@ -531,14 +561,12 @@ async function renderStock() {
                 const pBadge = p.defekt_count > 0
                     ? ` <span class="defect-badge">${p.defekt_count}</span>` : '';
                 const note = p.notiz ? ` <span class="piece-note">${escHtml(p.notiz)}</span>` : '';
-                const ort = p.lagerort_effektiv
-                    ? ` <span class="piece-location">&#128205; ${escHtml(p.lagerort_effektiv)}</span>` : '';
                 const res = p.reserviert_fuer
                     ? ` <span class="piece-reserved" title="${escAttr(t('piece.reserved_hint'))}">&#128274; ${escHtml(p.reserviert_fuer)}</span>` : '';
                 return `<tr class="fd-table__row piece-row" data-parent="${stockId}" data-piece-id="${p.id}"
                         title="${escAttr(t('piece.edit_hint'))}">
                     <td class="fd-table__cell piece-cell" colspan="${isPlatte ? 3 : 2}">
-                        <span class="piece-code">${escHtml(p.code || '#' + p.nr)}</span>${ort}${res}${note}${pBadge}
+                        <span class="piece-code">${escHtml(p.code || '#' + p.nr)}</span>${res}${note}${pBadge}
                     </td>
                 </tr>`;
             }).join('');
@@ -562,20 +590,75 @@ async function renderStock() {
     });
 }
 
-// Einzelstück bearbeiten: Notiz und eigener Lagerort (leer = Lagerort des Materials)
-function openPieceDialog(piece) {
-    const mat = getSelectedMaterial();
+// Über dem Bestand: wo das Material liegt und was in der Abfallkiste ist
+async function renderStockLocationInfo(mat) {
+    const el = document.getElementById('stock-location-info');
+    if (!el) return;
+    if (!mat) { el.innerHTML = ''; return; }
+    const parts = [`<span>&#128205; ${escHtml(mat.lagerort || '')}</span>`];
+    if (mat.lagerort_reste) parts.push(`<span>${escHtml(t('stock.rests_at', { ort: mat.lagerort_reste }))}</span>`);
+    el.innerHTML = parts.join('');
+    let waste = [];
+    try { waste = await Api.getWaste(); } catch { /* ignore */ }
+    const n = waste.filter(w => w.material_id === mat.id).reduce((sum, w) => sum + w.anzahl, 0);
+    if (n && getSelectedMaterial()?.id === mat.id) {
+        el.insertAdjacentHTML('beforeend',
+            `<span class="waste-hint">${escHtml(t('stock.waste_hint', { n }))}</span>`);
+    }
+}
+
+// Einzelstück: Notiz bearbeiten oder das Stück aus dem Lager nehmen
+function openPieceDialog(piece, onChange = renderStock) {
     const fields = [
         { key: 'notiz', label: t('piece.note'), type: 'text' },
-        { key: 'lagerort', label: t('piece.location'), type: 'text',
-          placeholder: mat?.lagerort || t('mat.location_hint') },
     ];
-    openModal(`${t('piece.edit')} ${piece.code || '#' + piece.nr}`, fields, piece, async (formData) => {
+    const code = piece.code || '#' + piece.nr;
+    openModal(`${t('piece.edit')} ${code}`, fields, piece, async (formData) => {
         try {
-            await Api.updatePiece(piece.id, { notiz: formData.notiz || '', lagerort: formData.lagerort || '' });
-            await renderStock();
+            await Api.updatePiece(piece.id, { notiz: formData.notiz || '' });
+            await onChange();
         } catch { /* handled */ }
     });
+    const body = document.getElementById('modal-body');
+    body.insertAdjacentHTML('beforeend', `<div class="form-group piece-take">
+        <button type="button" class="fd-button fd-button--negative" id="piece-take-btn">${escHtml(t('piece.take'))}</button>
+        <small class="form-hint">${escHtml(t('piece.take_hint'))}</small></div>`);
+    document.getElementById('piece-take-btn').addEventListener('click', () => {
+        closeModal();
+        openTakeDialog(piece, onChange);
+    });
+}
+
+// Stück entnehmen (mit Grund). Reserviert es ein Plan: Hinweis, der Mensch entscheidet.
+function openTakeDialog(piece, onChange = renderStock) {
+    const code = piece.code || String(piece.id);
+    const fields = [{
+        key: 'grund', label: t('piece.take_reason'), type: 'select', default: 'verbraucht',
+        options: ['verbraucht', 'verkauft', 'defekt', 'abfall'].map(g => ({ value: g, text: t(`take.${g}`) })),
+    }];
+    const takeDialog = openModal(t('piece.take_title', { code }), fields, {}, async (formData) => {
+        const ref = piece.code || piece.id;
+        const nehmen = (trotzdem) => Api.takePiece(ref, { grund: formData.grund, trotzdem });
+        try {
+            fetchJSON.silent = (err) => err.detail?.code === 'stueck_reserviert';
+            let res;
+            try {
+                res = await nehmen(false);
+            } catch (err) {
+                if (err.detail?.code !== 'stueck_reserviert') throw err;
+                fetchJSON.silent = null;
+                const ok = await confirmAsync(t('piece.take_reserved', { code, projekt: err.detail.projekt }));
+                if (!ok) return;
+                res = await nehmen(true);
+            }
+            showToast(t(res.abfallkiste ? 'piece.taken_box' : 'piece.taken', { code: res.code }));
+            await onChange();
+        } catch { /* handled */ } finally {
+            fetchJSON.silent = null;
+        }
+    });
+    document.getElementById('modal-save').textContent = t('piece.take_btn');
+    return takeDialog;
 }
 
 function selectStockRow(id) {
@@ -583,6 +666,219 @@ function selectStockRow(id) {
     document.querySelectorAll('#stock-table tbody tr').forEach(r => {
         r.classList.toggle('selected', parseInt(r.dataset.id) === id);
     });
+}
+
+// ---------------------------------------------------------------------------
+// Lager Tab: Lagerorte links, Inhalt des gewählten Orts rechts, Abfallkiste
+// ---------------------------------------------------------------------------
+
+async function renderLocations() {
+    let waste = [];
+    try {
+        [State.locations, waste] = await Promise.all([Api.getLocations(), Api.getWaste()]);
+    } catch { return; }
+    const tbody = document.querySelector('#location-table tbody');
+    if (!tbody) return;
+
+    // Abfallkiste nur zeigen, wenn eingeschaltet oder noch etwas drin liegt
+    const wasteN = waste.reduce((sum, w) => sum + w.anzahl, 0);
+    const zeigeKiste = State.settings.waste_keep || wasteN > 0;
+    const namen = State.locations.map(o => o.name);
+    if (!namen.includes(State.selectedLocation) && !(zeigeKiste && State.selectedLocation === WASTE_BOX)) {
+        State.selectedLocation = namen[0] ?? null;
+    }
+
+    const rows = State.locations.map(o => `<tr class="fd-table__row${o.name === State.selectedLocation ? ' selected' : ''}" data-loc="${escAttr(o.name)}">
+            <td class="fd-table__cell">&#128205; ${escHtml(o.name)}</td>
+            <td class="fd-table__cell num">${o.materialien}</td>
+            <td class="fd-table__cell num">${o.stuecke}</td>
+        </tr>`);
+    if (zeigeKiste) {
+        const nMat = new Set(waste.map(w => w.material_id)).size;
+        rows.push(`<tr class="fd-table__row loc-row-waste${State.selectedLocation === WASTE_BOX ? ' selected' : ''}" data-loc="${escAttr(WASTE_BOX)}">
+            <td class="fd-table__cell">&#128465; ${escHtml(t('loc.waste_box'))}</td>
+            <td class="fd-table__cell num">${nMat}</td>
+            <td class="fd-table__cell num">${wasteN}</td>
+        </tr>`);
+    }
+    tbody.innerHTML = rows.join('');
+    tbody.querySelectorAll('tr[data-loc]').forEach(row => {
+        row.addEventListener('click', () => selectLocation(row.dataset.loc));
+        row.addEventListener('dblclick', () => {
+            selectLocation(row.dataset.loc);
+            if (row.dataset.loc !== WASTE_BOX) renameLocation();
+        });
+    });
+    renderLocationContents(waste);
+}
+
+function selectLocation(name) {
+    State.selectedLocation = name;
+    document.querySelectorAll('#location-table tbody tr').forEach(r =>
+        r.classList.toggle('selected', r.dataset.loc === name));
+    renderLocationContents();
+}
+
+function selectedLocationObj() {
+    return State.locations.find(o => o.name === State.selectedLocation) ?? null;
+}
+
+async function renderLocationContents(waste = null) {
+    const box = document.getElementById('loc-contents');
+    const title = document.getElementById('loc-contents-title');
+    if (!box) return;
+    const isWaste = State.selectedLocation === WASTE_BOX;
+    document.getElementById('btn-waste-clear').style.display = isWaste ? '' : 'none';
+    document.getElementById('btn-loc-labels').style.display = isWaste ? 'none' : '';
+    ['btn-loc-edit', 'btn-loc-del'].forEach(id => {
+        document.getElementById(id).disabled = isWaste || !State.selectedLocation;
+    });
+
+    if (isWaste) {
+        title.textContent = t('loc.waste_box');
+        if (!waste) { try { waste = await Api.getWaste(); } catch { return; } }
+        renderWasteContents(box, waste);
+        return;
+    }
+    const ort = selectedLocationObj();
+    title.textContent = ort ? `${t('loc.contents')}: ${ort.name}` : t('loc.contents');
+    if (!ort) { box.innerHTML = `<p class="empty-state">${escHtml(t('loc.select'))}</p>`; return; }
+
+    let inhalt;
+    try { inhalt = await Api.getLocationContents(ort.id); } catch { return; }
+    if (State.selectedLocation !== ort.name) return;   // inzwischen anderer Ort gewählt
+    if (!inhalt.length) {
+        box.innerHTML = `<p class="empty-state">${escHtml(t('loc.empty'))}</p>`;
+        return;
+    }
+    State.locationContents = inhalt;
+    box.innerHTML = inhalt.map(m => {
+        const zeilen = m.bestand.length ? m.bestand.map(b => {
+            const codes = b.stuecke.map(p => {
+                const res = p.reserviert_fuer
+                    ? ` <span class="piece-reserved" title="${escAttr(t('piece.reserved_hint'))}">&#128274; ${escHtml(p.reserviert_fuer)}</span>` : '';
+                return `<span><span class="piece-code" data-piece="${escAttr(p.code)}" title="${escAttr(t('loc.piece_hint'))}">${escHtml(p.code || '#' + p.nr)}</span>${res}</span>`;
+            }).join('');
+            const rest = b.ist_rest ? `<span class="rest-badge">${escHtml(t('labels.rest'))}</span> ` : '';
+            return `<div class="loc-line"><span class="loc-dim">${rest}${escHtml(dimText(b.laenge, b.breite))} × ${b.stueckzahl}</span>
+                <span class="loc-codes">${codes}</span></div>`;
+        }).join('') : `<div class="loc-line"><span class="loc-codes">${escHtml(t('stock.empty'))}</span></div>`;
+        const rolle = m.rolle === 'reste' ? `<span class="loc-role">${escHtml(t('loc.rests_only'))}</span>` : '';
+        return `<div class="loc-group">
+            <div class="loc-group-head"><span>${escHtml(m.name)}</span>${m.kuerzel ? `<span class="mat-code">${escHtml(m.kuerzel)}</span>` : ''}${rolle}
+                <button class="fd-button fd-button--compact" type="button" data-goto-mat="${m.material_id}">${escHtml(t('loc.to_material'))}</button></div>
+            ${zeilen}</div>`;
+    }).join('');
+
+    box.querySelectorAll('[data-piece]').forEach(el => el.addEventListener('click', () => {
+        const piece = inhalt.flatMap(m => m.bestand.flatMap(b => b.stuecke)).find(p => p.code === el.dataset.piece);
+        if (piece) openPieceDialog(piece, renderLocations);
+    }));
+    box.querySelectorAll('[data-goto-mat]').forEach(btn => btn.addEventListener('click', () => {
+        State.selectedMaterialId = parseInt(btn.dataset.gotoMat);
+        State.selectedStockId = null;
+        document.querySelector('.tab-btn[data-tab="material"]')?.click();
+    }));
+}
+
+function renderWasteContents(box, waste) {
+    if (!waste.length) {
+        box.innerHTML = `<p class="empty-state">${escHtml(t('loc.waste_empty'))}</p>`
+            + (State.settings.waste_keep ? '' : `<p class="form-hint">${escHtml(t('loc.waste_off_hint'))}</p>`);
+        return;
+    }
+    const gruppen = new Map();
+    waste.forEach(w => {
+        if (!gruppen.has(w.material_id)) gruppen.set(w.material_id, []);
+        gruppen.get(w.material_id).push(w);
+    });
+    box.innerHTML = (State.settings.waste_keep ? '' : `<p class="form-hint">${escHtml(t('loc.waste_off_hint'))}</p>`)
+        + [...gruppen.values()].map(ws => `<div class="loc-group">
+            <div class="loc-group-head"><span>${escHtml(ws[0].material)}</span>${ws[0].kuerzel ? `<span class="mat-code">${escHtml(ws[0].kuerzel)}</span>` : ''}
+                <button class="fd-button fd-button--compact fd-button--negative" type="button" data-clear-mat="${ws[0].material_id}">${escHtml(t('loc.waste_clear_mat'))}</button></div>
+            ${ws.map((w, i) => `<div class="loc-line"><span class="loc-dim">${escHtml(dimText(w.laenge, w.breite))} × ${w.anzahl}</span>
+                <button class="fd-button fd-button--compact" type="button" data-take-waste="${w.material_id}:${i}">${escHtml(t('loc.waste_take'))}</button></div>`).join('')}
+        </div>`).join('');
+
+    box.querySelectorAll('[data-take-waste]').forEach(btn => btn.addEventListener('click', async () => {
+        const [mid, i] = btn.dataset.takeWaste.split(':').map(Number);
+        const w = gruppen.get(mid)[i];
+        try {
+            await Api.takeWaste({ material: String(mid), laenge: w.laenge, breite: w.breite, anzahl: 1 });
+            renderLocations();
+        } catch { /* handled */ }
+    }));
+    box.querySelectorAll('[data-clear-mat]').forEach(btn => btn.addEventListener('click', () => {
+        const ws = gruppen.get(parseInt(btn.dataset.clearMat));
+        openConfirmDialog(t('loc.waste_clear_mat_confirm', { name: ws[0].material }), async () => {
+            try { await Api.emptyWaste(ws[0].material_id); renderLocations(); } catch { /* handled */ }
+        });
+    }));
+}
+
+function newLocation() {
+    openModal(t('loc.new'), [{ key: 'name', label: t('loc.name'), type: 'text', required: true }], {},
+        async (formData) => {
+            try {
+                const ort = await Api.createLocation(formData.name);
+                State.selectedLocation = ort.name;
+                renderLocations();
+            } catch { /* handled */ }
+        });
+}
+
+function renameLocation() {
+    const ort = selectedLocationObj();
+    if (!ort) { showToast(t('loc.select'), 'error'); return; }
+    openModal(t('loc.rename'), [{ key: 'name', label: t('loc.name'), type: 'text', required: true }], ort,
+        async (formData) => {
+            try {
+                const neu = await Api.renameLocation(ort.id, formData.name);
+                State.selectedLocation = neu.name;
+                renderLocations();
+                State.materials = await Api.getMaterials();
+            } catch { /* handled */ }
+        });
+}
+
+// Löschen: leere Orte sofort; genutzte nur mit Ziel-Ort für ihre Materialien
+async function deleteLocation() {
+    const ort = selectedLocationObj();
+    if (!ort) { showToast(t('loc.select'), 'error'); return; }
+    if (State.locations.length <= 1) { showToast(t('err.letzter_lagerort'), 'error'); return; }
+    const andere = State.locations.filter(o => o.id !== ort.id);
+    const loeschen = async (ziel) => {
+        try {
+            await Api.deleteLocation(ort.id, ziel);
+            State.selectedLocation = ziel || null;
+            renderLocations();
+            State.materials = await Api.getMaterials();
+        } catch { /* handled */ }
+    };
+    if (!ort.materialien) {
+        openConfirmDialog(t('loc.delete_confirm', { name: ort.name }), () => loeschen(''));
+        return;
+    }
+    let inhalt = [];
+    try { inhalt = await Api.getLocationContents(ort.id); } catch { return; }
+    const fields = [{
+        key: 'ziel', label: t('loc.move_to'), type: 'select', default: andere[0].name,
+        options: andere.map(o => ({ value: o.name, text: o.name })),
+        hint: t('loc.in_use', { name: ort.name, list: inhalt.map(m => m.name).join(', ') }),
+    }];
+    openModal(t('loc.delete_title', { name: ort.name }), fields, {}, (formData) => loeschen(formData.ziel));
+}
+
+// Ein Etikett je Stück an diesem Lagerort (z. B. ein Regal neu beschriften)
+function printLocationLabels() {
+    const ort = selectedLocationObj();
+    const inhalt = State.locationContents || [];
+    const labels = inhalt.flatMap(m => m.bestand.flatMap(b => b.stuecke.map(p => ({
+        title: m.name, line1: dimText(b.laenge, b.breite), line2: ort?.name || '',
+        id_text: p.code || `#${p.nr}`,
+    }))));
+    if (!ort || !labels.length) { showToast(t('loc.empty'), 'error'); return; }
+    Api.downloadLabels({ labels: labels.slice(0, 1000), filename: `${t('labels.button')}-${ort.name}` });
 }
 
 // ---------------------------------------------------------------------------
@@ -1330,7 +1626,11 @@ function renderPlanInfo() {
         : '';
     const warn = [];
     if (result.veraltet) warn.push(t('plan.outdated'));
-    if (result.lager_fehlt) warn.push(t('plan.stock_missing'));
+    if (result.lager_fehlt) {
+        const codes = result.fehlende_stuecke || [];
+        warn.push(codes.length ? t('plan.stock_missing_codes', { codes: codes.join(', ') })
+            : t('plan.stock_missing'));
+    }
     const vorrat = result.vorrat_verfuegbar || [];
     const vorratHtml = vorrat.length
         ? `<span class="plan-stock">&#128230; ${escHtml(t('fill.from_shelf'))}: ${escHtml(vorrat.map(v => `${v.label} ×${v.anzahl}`).join(', '))}
@@ -1380,6 +1680,13 @@ function renderSettings() {
     if (lockInp) lockInp.value = State.settings.nr_lock_days ?? 1;
     const resChk = document.getElementById('settings-reservation');
     if (resChk) resChk.checked = State.settings.reservation !== false;
+    const wasteChk = document.getElementById('settings-waste-keep');
+    if (wasteChk) wasteChk.checked = !!State.settings.waste_keep;
+    const wasteMin = document.getElementById('settings-waste-min');
+    if (wasteMin) wasteMin.value = toDisplay(State.settings.waste_min ?? 50);
+    const wasteLbl = document.getElementById('settings-waste-min-label');
+    if (wasteLbl) wasteLbl.textContent = t('set.waste_min', { unit: unitLabel() });
+    updateWasteMinVisibility();
 
     const wInp = document.getElementById('settings-label-w');
     const hInp = document.getElementById('settings-label-h');
@@ -1499,6 +1806,11 @@ async function removeLicense() {
 }
 
 // Breite/Höhe-Felder nur beim benutzerdefinierten Etikettenformat zeigen
+function updateWasteMinVisibility() {
+    const grp = document.getElementById('settings-waste-min-group');
+    if (grp) grp.style.display = State.settings.waste_keep ? '' : 'none';
+}
+
 function updateLabelCustomVisibility() {
     const isCustom = document.getElementById('settings-label-format')?.value === 'custom';
     document.querySelectorAll('.label-custom-field').forEach(el => {
@@ -2281,7 +2593,7 @@ async function printStockLabels() {
         pieces.slice(0, 200).forEach(p => labels.push({
             title: mat.name,
             line1: dimText(s.laenge, s.breite),
-            line2: p.lagerort_effektiv || t('labels.stock'),
+            line2: p.lagerort || t('labels.stock'),
             id_text: p.code || `#${p.nr}`,
         }));
     }
@@ -2303,13 +2615,26 @@ function printRestLabels(plan) {
 
 // "Nimm AP4040-07 · 640 mm · Regal 2" bzw. nach dem Anfangen "Reste beschriften: …"
 // Kopf einer Stange: was man in die Hand nimmt, wie viele Teile, wohin der Rest geht
+// Wohin ein Abschnitt gehört: "lager" | "abfallkiste" | "weg". Gespeicherte Pläne
+// liefern es vom Server mit (reste_ziel), sonst gleiche Regel wie dort (_rest_ziel).
+function restZiel(plan, idx, mat, l, b = 0) {
+    const vomServer = (plan.reste_ziel || [])[idx];
+    if (vomServer) return vomServer;
+    const isBar = mat?.typ === 'Stange';
+    if (l >= (mat?.rest_min_laenge ?? 0) && (isBar || b >= (mat?.rest_min_breite ?? 0))) return 'lager';
+    const mass = isBar ? l : Math.min(l, b);
+    const grenze = Number(State.settings.waste_min ?? 50);
+    return State.settings.waste_keep && mass > 0 && mass >= grenze ? 'abfallkiste' : 'weg';
+}
+
+const ZIEL_KEY = { lager: 'bar.to_stock', abfallkiste: 'bar.to_box', weg: 'bar.to_waste' };
+
 function barHeadHtml(plan, i, mat) {
     const art = plan.ist_rest ? t('bar.rest') : t('bar.whole');
     const n = plan.platzierungen.length;
-    const minL = mat?.rest_min_laenge ?? 0;
-    const reste = (plan.reste || []).map(r => r[0]).filter(l => l > 0.5);
+    const reste = (plan.reste || []).map((r, idx) => ({ l: r[0], idx })).filter(r => r.l > 0.5);
     const restText = reste.length
-        ? reste.map(l => `${t('bar.left', { menge: formatDim(Math.round(l)) })} → ${t(l >= minL ? 'bar.to_stock' : 'bar.to_waste')}`).join(', ')
+        ? reste.map(r => `${t('bar.left', { menge: formatDim(Math.round(r.l)) })} → ${t(ZIEL_KEY[restZiel(plan, r.idx, mat, r.l)])}`).join(', ')
         : t('bar.no_left');
     return `<div class="plan-header bar-head">
         <strong>${escHtml(t('bar.title', { n: i + 1 }))} · ${escHtml(art)} ${formatDim(plan.lager_laenge + 2 * (mat?.besaeumung || 0))}</strong>
@@ -2322,15 +2647,16 @@ function plateHeadHtml(plan, i, mat) {
     const trim = 2 * (mat?.besaeumung || 0);
     const art = plan.ist_rest ? t('bar.rest') : t('plate.whole');
     const n = plan.platzierungen.length;
-    const minL = mat?.rest_min_laenge ?? 0;
-    const minB = mat?.rest_min_breite ?? 0;
-    // Gleiche Regel wie beim Einbuchen (db.rest_einbuchen)
-    const reste = (plan.reste || []).filter(r => r[0] > 0.5 && r[1] > 0.5);
-    const lager = reste.filter(r => r[0] >= minL && r[1] >= minB);
-    const klein = reste.length - lager.length;
-    const restTexte = lager.map(r => t('plate.rest_to_stock',
-        { masse: `${formatDim(Math.round(r[0]))} × ${formatDim(Math.round(r[1]))}` }));
-    if (klein) restTexte.push(klein === 1 ? t('plate.small_one') : t('plate.small_n', { n: klein }));
+    // Gleiche Regel wie beim Einbuchen (db.rest_einbuchen / _rest_ziel)
+    const reste = (plan.reste || []).map((r, idx) => ({ l: r[0], b: r[1], idx }))
+        .filter(r => r.l > 0.5 && r.b > 0.5)
+        .map(r => ({ ...r, ziel: restZiel(plan, r.idx, mat, r.l, r.b) }));
+    const restTexte = reste.filter(r => r.ziel === 'lager').map(r => t('plate.rest_to_stock',
+        { masse: `${formatDim(Math.round(r.l))} × ${formatDim(Math.round(r.b))}` }));
+    const kiste = reste.filter(r => r.ziel === 'abfallkiste').length;
+    const weg = reste.filter(r => r.ziel === 'weg').length;
+    if (kiste) restTexte.push(kiste === 1 ? t('plate.box_one') : t('plate.box_n', { n: kiste }));
+    if (weg) restTexte.push(weg === 1 ? t('plate.small_one') : t('plate.small_n', { n: weg }));
     const used = t('plate.used', { p: (100 - plan.verschnitt_prozent).toFixed(0) });
     return `<div class="plan-header bar-head">
         <strong>${escHtml(t('plate.title', { n: i + 1 }))} · ${escHtml(art)} ${formatDim(plan.lager_laenge + trim)} × ${formatDim(plan.lager_breite + trim)}</strong>
@@ -3105,7 +3431,7 @@ function fieldHtml(f, data) {
     let input;
     if (f.type === 'select') {
         const opts = (f.options || []).map(o =>
-            `<option value="${o.value}"${String(o.value) === String(val) ? ' selected' : ''}>${escHtml(o.text)}</option>`
+            `<option value="${escAttr(o.value)}"${String(o.value) === String(val) ? ' selected' : ''}>${escHtml(o.text)}</option>`
         ).join('');
         input = `<select name="${f.key}" class="cs-select">${opts}</select>`;
     } else if (f.type === 'checkbox') {
@@ -3149,10 +3475,15 @@ function closeModal() {
 // Specific Dialogs
 // ---------------------------------------------------------------------------
 
-function openMaterialDialog(material = null) {
+async function openMaterialDialog(material = null) {
     const isEdit = !!material;
     const title = isEdit ? t('mat.edit') : t('mat.new');
     const data = material ? { ...material } : { typ: 'Platte', maserung: 'keine' };
+    try { State.locations = await Api.getLocations(); } catch { /* ignore */ }
+    const orte = State.locations.map(o => ({ value: o.name, text: o.name }));
+    const neuerOrt = { value: NEW_LOCATION, text: t('loc.new_option') };
+    if (!data.lagerort) data.lagerort = State.selectedLocation && State.selectedLocation !== WASTE_BOX
+        ? State.selectedLocation : (orte[0]?.value || '');
 
     const fields = [
         { key: 'name', label: t('mat.name'), type: 'text', required: true },
@@ -3178,8 +3509,9 @@ function openMaterialDialog(material = null) {
         { key: 'rest_min_laenge', label: t('mat.min_rest_l'), type: 'number', isDimension: true },
         { key: 'rest_min_breite', label: t('mat.min_rest_w'), type: 'number', isDimension: true, platteOnly: true },
         { key: 'kuerzel', label: t('mat.code'), type: 'text', placeholder: t('mat.code_hint') },
-        { key: 'lagerort', label: t('mat.location'), type: 'text', placeholder: t('mat.location_hint') },
-        { key: 'lagerort_reste', label: t('mat.location_rest'), type: 'text', placeholder: t('mat.location_rest_hint') },
+        { key: 'lagerort', label: t('mat.location'), type: 'select', options: [...orte, neuerOrt] },
+        { key: 'lagerort_reste', label: t('mat.location_rest'), type: 'select',
+          options: [{ value: '', text: t('mat.location_rest_same') }, ...orte, neuerOrt] },
     ];
 
     openModal(title, fields, data, async (formData) => {
@@ -3203,6 +3535,8 @@ function openMaterialDialog(material = null) {
             renderOptDropdowns();
         } catch { /* fetchJSON shows toast */ }
     });
+
+    setupNewLocationOption();
 
     // Dynamic show/hide for typ-dependent fields
     setupMaterialTypToggle(data.typ || 'Platte');
@@ -3264,6 +3598,22 @@ function openMaterialDialog(material = null) {
 }
 let _matImgPendingFile = null;
 let _matImgPendingDelete = false;
+
+// Auswahl "+ Neuer Lagerort…": Die Liste wird zum Textfeld, der Name wird beim
+// Speichern angelegt (der Server legt unbekannte Lagerorte an).
+const NEW_LOCATION = '\u{2795}:neuer-lagerort';
+function setupNewLocationOption() {
+    document.querySelectorAll('#modal-body select[name="lagerort"], #modal-body select[name="lagerort_reste"]')
+        .forEach(sel => sel.addEventListener('change', () => {
+            if (sel.value !== NEW_LOCATION) return;
+            const inp = document.createElement('input');
+            inp.type = 'text';
+            inp.name = sel.name;
+            inp.placeholder = t('loc.new_placeholder');
+            sel.replaceWith(inp);
+            inp.focus();
+        }));
+}
 
 function setupMaterialTypToggle(typ) {
     const body = document.getElementById('modal-body');
@@ -4183,6 +4533,7 @@ function initEvents() {
             if (panel) panel.classList.add('active');
 
             if (tabId === 'material') { renderMaterials(); }
+            else if (tabId === 'stock') { renderLocations(); }
             else if (tabId === 'projects') { renderProjects(); }
             else if (tabId === 'parts') { renderAllParts(); }
             else if (tabId === 'optimization') { renderOptDropdowns(); }
@@ -4222,6 +4573,17 @@ function initEvents() {
                 await renderMaterials();
                 renderOptDropdowns();
             } catch { /* handled */ }
+        });
+    });
+
+    // ----- Lager (Lagerorte, Abfallkiste) -----
+    document.getElementById('btn-loc-new')?.addEventListener('click', () => newLocation());
+    document.getElementById('btn-loc-edit')?.addEventListener('click', () => renameLocation());
+    document.getElementById('btn-loc-del')?.addEventListener('click', () => deleteLocation());
+    document.getElementById('btn-loc-labels')?.addEventListener('click', () => printLocationLabels());
+    document.getElementById('btn-waste-clear')?.addEventListener('click', () => {
+        openConfirmDialog(t('loc.waste_clear_confirm'), async () => {
+            try { await Api.emptyWaste(); renderLocations(); } catch { /* handled */ }
         });
     });
 
@@ -4454,6 +4816,17 @@ function initEvents() {
         State.settings.reservation = e.target.checked;
         try { await Api.updateSettings({ reservation: e.target.checked }); } catch { /* non-critical */ }
     });
+    document.getElementById('settings-waste-keep')?.addEventListener('change', async (e) => {
+        State.settings.waste_keep = e.target.checked;
+        updateWasteMinVisibility();
+        try { await Api.updateSettings({ waste_keep: e.target.checked }); } catch { /* non-critical */ }
+    });
+    document.getElementById('settings-waste-min')?.addEventListener('change', async (e) => {
+        const v = Math.max(0, toMm(e.target.value));
+        State.settings.waste_min = v;
+        e.target.value = toDisplay(v);
+        try { await Api.updateSettings({ waste_min: v }); } catch { /* non-critical */ }
+    });
 
     document.getElementById('btn-restart')?.addEventListener('click', () => {
         if (!State.optimizationResult) return;
@@ -4523,6 +4896,7 @@ function initEvents() {
             // Re-render tables to show new units
             const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
             if (activeTab === 'material') { renderMaterials(); }
+            else if (activeTab === 'stock') { renderLocations(); }
             else if (activeTab === 'projects') { renderParts(); }
         } catch { /* non-critical */ }
     });
@@ -4694,9 +5068,9 @@ function initEvents() {
 
         const tab = document.querySelector('.tab-btn.active')?.dataset.tab;
 
-        // Tab switching: 1-4
-        if (e.key >= '1' && e.key <= '5' && !e.ctrlKey && !e.metaKey && !e.altKey) {
-            const tabs = ['material', 'projects', 'parts', 'optimization', 'settings'];
+        // Tab switching: 1-6
+        if (e.key >= '1' && e.key <= '6' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            const tabs = ['material', 'stock', 'projects', 'parts', 'optimization', 'settings'];
             const target = tabs[parseInt(e.key) - 1];
             const btn = document.querySelector(`.tab-btn[data-tab="${target}"]`);
             if (btn) { e.preventDefault(); btn.click(); }
@@ -4709,6 +5083,7 @@ function initEvents() {
         if (hotkeyMatches('new', e)) {
             e.preventDefault();
             if (tab === 'material') document.getElementById('btn-mat-new')?.click();
+            else if (tab === 'stock') document.getElementById('btn-loc-new')?.click();
             else if (tab === 'projects') {
                 if (State.selectedProjectId) document.getElementById('btn-part-new')?.click();
                 else document.getElementById('btn-proj-new')?.click();
@@ -4724,6 +5099,7 @@ function initEvents() {
                 if (State.selectedStockId) document.getElementById('btn-stock-edit')?.click();
                 else document.getElementById('btn-mat-edit')?.click();
             }
+            else if (tab === 'stock') document.getElementById('btn-loc-edit')?.click();
             else if (tab === 'projects') {
                 if (State.selectedPartId) document.getElementById('btn-part-edit')?.click();
                 else document.getElementById('btn-proj-edit')?.click();
@@ -4739,6 +5115,7 @@ function initEvents() {
                 if (State.selectedStockId) document.getElementById('btn-stock-del')?.click();
                 else document.getElementById('btn-mat-del')?.click();
             }
+            else if (tab === 'stock') document.getElementById('btn-loc-del')?.click();
             else if (tab === 'projects') {
                 if (State.selectedPartId) document.getElementById('btn-part-del')?.click();
                 else document.getElementById('btn-proj-del')?.click();

@@ -27,7 +27,12 @@
     <ul class="fd-tabs fd-tabs--m app-tabs" role="tablist">
       <li class="fd-tabs__item" role="presentation">
         <a class="fd-tabs__link tab-btn active" role="tab" aria-selected="true" data-tab="material" href="#">
-          <span class="fd-tabs__tag" data-i18n="tab.material_stock">Material &amp; Lager</span>
+          <span class="fd-tabs__tag" data-i18n="tab.material">Material</span>
+        </a>
+      </li>
+      <li class="fd-tabs__item" role="presentation">
+        <a class="fd-tabs__link tab-btn" role="tab" aria-selected="false" data-tab="stock" href="#">
+          <span class="fd-tabs__tag" data-i18n="tab.stock">Lager</span>
         </a>
       </li>
       <li class="fd-tabs__item" role="presentation">
@@ -92,6 +97,7 @@
               <button id="btn-stock-labels" class="fd-button" type="button" data-i18n="labels.button">Etiketten</button>
             </div>
           </div>
+          <div id="stock-location-info" class="panel-subinfo"></div>
           <div class="panel-content">
             <table id="stock-table" class="fd-table">
               <thead class="fd-table__header">
@@ -104,6 +110,43 @@
               <tbody class="fd-table__body"></tbody>
             </table>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-stock" class="tab-content">
+      <div class="split-panel">
+        <div class="panel">
+          <div class="panel-header">
+            <h2 class="fd-title fd-title--h5" data-i18n="loc.title">Lagerorte</h2>
+            <div class="toolbar">
+              <button id="btn-loc-new" class="fd-button fd-button--emphasized" type="button" data-i18n="btn.new">Neu</button>
+              <button id="btn-loc-edit" class="fd-button" type="button" data-i18n="loc.rename_btn">Umbenennen</button>
+              <button id="btn-loc-del" class="fd-button fd-button--negative" type="button" data-i18n="btn.delete">Entfernen</button>
+            </div>
+          </div>
+          <div class="panel-content">
+            <table id="location-table" class="fd-table">
+              <thead class="fd-table__header">
+                <tr class="fd-table__row">
+                  <th class="fd-table__cell" data-i18n="loc.name">Name</th>
+                  <th class="fd-table__cell" data-i18n="loc.materials">Materialien</th>
+                  <th class="fd-table__cell" data-i18n="loc.pieces">Stücke</th>
+                </tr>
+              </thead>
+              <tbody class="fd-table__body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header">
+            <h2 class="fd-title fd-title--h5" id="loc-contents-title" data-i18n="loc.contents">Inhalt</h2>
+            <div class="toolbar">
+              <button id="btn-loc-labels" class="fd-button" type="button" data-i18n="labels.button">Etiketten</button>
+              <button id="btn-waste-clear" class="fd-button fd-button--negative" type="button" data-i18n="loc.waste_clear" style="display:none">Kiste leeren</button>
+            </div>
+          </div>
+          <div class="panel-content" id="loc-contents"></div>
         </div>
       </div>
     </section>
@@ -315,6 +358,14 @@
         <div class="form-group">
           <label class="fd-form-label" for="settings-nr-lock" data-i18n="set.nr_lock" title="" data-i18n-title="set.nr_lock_hint">Nummern-Sperrfrist (Tage, 0 = aus):</label>
           <input type="number" id="settings-nr-lock" min="0" step="1" class="cs-input" style="width:100px">
+        </div>
+        <div class="form-group">
+          <label class="fd-form-label" for="settings-waste-keep" data-i18n="set.waste_keep" title="" data-i18n-title="set.waste_keep_hint">Abfallstücke in der Abfallkiste aufheben:</label>
+          <input type="checkbox" id="settings-waste-keep" class="cs-checkbox">
+        </div>
+        <div class="form-group" id="settings-waste-min-group">
+          <label class="fd-form-label" for="settings-waste-min" id="settings-waste-min-label">Abfall erst ab:</label>
+          <input type="number" id="settings-waste-min" min="0" step="any" class="cs-input" style="width:100px">
         </div>
       </div>
 

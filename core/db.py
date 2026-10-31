@@ -101,6 +101,37 @@ CREATE TABLE IF NOT EXISTS lagerstueck (
     ist_rest    INTEGER NOT NULL DEFAULT 0     -- beim Sägen entstanden / als Rest markiert
 );
 
+-- Lagerorte (feste Liste). Materialien verweisen über den Namen darauf
+-- (material.lagerort / lagerort_reste), damit ältere Versionen weiter lesen können.
+CREATE TABLE IF NOT EXISTS lagerort (
+    id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    name  TEXT    NOT NULL UNIQUE COLLATE NOCASE
+);
+
+-- Abfallkiste: Abschnitte unter dem Mindest-Restmaß, ohne Stück-Code
+CREATE TABLE IF NOT EXISTS abfall (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    material_id INTEGER NOT NULL REFERENCES material(id) ON DELETE CASCADE,
+    laenge      REAL    NOT NULL,
+    breite      REAL    NOT NULL DEFAULT 0,
+    anzahl      INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(material_id, laenge, breite)
+);
+
+-- Lagerjournal: jede Lagerbuchung, egal ob aus der Oberfläche oder per API
+CREATE TABLE IF NOT EXISTS lagerjournal (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    zeit        REAL    NOT NULL,
+    art         TEXT    NOT NULL,
+    material_id INTEGER NOT NULL DEFAULT 0,
+    code        TEXT    NOT NULL DEFAULT '',
+    laenge      REAL    NOT NULL DEFAULT 0,
+    breite      REAL    NOT NULL DEFAULT 0,
+    anzahl      INTEGER NOT NULL DEFAULT 0,
+    quelle      TEXT    NOT NULL DEFAULT '',
+    notiz       TEXT    NOT NULL DEFAULT ''
+);
+
 -- Frei gewordene Stücknummern erst nach einer Sperrfrist neu vergeben
 -- (Schutz, falls ein Stück versehentlich abgehakt wurde und noch im Regal liegt)
 CREATE TABLE IF NOT EXISTS stueck_nr_sperre (
@@ -218,7 +249,8 @@ CREATE TABLE IF NOT EXISTS schnittplan_brett (
     verschnitt_prozent REAL  NOT NULL DEFAULT 0,
     verbraucht       INTEGER NOT NULL DEFAULT 0,
     rest_ids_json    TEXT    NOT NULL DEFAULT '[]',
-    stueck_json      TEXT    NOT NULL DEFAULT ''
+    stueck_json      TEXT    NOT NULL DEFAULT '',
+    abfall_json      TEXT    NOT NULL DEFAULT '[]'   -- in die Abfallkiste gelegt [[l, b], ...]
 );
 
 CREATE TABLE IF NOT EXISTS schnittplan_stueck (
@@ -252,11 +284,16 @@ class Database:
     # So viele automatische Sicherungen (*-vor-update-*) bleiben liegen, ältere weg
     MAX_SICHERUNGEN = 5
 
-    def __init__(self, path: Path | str = DEFAULT_DB, app_version: str | None = None):
+    def __init__(self, path: Path | str = DEFAULT_DB, app_version: str | None = None,
+                 lagerort_standard: str = "Lager"):
         """app_version: laufende Programmversion. Wenn gesetzt, wird die DB bei
-        jedem Versionswechsel vorher gesichert (nicht nur bei Schema-Änderungen)."""
+        jedem Versionswechsel vorher gesichert (nicht nur bei Schema-Änderungen).
+        lagerort_standard: Name des Lagerorts, den die App anlegt, wenn es noch keinen gibt."""
         self.path = Path(path)
         self.app_version = app_version
+        self.lagerort_standard = lagerort_standard or "Lager"
+        # Woher die laufende Buchung kommt ("ui"/"api"), fürs Lagerjournal
+        self.quelle = ""
         # Sperrfrist (Tage) für frei gewordene Stücknummern; die Web-App setzt sie
         # aus den Einstellungen, 0 = sofort wieder vergeben
         self.nr_sperrfrist_tage: float = 1.0
@@ -284,6 +321,7 @@ class Database:
         "schnittplan_stueck": {"ist_fuellteil"},
         "material": {"kuerzel", "lagerort", "lagerort_reste"},
         "einzelstueck": {"lagerort"},
+        "schnittplan_brett": {"abfall_json"},
     }
 
     @staticmethod
@@ -326,7 +364,7 @@ class Database:
                 conn.close()
             if "projekt" not in tabellen:
                 return  # leere/neue DB, nichts zu sichern
-            schema_aktuell = "schnittplan" in tabellen and all(
+            schema_aktuell = {"schnittplan", "lagerort"} <= tabellen and all(
                 spalten <= self._spalten_vorhanden(self.path, tabelle)
                 for tabelle, spalten in self.PFLICHT_SPALTEN.items())
             version_gleich = (not self.app_version or
@@ -349,8 +387,11 @@ class Database:
             pass  # Sicherung ist optional, der Start darf daran nicht scheitern
 
     def _create_tables(self):
+        lagerorte_neu = not self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='lagerort'").fetchone()
         self.conn.executescript(SCHEMA)
         self._migrate()
+        self._migrate_lagerorte(aus_stuecken=lagerorte_neu)
         self.conn.commit()
 
     def _migrate(self):
@@ -405,6 +446,11 @@ class Database:
                             ("fuell_vorschlaege_json", "TEXT NOT NULL DEFAULT '[]'")):
             if spalte not in sp_cols:
                 self.conn.execute(f"ALTER TABLE schnittplan ADD COLUMN {spalte} {typ}")
+        br_cols = {row[1] for row in
+                   self.conn.execute("PRAGMA table_info(schnittplan_brett)").fetchall()}
+        if "abfall_json" not in br_cols:
+            self.conn.execute(
+                "ALTER TABLE schnittplan_brett ADD COLUMN abfall_json TEXT NOT NULL DEFAULT '[]'")
         st_cols = {row[1] for row in
                    self.conn.execute("PRAGMA table_info(schnittplan_stueck)").fetchall()}
         if "ist_fuellteil" not in st_cols:
@@ -428,6 +474,34 @@ class Database:
                 "ALTER TABLE einzelstueck ADD COLUMN lagerort TEXT NOT NULL DEFAULT ''")
         self._migrate_kuerzel()
         self._migrate_stueck_nummern()
+
+    def _migrate_lagerorte(self, aus_stuecken: bool = False):
+        """Lagerort-Liste mit den Texten an den Materialien abgleichen.
+
+        Läuft bei jedem Start: Hat eine ältere Version einen neuen Freitext-Ort
+        gespeichert, kommt er so in die Liste. Beim ersten Start mit Lagerort-Tabelle
+        werden auch die (nicht mehr genutzten) Orte einzelner Stücke übernommen.
+        Danach hat jedes Material einen Lagerort (notfalls den Standard-Ort).
+        """
+        quellen = ["SELECT lagerort FROM material", "SELECT lagerort_reste FROM material"]
+        if aus_stuecken:
+            quellen.append("SELECT lagerort FROM einzelstueck")
+        vorhanden = {r[0].lower() for r in self.conn.execute("SELECT name FROM lagerort")}
+        for sql in quellen:
+            for (name,) in self.conn.execute(sql).fetchall():
+                name = (name or "").strip()
+                if name and name.lower() not in vorhanden:
+                    vorhanden.add(name.lower())
+                    self.conn.execute("INSERT INTO lagerort (name) VALUES (?)", (name,))
+        # Schreibweise an die Liste angleichen (Groß/Klein, Leerzeichen)
+        for spalte in ("lagerort", "lagerort_reste"):
+            self.conn.execute(
+                f"""UPDATE material SET {spalte} = (
+                       SELECT o.name FROM lagerort o WHERE o.name = TRIM(material.{spalte}))
+                   WHERE TRIM({spalte}) != ''""")
+        if self.conn.execute("SELECT 1 FROM material WHERE lagerort = ''").fetchone():
+            self.conn.execute("UPDATE material SET lagerort=? WHERE lagerort = ''",
+                              (self.standard_lagerort(),))
 
     def _migrate_kuerzel(self):
         """Materialien ohne Kürzel bekommen einen Vorschlag aus dem Namen."""
@@ -547,8 +621,10 @@ class Database:
             m.kuerzel = kuerzel_vorschlag(m.name, andere)
         elif m.kuerzel in andere:
             raise ValueError(f"Kürzel {m.kuerzel} ist schon vergeben")
-        m.lagerort = (m.lagerort or "").strip()
-        m.lagerort_reste = (m.lagerort_reste or "").strip()
+        m.lagerort = self.lagerort_sichern(m.lagerort) or self.standard_lagerort()
+        m.lagerort_reste = self.lagerort_sichern(m.lagerort_reste)
+        if m.lagerort_reste.lower() == m.lagerort.lower():
+            m.lagerort_reste = ""   # leer = gleicher Ort wie das Material
         if m.id is None:
             cur = self.conn.execute(
                 """INSERT INTO material
@@ -1220,6 +1296,7 @@ class Database:
                 rest_ids=[r if isinstance(r, list) else [r, 0]
                           for r in json.loads(b["rest_ids_json"] or "[]")],
                 verbrauchtes_stueck=json.loads(b["stueck_json"]) if b["stueck_json"] else None,
+                abfall=json.loads(b["abfall_json"] or "[]"),
             )
             brett.stuecke = [
                 PlanStueck(id=s["id"], brett_id=brett.id, teil_id=s["teil_id"],
@@ -1280,10 +1357,10 @@ class Database:
         import json
         self.conn.execute(
             """UPDATE schnittplan_brett SET lagerstueck_id=?, verbraucht=?,
-               rest_ids_json=?, stueck_json=? WHERE id=?""",
+               rest_ids_json=?, stueck_json=?, abfall_json=? WHERE id=?""",
             (b.lagerstueck_id, int(b.verbraucht), json.dumps(b.rest_ids),
              json.dumps(b.verbrauchtes_stueck) if b.verbrauchtes_stueck else "",
-             b.id))
+             json.dumps(b.abfall), b.id))
         self.conn.commit()
 
     def plan_geaendert(self, plan_id: int):
@@ -1492,8 +1569,8 @@ class Database:
         """Rest als Lagerstück einbuchen. Gleiche Maße werden zusammengefasst.
 
         Liefert (Lagerzeile, Stücknummer des neuen Rests) oder None, wenn der
-        Rest unter dem Mindestmaß liegt (= Abfall). Der Rest bekommt den
-        Reste-Lagerort des Materials und, falls frei, die Nummer wunsch_nr.
+        Rest unter dem Mindestmaß liegt (= Abfall). Der Rest bekommt, falls frei,
+        die Nummer wunsch_nr; sein Lagerort ist der Reste-Ort des Materials.
         """
         mat = self.get_material(material_id)
         if not mat:
@@ -1510,12 +1587,265 @@ class Database:
                   None) or Lagerstueck(material_id=material_id, laenge=laenge,
                                        breite=breite, stueckzahl=0, ist_rest=True)
         ls, nr = self.stueck_hinzufuegen(ls, wunsch_nr)
-        if mat.lagerort_reste and nr:
-            self.conn.execute(
-                "UPDATE einzelstueck SET lagerort=? WHERE lagerstueck_id=? AND nr=?",
-                (mat.lagerort_reste, ls.id, nr))
-            self.conn.commit()
         return ls, nr
+
+    # ------------------------------------------------------------------
+    # Lagerorte
+    # ------------------------------------------------------------------
+
+    def list_lagerorte(self) -> list[dict]:
+        """Alle Lagerorte mit Nutzung: [{id, name, materialien, stuecke}]."""
+        orte = [dict(r) for r in self.conn.execute(
+            "SELECT id, name FROM lagerort ORDER BY name COLLATE NOCASE")]
+        for o in orte:
+            inhalt = self.lagerort_inhalt(o["name"])
+            o["materialien"] = len(inhalt)
+            o["stuecke"] = sum(ls.stueckzahl for m, rolle in inhalt
+                               for ls in self.lagerort_stuecke(m, rolle))
+        return orte
+
+    def get_lagerort(self, ref: int | str) -> dict | None:
+        """Lagerort über ID oder Namen (Groß/Klein egal)."""
+        if isinstance(ref, int) or str(ref).isdigit():
+            row = self.conn.execute(
+                "SELECT id, name FROM lagerort WHERE id=?", (int(ref),)).fetchone()
+            if row:
+                return dict(row)
+        row = self.conn.execute(
+            "SELECT id, name FROM lagerort WHERE name=?", (str(ref).strip(),)).fetchone()
+        return dict(row) if row else None
+
+    def standard_lagerort(self) -> str:
+        """Name des ersten Lagerorts; gibt es keinen, wird der Standard-Ort angelegt."""
+        row = self.conn.execute("SELECT name FROM lagerort ORDER BY id LIMIT 1").fetchone()
+        if row:
+            return row["name"]
+        self.conn.execute("INSERT INTO lagerort (name) VALUES (?)", (self.lagerort_standard,))
+        return self.lagerort_standard
+
+    def lagerort_sichern(self, name: str) -> str:
+        """Namen auf die Schreibweise in der Liste bringen; unbekannte Namen anlegen.
+
+        So bleiben die REST-API und ältere Versionen, die Freitext schicken, nutzbar.
+        """
+        name = (name or "").strip()
+        if not name:
+            return ""
+        vorhanden = self.get_lagerort(name)
+        if vorhanden and vorhanden["name"].lower() == name.lower():
+            return vorhanden["name"]
+        self.conn.execute("INSERT INTO lagerort (name) VALUES (?)", (name,))
+        self.journal("lagerort_neu", notiz=name)
+        return name
+
+    def lagerort_anlegen(self, name: str) -> dict:
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("name_leer")
+        if self.get_lagerort(name) and self.get_lagerort(name)["name"].lower() == name.lower():
+            raise ValueError("lagerort_vorhanden")
+        cur = self.conn.execute("INSERT INTO lagerort (name) VALUES (?)", (name,))
+        self.journal("lagerort_neu", notiz=name)
+        self.conn.commit()
+        return {"id": cur.lastrowid, "name": name}
+
+    def lagerort_umbenennen(self, lid: int, name: str) -> dict:
+        """Umbenennen in einem Schritt: alle Materialien zeigen den neuen Namen."""
+        ort = self.get_lagerort(lid)
+        if not ort:
+            raise KeyError(lid)
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("name_leer")
+        anderer = self.get_lagerort(name)
+        if anderer and anderer["id"] != lid and anderer["name"].lower() == name.lower():
+            raise ValueError("lagerort_vorhanden")
+        self.conn.execute("UPDATE lagerort SET name=? WHERE id=?", (name, lid))
+        for spalte in ("lagerort", "lagerort_reste"):
+            self.conn.execute(f"UPDATE material SET {spalte}=? WHERE {spalte}=? COLLATE NOCASE",
+                              (name, ort["name"]))
+        self.journal("lagerort_umbenannt", notiz=f"{ort['name']} → {name}")
+        self.conn.commit()
+        return {"id": lid, "name": name}
+
+    def lagerort_materialien(self, name: str) -> list[Material]:
+        """Materialien, deren Bestand oder Reste an diesem Ort liegen."""
+        return [m for m, _ in self.lagerort_inhalt(name)]
+
+    def lagerort_inhalt(self, name: str) -> list[tuple[Material, str]]:
+        """[(Material, "bestand"|"reste")] für einen Lagerort.
+
+        "bestand": der Ort des Materials (dort liegen auch die Reste, wenn das
+        Material keinen eigenen Reste-Ort hat), "reste": nur der Reste-Ort.
+        """
+        out = []
+        for m in self.list_materials():
+            hier = m.lagerort.lower() == name.lower()
+            reste_hier = bool(m.lagerort_reste) and m.lagerort_reste.lower() == name.lower()
+            if hier:
+                out.append((m, "bestand"))
+            elif reste_hier:
+                out.append((m, "reste"))
+        return out
+
+    def lagerort_loeschen(self, lid: int, ziel_id: int = 0):
+        """Lagerort löschen. Nutzt ihn noch ein Material, braucht es einen Ziel-Ort.
+
+        Raises KeyError (unbekannt), ValueError("letzter_lagerort"|"ziel_ungueltig"),
+        LagerortInBenutzung (mit den betroffenen Materialien).
+        """
+        ort = self.get_lagerort(lid)
+        if not ort:
+            raise KeyError(lid)
+        if self.conn.execute("SELECT COUNT(*) FROM lagerort").fetchone()[0] <= 1:
+            raise ValueError("letzter_lagerort")
+        nutzer = self.lagerort_materialien(ort["name"])
+        if nutzer:
+            ziel = self.get_lagerort(ziel_id) if ziel_id else None
+            if not ziel_id:
+                raise LagerortInBenutzung([m.name for m in nutzer])
+            if not ziel or ziel["id"] == lid:
+                raise ValueError("ziel_ungueltig")
+            self.conn.execute("UPDATE material SET lagerort=? WHERE lagerort=? COLLATE NOCASE",
+                              (ziel["name"], ort["name"]))
+            self.conn.execute(
+                "UPDATE material SET lagerort_reste=? WHERE lagerort_reste=? COLLATE NOCASE",
+                (ziel["name"], ort["name"]))
+            # Reste-Ort = Material-Ort wird als "leer" gespeichert
+            self.conn.execute(
+                "UPDATE material SET lagerort_reste='' WHERE lagerort_reste=lagerort COLLATE NOCASE")
+        self.conn.execute("DELETE FROM lagerort WHERE id=?", (lid,))
+        self.journal("lagerort_geloescht", notiz=ort["name"])
+        self.conn.commit()
+
+    def lagerort_stuecke(self, material: Material, rolle: str) -> list[Lagerstueck]:
+        """Lagerzeilen eines Materials, die an seinem Ort ("bestand") bzw. am
+        Reste-Ort ("reste") liegen."""
+        zeilen = self.list_lagerstuecke(material.id)
+        if rolle == "reste":
+            return [ls for ls in zeilen if ls.ist_rest]
+        if material.lagerort_reste:
+            return [ls for ls in zeilen if not ls.ist_rest]
+        return zeilen
+
+    def stueck_lagerort(self, material: Material, ls: Lagerstueck) -> str:
+        """Wo ein Stück liegt: Reste am Reste-Ort des Materials, sonst am Material-Ort."""
+        if ls.ist_rest and material.lagerort_reste:
+            return material.lagerort_reste
+        return material.lagerort
+
+    # ------------------------------------------------------------------
+    # Stücke über ihren Code
+    # ------------------------------------------------------------------
+
+    def stueck_finden(self, code: str) -> tuple[Material, Lagerstueck, Einzelstueck] | None:
+        """Einzelstück über seine Aufschrift ("AP4040-07", Groß/Klein egal)."""
+        code = (code or "").strip().upper()
+        kuerzel, _, nr_text = code.rpartition("-")
+        if not kuerzel and code.startswith("#"):
+            nr_text = code[1:]
+        if not nr_text.isdigit():
+            return None
+        row = self.conn.execute(
+            """SELECT e.id FROM einzelstueck e
+               JOIN lagerstueck l ON l.id = e.lagerstueck_id
+               JOIN material m ON m.id = l.material_id
+               WHERE m.kuerzel=? AND e.nr=?""", (kuerzel, int(nr_text))).fetchone()
+        if not row:
+            return None
+        e = self.get_einzelstueck(row["id"])
+        ls = self.get_lagerstueck(e.lagerstueck_id)
+        return self.get_material(ls.material_id), ls, e
+
+    def material_finden(self, ref: int | str) -> Material | None:
+        """Material über ID oder Kürzel."""
+        if isinstance(ref, int) or str(ref).isdigit():
+            m = self.get_material(int(ref))
+            if m:
+                return m
+        row = self.conn.execute("SELECT id FROM material WHERE kuerzel=?",
+                                (str(ref).strip().upper(),)).fetchone()
+        return self.get_material(row["id"]) if row else None
+
+    # ------------------------------------------------------------------
+    # Abfallkiste
+    # ------------------------------------------------------------------
+
+    def abfall_liste(self, material_id: int | None = None) -> list[dict]:
+        sql = """SELECT a.material_id, m.name AS material, m.kuerzel, m.typ,
+                        a.laenge, a.breite, a.anzahl
+                 FROM abfall a JOIN material m ON m.id = a.material_id
+                 WHERE a.anzahl > 0"""
+        args: tuple = ()
+        if material_id is not None:
+            sql += " AND a.material_id=?"
+            args = (material_id,)
+        sql += " ORDER BY m.name COLLATE NOCASE, a.laenge DESC, a.breite DESC"
+        return [dict(r) for r in self.conn.execute(sql, args)]
+
+    def abfall_aendern(self, material_id: int, laenge: float, breite: float,
+                       delta: int, commit: bool = True) -> int:
+        """Anzahl eines Abfall-Maßes ändern (nie unter 0). Liefert die neue Anzahl."""
+        laenge, breite = round(laenge, 1), round(breite or 0.0, 1)
+        row = self.conn.execute(
+            "SELECT id, anzahl FROM abfall WHERE material_id=? AND laenge=? AND breite=?",
+            (material_id, laenge, breite)).fetchone()
+        neu = max(0, (row["anzahl"] if row else 0) + delta)
+        if row and neu == 0:
+            self.conn.execute("DELETE FROM abfall WHERE id=?", (row["id"],))
+        elif row:
+            self.conn.execute("UPDATE abfall SET anzahl=? WHERE id=?", (neu, row["id"]))
+        elif neu > 0:
+            self.conn.execute(
+                "INSERT INTO abfall (material_id, laenge, breite, anzahl) VALUES (?,?,?,?)",
+                (material_id, laenge, breite, neu))
+        if commit:
+            self.conn.commit()
+        return neu
+
+    def abfall_leeren(self, material_id: int | None = None) -> int:
+        """Kiste leeren (ganz oder für ein Material). Liefert die Anzahl entfernter Stücke."""
+        where, args = ("WHERE material_id=?", (material_id,)) if material_id else ("", ())
+        n = self.conn.execute(f"SELECT COALESCE(SUM(anzahl), 0) FROM abfall {where}",
+                              args).fetchone()[0]
+        self.conn.execute(f"DELETE FROM abfall {where}", args)
+        self.conn.commit()
+        return n
+
+    # ------------------------------------------------------------------
+    # Lagerjournal
+    # ------------------------------------------------------------------
+
+    def journal(self, art: str, material_id: int = 0, code: str = "", laenge: float = 0.0,
+                breite: float = 0.0, anzahl: int = 0, notiz: str = ""):
+        """Eine Lagerbuchung protokollieren (ohne Commit, läuft mit der Buchung)."""
+        import time
+        self.conn.execute(
+            """INSERT INTO lagerjournal (zeit, art, material_id, code, laenge, breite,
+                                         anzahl, quelle, notiz)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (time.time(), art, material_id, code, laenge, breite or 0.0, anzahl,
+             self.quelle, notiz))
+
+    def journal_liste(self, material_id: int | None = None, seit: float = 0.0,
+                      limit: int = 200) -> list[dict]:
+        sql = """SELECT j.*, COALESCE(m.name, '') AS material FROM lagerjournal j
+                 LEFT JOIN material m ON m.id = j.material_id WHERE j.zeit >= ?"""
+        args: list = [seit]
+        if material_id is not None:
+            sql += " AND j.material_id=?"
+            args.append(material_id)
+        sql += " ORDER BY j.id DESC LIMIT ?"
+        args.append(max(1, min(limit, 5000)))
+        return [dict(r) for r in self.conn.execute(sql, args)]
+
+
+class LagerortInBenutzung(Exception):
+    """Lagerort wird noch von Materialien genutzt."""
+
+    def __init__(self, materialien: list[str]):
+        super().__init__("lagerort_in_benutzung")
+        self.materialien = materialien
 
 
 def seed_data(db: Database):

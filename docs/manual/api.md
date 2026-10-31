@@ -1,0 +1,171 @@
+# REST API
+
+[← Manual](README.md)
+
+Every function of the user interface is also available via the REST API under `/api/` -- the interface itself uses nothing else. All endpoints accept and return JSON. CutStock serves an automatically generated, interactive description of all endpoints at `/docs`.
+
+For programs, scanners and machines:
+
+- Materials can be addressed by ID **or short code** (`AP40`), pieces by ID **or code** (`AP40-07`, from the label), locations by ID **or name**.
+- Errors of the stock commands carry a fixed code: `{"detail": {"code": "stueck_reserviert", "message": "...", "projekt": "..."}}`.
+- Every stock booking is written to the stock journal, with source `api` or `ui`.
+
+## Authentication
+
+When an API key is configured (Settings page), external requests must include it as a Bearer token:
+
+```bash
+curl -H "Authorization: Bearer YOUR_API_KEY" http://cutstock:8420/api/materials
+```
+
+Requests from the web UI (same-origin) and from localhost are always allowed without a key.
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| **Materials** | | |
+| GET | `/api/materials` | List all materials |
+| POST | `/api/materials` | Create a material |
+| PUT | `/api/materials/{id}` | Update a material |
+| DELETE | `/api/materials/{id}` | Delete a material |
+| **Stock** | | |
+| GET | `/api/stock?material_id=N` | List stock (optional filter) |
+| POST | `/api/stock` | Create stock entry |
+| PUT | `/api/stock/{id}` | Update stock entry |
+| DELETE | `/api/stock/{id}` | Delete stock entry |
+| GET | `/api/stock/{id}/pieces` | List individual pieces (code, location, reserved for) |
+| GET | `/api/pieces/{id or code}` | Look up a piece: material, size, location, reservation |
+| PUT | `/api/pieces/{id or code}` | Change a piece's note |
+| GET/POST/DELETE | `/api/materials/{id}/image` | Read, upload, remove material image |
+| **Stock locations** (see below) | | |
+| GET | `/api/locations` | Locations with number of materials and pieces |
+| POST | `/api/locations` | Create a location `{"name": "Rack 3"}` |
+| PUT | `/api/locations/{id or name}` | Rename a location |
+| DELETE | `/api/locations/{id or name}?ziel=…` | Delete a location; if in use, `ziel` (target) is required |
+| GET | `/api/locations/{id or name}/contents` | What is stored there: materials with pieces |
+| PUT | `/api/materials/{id or short code}/location` | Assign a material to a location |
+| POST | `/api/stock/receive` | Receive stock: add pieces, returns the new codes |
+| POST | `/api/pieces/{id or code}/take` | Take a piece out (with reason) |
+| GET | `/api/waste` | Contents of the offcut bin |
+| POST | `/api/waste` | Put offcuts into the bin |
+| POST | `/api/waste/take` | Take offcuts out of the bin |
+| DELETE | `/api/waste?material=…` | Empty the bin (all or per material) |
+| GET | `/api/journal?material=…&seit=…` | Stock journal, newest first |
+| **Defects** | | |
+| GET | `/api/stock/{id}/defects` | Defects on a stock entry |
+| GET | `/api/pieces/{id}/defects` | Defects on a piece |
+| POST | `/api/pieces/{id}/defects` | Add a defect |
+| PUT | `/api/defects/{id}` | Update a defect |
+| DELETE | `/api/defects/{id}` | Delete a defect |
+| **Saw Blades** | | |
+| GET | `/api/blades` | List saw blades |
+| POST | `/api/blades` | Create a blade |
+| PUT | `/api/blades/{id}` | Update a blade |
+| DELETE | `/api/blades/{id}` | Delete a blade |
+| **Projects** | | |
+| GET | `/api/projects` | List projects |
+| GET | `/api/projects/{id}` | Get a project |
+| POST | `/api/projects` | Create a project |
+| PUT | `/api/projects/{id}` | Update a project (name, number of copies) |
+| DELETE | `/api/projects/{id}` | Delete a project |
+| POST | `/api/projects/{id}/clone` | Duplicate a project |
+| POST | `/api/projects/{id}/copy-parts` | Copy parts into a project |
+| POST | `/api/projects/{id}/restart` | Restart project (progress 0, plans removed, stock unchanged) |
+| **Parts** | | |
+| GET | `/api/projects/{id}/parts` | List parts of a project |
+| POST | `/api/projects/{id}/parts` | Add a part |
+| PUT | `/api/parts/{id}` | Update a part (optional `vorrat`: set shelf stock) |
+| DELETE | `/api/parts/{id}` | Delete a part |
+| **Optimization and Plans** | | |
+| POST | `/api/optimize` | Optimize and save as the project's plan for the material |
+| GET | `/api/projects/{id}/plans/{material_id}` | Get the saved plan (`null` if there is none) |
+| POST | `/api/plan-pieces/{id}` | Mark a piece as cut / undo (`{"gesaegt": true}`), updates progress and stock |
+| POST | `/api/plans/{id}/confirm-all` | Mark all open pieces of the plan as cut |
+| DELETE | `/api/plans/{id}` | Discard plan (releases reserved pieces) |
+| GET | `/api/projects/{id}/fill-candidates/{material_id}` | Possible filler parts from other projects |
+| GET | `/api/sammel/{material_id}` | Combined plan status and eligible projects |
+| POST | `/api/sammel/optimize` | Create/replace and compute the combined plan |
+| GET | `/api/parts` | Parts of all projects ("Parts" tab) |
+| POST | `/api/cut-lists` | Create a cut list from individual parts |
+| POST | `/api/sammel/compare` | Compare separate vs. combined (not saved) |
+| POST | `/api/projects/{id}/take-stock/{material_id}` | Take part stock ("shelf") over as cut |
+| **Export** | | |
+| POST | `/api/pdf` | Generate PDF cut plan |
+| POST | `/api/labels` | Generate label PDF |
+| **System** | | |
+| GET | `/api/version` | App version and links |
+| GET | `/api/license` | License status |
+| GET | `/api/settings` | Read settings |
+| PUT | `/api/settings` | Update settings |
+| GET | `/api/backup` | Download database backup (ZIP) |
+| POST | `/api/restore` | Restore from backup (ZIP) |
+| GET | `/api/i18n/{lang}` | Translations for a language |
+
+## Optimization request
+
+```json
+POST /api/optimize
+{
+  "project_id": 1,
+  "material_id": 3,
+  "blade_id": 1,
+  "algorithm": "nested",
+  "reste_zuerst": false,
+  "fuellteile": [{"teil_id": 42, "modus": "auffuellen", "menge": 0}],
+  "fuell_alle_reste": false
+}
+```
+
+Algorithm choices: `greedy`, `nested`, `ga`. `reste_zuerst` (remnants first), `fuellteile` (filler parts) and `fuell_alle_reste` are optional (filler mode `auffuellen` = fill or `fest` = fixed quantity; without `fuellteile` the saved plan's selection is kept).
+
+The response is the saved plan: `plan_id`, `schnittplaene` (per board e.g. `stueck_code`, `lagerort`, `platzierungen` with `id` and `gesaegt`), `fehlende_teile` (parts that didn't fit), `gesamt_verschnitt_prozent` (total waste %), `materialbedarf` (additional material needed -- empty when everything fits) and the hints `veraltet` (outdated) and `lager_fehlt` (stock missing).
+
+## Stock commands
+
+Receive stock -- returns the codes for labelling:
+
+```json
+POST /api/stock/receive
+{"material": "AP40", "laenge": 6000, "anzahl": 4}
+
+→ {"stock_id": 12, "codes": ["AP40-21", "AP40-22", "AP40-23", "AP40-24"], "lagerort": "Rack Alu"}
+```
+
+`breite` (width) only for panels, `ist_rest: true` for offcuts (stored at the offcut location).
+
+Take a piece out:
+
+```json
+POST /api/pieces/AP40-07/take
+{"grund": "verbraucht", "notiz": "prototype"}
+```
+
+`grund` (reason): `verbraucht` (used), `verkauft` (sold), `defekt` (defective) or `abfall` (into the offcut bin, if switched on).
+If a saved plan reserves the piece, the answer is `409` with `code: "stueck_reserviert"` and the project; with `"trotzdem": true` it is taken out anyway. The plan then reports `lager_fehlt` and `fehlende_stuecke`.
+
+Assign a material to a location:
+
+```json
+PUT /api/materials/AP40/location
+{"lagerort": "Rack Alu", "lagerort_reste": "Offcut box Alu"}
+```
+
+`lagerort_reste: ""` = offcuts stay with the material. When creating/updating a material via `/api/materials`, an unknown location name is created automatically.
+
+Delete a location that is still in use:
+
+```
+DELETE /api/locations/Rack%203              → 409 {"code": "lagerort_in_benutzung", "materialien": [...]}
+DELETE /api/locations/Rack%203?ziel=Stock   → 204, the materials are now at "Stock"
+```
+
+Offcut bin (no codes, only material + size + quantity):
+
+```json
+POST /api/waste        {"material": "AP40", "laenge": 180, "anzahl": 2}
+POST /api/waste/take   {"material": "AP40", "laenge": 180}
+DELETE /api/waste?material=AP40
+```
+
+Stock journal: `GET /api/journal?material=AP40&seit=1767225600&limit=100` -- each entry has `zeit` (Unix time), `art` (`zugang`, `korrektur_ab`, `entnahme`, `plan_verbrauch`, `plan_zurueck`, `rest_ein`, `rest_zurueck`, `abfall_ein`, `abfall_zurueck`, `abfall_ab`, `abfall_leer`, `material_lagerort`, `lagerort_neu`, `lagerort_umbenannt`, `lagerort_geloescht`), `code`, sizes, `anzahl`, `quelle` (`ui`/`api`), `notiz`.

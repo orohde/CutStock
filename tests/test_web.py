@@ -558,13 +558,14 @@ class TestStueckCodes:
         mid2 = self._mat(client, name="Zweites", kuerzel="Z2")["id"]
         assert self._codes(client, self._stock(client, mid2, 1000)) == ["Z2-01"]
 
-    def test_lagerort_vom_material_und_eigener(self, client):
+    def test_lagerort_kommt_vom_material(self, client):
         mid = self._mat(client, kuerzel="LO", lagerort="Regal 2")["id"]
         sid = self._stock(client, mid, 3000, n=2)
         p1, p2 = client.get(f"/api/stock/{sid}/pieces").json()
-        assert p1["lagerort_effektiv"] == "Regal 2"
-        r = client.put(f"/api/pieces/{p2['id']}", json={"notiz": "", "lagerort": "Kiste"}).json()
-        assert r["lagerort"] == "Kiste" and r["lagerort_effektiv"] == "Kiste"
+        assert p1["lagerort"] == p1["lagerort_effektiv"] == "Regal 2"
+        # Ein eigener Ort am Stück wird nicht mehr übernommen
+        r = client.put(f"/api/pieces/{p2['id']}", json={"notiz": "x", "lagerort": "Kiste"}).json()
+        assert r["lagerort"] == "Regal 2" and r["notiz"] == "x"
 
     def test_plan_zeigt_code_und_rest_mit_freier_nummer(self, client):
         mat = self._mat(client, kuerzel="RS", lagerort="Wand", lagerort_reste="Restekiste",
@@ -1109,3 +1110,120 @@ class TestSchnittliste:
         kopie = client.post(f"/api/projects/{liste['id']}/clone").json()
         assert kopie["art"] == "liste"
         assert kopie["teile"][0]["herkunft_teil_id"] == teile["A"]["id"]
+
+
+# =====================================================================
+# Lager: Lagerorte, Zugang/Entnahme per Code, Abfallkiste, Journal
+# =====================================================================
+
+class TestLager:
+
+    def _mat(self, client, kuerzel, typ="Stange", **kw):
+        r = client.post("/api/materials", json={"name": f"Mat {kuerzel}", "typ": typ,
+                                                "kuerzel": kuerzel, **kw})
+        assert r.status_code == 201, r.text
+        return r.json()
+
+    def test_material_hat_immer_einen_lagerort(self, client):
+        m = self._mat(client, "LG1")
+        namen = [o["name"] for o in client.get("/api/locations").json()]
+        assert m["lagerort"] in namen
+
+    def test_unbekannter_ort_wird_angelegt_schreibweise_angeglichen(self, client):
+        self._mat(client, "LG2", lagerort="Wandregal Neu")
+        m = self._mat(client, "LG3", lagerort="  wandregal neu ")
+        assert m["lagerort"] == "Wandregal Neu"
+        namen = [o["name"].lower() for o in client.get("/api/locations").json()]
+        assert namen.count("wandregal neu") == 1
+
+    def test_aendern_ohne_lagerort_behaelt_ihn(self, client):
+        m = self._mat(client, "LG4", lagerort="Halle", lagerort_reste="Kiste A")
+        r = client.put(f"/api/materials/{m['id']}", json={"name": "Neu", "typ": "Stange",
+                                                         "kuerzel": "LG4"}).json()
+        assert (r["lagerort"], r["lagerort_reste"]) == ("Halle", "Kiste A")
+
+    def test_umbenennen_wirkt_auf_materialien(self, client):
+        m = self._mat(client, "LG5", lagerort="Ort Alt")
+        ort = next(o for o in client.get("/api/locations").json() if o["name"] == "Ort Alt")
+        assert client.put(f"/api/locations/{ort['id']}", json={"name": "Ort Neu"}).status_code == 200
+        assert client.get("/api/materials").json()[0]["lagerort"] != "Ort Alt"
+        mat = next(x for x in client.get("/api/materials").json() if x["id"] == m["id"])
+        assert mat["lagerort"] == "Ort Neu"
+
+    def test_loeschen_braucht_ziel_wenn_genutzt(self, client):
+        self._mat(client, "LG6", lagerort="Weg damit")
+        client.post("/api/locations", json={"name": "Ziel"})
+        r = client.delete("/api/locations/Weg damit")
+        assert r.status_code == 409
+        assert r.json()["detail"]["code"] == "lagerort_in_benutzung"
+        assert client.delete("/api/locations/Weg damit?ziel=Ziel").status_code == 204
+        m = next(x for x in client.get("/api/materials").json() if x["kuerzel"] == "LG6")
+        assert m["lagerort"] == "Ziel"
+
+    def test_zugang_und_entnahme_per_code(self, client):
+        self._mat(client, "LG7", lagerort="R1", lagerort_reste="Restkiste")
+        r = client.post("/api/stock/receive", json={"material": "lg7", "laenge": 800,
+                                                    "anzahl": 2, "ist_rest": True}).json()
+        assert r["codes"] == ["LG7-01", "LG7-02"] and r["lagerort"] == "Restkiste"
+        assert client.get("/api/pieces/lg7-02").json()["laenge"] == 800
+        inhalt = client.get("/api/locations/Restkiste/contents").json()
+        assert inhalt[0]["rolle"] == "reste" and inhalt[0]["bestand"][0]["stueckzahl"] == 2
+        t = client.post("/api/pieces/LG7-01/take", json={"grund": "verbraucht"}).json()
+        assert t["code"] == "LG7-01"
+        assert client.get("/api/pieces/LG7-01").status_code == 404
+        arten = [j["art"] for j in client.get("/api/journal?material=LG7").json()]
+        assert arten.count("zugang") == 2 and "entnahme" in arten
+
+    def test_reserviertes_stueck_nur_mit_trotzdem(self, client):
+        m = self._mat(client, "LG8")
+        client.post("/api/stock/receive", json={"material": "LG8", "laenge": 3000})
+        pid = client.post("/api/projects", json={"name": "Res"}).json()["id"]
+        client.post(f"/api/projects/{pid}/parts", json={
+            "label": "A", "typ": "Stange", "material_id": m["id"], "laenge": 1000})
+        bid = client.post("/api/blades", json={"name": "B", "schnittbreite": 3}).json()["id"]
+        client.post("/api/optimize", json={"project_id": pid, "material_id": m["id"],
+                                           "blade_id": bid})
+        r = client.post("/api/pieces/LG8-01/take", json={})
+        assert r.status_code == 409 and r.json()["detail"]["projekt"] == "Res"
+        assert client.post("/api/pieces/LG8-01/take",
+                           json={"trotzdem": True}).json()["reserviert_fuer"] == "Res"
+        plan = client.get(f"/api/projects/{pid}/plans/{m['id']}").json()
+        assert plan["lager_fehlt"] and plan["fehlende_stuecke"] == ["LG8-01"]
+
+    def test_abfall_beim_saegen_in_die_kiste(self, client):
+        client.put("/api/settings", json={"waste_keep": True, "waste_min": 50})
+        m = self._mat(client, "LG9", rest_min_laenge=500)
+        client.post("/api/stock/receive", json={"material": "LG9", "laenge": 1000})
+        pid = client.post("/api/projects", json={"name": "Abf"}).json()["id"]
+        client.post(f"/api/projects/{pid}/parts", json={
+            "label": "A", "typ": "Stange", "material_id": m["id"], "laenge": 897})
+        bid = client.post("/api/blades", json={"name": "B", "schnittbreite": 3}).json()["id"]
+        plan = client.post("/api/optimize", json={"project_id": pid, "material_id": m["id"],
+                                                  "blade_id": bid}).json()
+        brett = plan["schnittplaene"][0]
+        assert brett["reste_ziel"] == ["abfallkiste"]          # 100 mm Rest
+        st = brett["platzierungen"][0]["id"]
+        client.post(f"/api/plan-pieces/{st}", json={"gesaegt": True})
+        assert client.get("/api/waste?material=LG9").json()[0]["anzahl"] == 1
+        # Zurücknehmen nimmt den Abschnitt wieder aus der Kiste
+        client.post(f"/api/plan-pieces/{st}", json={"gesaegt": False})
+        assert client.get("/api/waste?material=LG9").json() == []
+
+    def test_untergrenze_und_ausgeschaltet(self, client):
+        m = self._mat(client, "LGA", rest_min_laenge=500)
+        mat = webapp.get_db().get_material(m["id"])
+        assert webapp._rest_ziel(mat, 100) == "weg"            # Kiste aus
+        client.put("/api/settings", json={"waste_keep": True, "waste_min": 150})
+        assert webapp._rest_ziel(mat, 100) == "weg"            # unter der Untergrenze
+        assert webapp._rest_ziel(mat, 200) == "abfallkiste"
+        assert webapp._rest_ziel(mat, 600) == "lager"
+
+    def test_abfallkiste_entnehmen_und_leeren(self, client):
+        self._mat(client, "LGB")
+        client.post("/api/waste", json={"material": "LGB", "laenge": 120, "anzahl": 2})
+        r = client.post("/api/waste/take", json={"material": "LGB", "laenge": 120, "anzahl": 3})
+        assert r.status_code == 409 and r.json()["detail"]["vorhanden"] == 2
+        assert client.post("/api/waste/take",
+                           json={"material": "LGB", "laenge": 120}).json()[0]["anzahl"] == 1
+        assert client.delete("/api/waste?material=LGB").status_code == 204
+        assert client.get("/api/waste?material=LGB").json() == []
