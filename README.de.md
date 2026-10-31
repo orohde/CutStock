@@ -27,6 +27,7 @@ CutStock gibt es in zwei Varianten, die denselben Optimierungskern teilen:
 - **Reste zuerst** -- auf Wunsch erst nur Reste verplanen, dann ganze Stangen/Platten
 - **Sammelplan** -- ein Material fuer mehrere Projekte gemeinsam optimieren ("Optimieren nach: Material"), mit Vergleich getrennt/gemeinsam; gesaegte Teile zaehlen direkt im jeweiligen Projekt
 - **Fuellteile** -- Teile anderer Projekte mitsaegen, um den Abfall von Stangen und Platten aufzufuellen (ohne zusaetzliches Material); gesaegte Fuellteile kommen in den Teile-Vorrat ("Regal") und werden spaeter vom anderen Projekt uebernommen
+- **Teile und Schnittlisten** -- Reiter "Teile" mit den Teilen aller Projekte; ausgewaehlte Teile als eigene Schnittliste saegen oder als Fuellteile mitnehmen; Regal-Vorrat je Teil, von Hand korrigierbar
 - **Projektverwaltung** -- Teile nach Projekten organisieren, Projekt mehrfach bauen (Anzahl Exemplare), Import/Export als JSON, Teilelisten-Import aus CSV
 - **Visuelle Schnittplaene** -- farbkodierte Zuschnittschemata mit Labels und Massen
 - **Schnittfolge** -- nummerierte, massgenaue Schrittliste pro Schnittplan (Kerf eingerechnet, auch im PDF)
@@ -138,9 +139,15 @@ Bleibt am Ende einer Stange oder auf einer Platte Abfall, kann CutStock ihn mit 
 
 Wird dasselbe Material in mehreren Projekten gebraucht, kann man es gemeinsam optimieren: Im Optimierungs-Tab "Optimieren nach: Material (Sammelplan)" waehlen, Material auswaehlen und die Projekte anhaken. "Vergleichen" zeigt, wie viel Material das gegenueber getrennten Plaenen spart. Im Plan steht bei jedem Teil sein Projekt ("Seite → Regal"); abgehakte Teile zaehlen als Fortschritt dieses Projekts. Nicht angefangene Einzelplaene der Projekte werden ersetzt; Teile, die ungesaegt in einem angefangenen Plan liegen, bleiben dort. Jedes Projekt bekommt im Plan eine eigene Farbe (Legende mit Stueckzahl in der Statistik), das PDF listet die Teile nach Projekt gruppiert, und im Projekte-Tab markiert ein Hinweis "Sammelplan" die beteiligten Projekte.
 
+![Sammelplan](docs/screenshot_sammelplan.png)
+
 ### Teile und Schnittlisten
 
 Der Reiter "Teile" zeigt die Teile aller Projekte, filterbar nach Material und Projekt, mit offener Stueckzahl und Regal-Vorrat. Teile anhaken, Menge eintragen und "Schnittliste erstellen": Es entsteht eine Schnittliste, die im Projekte-Tab erscheint und wie ein Projekt optimiert, gesaegt und gedruckt wird. Abgehakte Teile kommen ins Regal (Vorrat) ihres Herkunftsprojekts, das sie spaeter per Klick uebernimmt. Ist alles gesaegt, bietet CutStock an, die Liste zu loeschen. Beim Duplizieren bleibt eine Schnittliste eine Schnittliste.
+
+Der Regal-Vorrat eines Teils laesst sich im Dialog "Teil bearbeiten" auch von Hand korrigieren ("Im Regal"), etwa nach einer Inventur.
+
+![Teile](docs/screenshot_teile.png)
 
 Die Kopfzeile jedes Plans sagt, was man in der Hand hat: "Stange 2 · Rest 960 mm" bzw. "Platte 1 · ganze Platte 2800 × 2070 mm", wie viele Teile darauf liegen und was uebrig bleibt (zurueck ins Lager oder Abfall). In der Zeichnung steht bei jedem Teil sein Name und seine Masse.
 
@@ -252,7 +259,7 @@ Anfragen von der eigenen Web-Oberflaeche (Same-Origin) und von localhost sind im
 | **Teile** | | |
 | GET | `/api/projects/{id}/parts` | Teile eines Projekts auflisten |
 | POST | `/api/projects/{id}/parts` | Teil hinzufuegen |
-| PUT | `/api/parts/{id}` | Teil aktualisieren |
+| PUT | `/api/parts/{id}` | Teil aktualisieren (optional `vorrat`: Regal-Bestand setzen) |
 | DELETE | `/api/parts/{id}` | Teil loeschen |
 | **Optimierung und Plaene** | | |
 | POST | `/api/optimize` | Optimieren und als Plan des Projekts fuer das Material speichern |

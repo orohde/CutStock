@@ -74,6 +74,9 @@ EN = {
     "Hocker Kiefer": "Pine stool",
     "Hockerbein": "Stool leg",
     "Zarge": "Apron",
+    "Schuhregal Buche": "Beech shoe rack",
+    "Regalleiste": "Shelf batten",
+    "Stütze": "Support",
 }
 
 
@@ -228,10 +231,28 @@ def seed_demo_data() -> dict:
             "laenge": l, "breite": 0, "stueckzahl": n,
             "gesaegt_anzahl": 0, "maserung": "egal"})
 
+    # Second project on the beech battens: shares the material with the
+    # wardrobe → Sammelplan screenshot (one plan for both projects)
+    schuh = api("POST", "/api/projects", {"name": tr("Schuhregal Buche")})
+    for label, l, n in [("Regalleiste", 760, 6), ("Stütze", 400, 4)]:
+        api("POST", f"/api/projects/{schuh['id']}/parts", {
+            "label": tr(label), "typ": S, "material_id": leiste["id"],
+            "laenge": l, "breite": 0, "stueckzahl": n,
+            "gesaegt_anzahl": 0, "maserung": "egal"})
+
+    # Two finished stool aprons already on the shelf (Teile tab, column "Regal")
+    zarge = next(t for t in api("GET", f"/api/projects/{hocker['id']}/parts")
+                 if t["label"] == tr("Zarge"))
+    api("PUT", f"/api/parts/{zarge['id']}", {
+        **{k: zarge[k] for k in ("label", "typ", "material_id", "laenge", "breite",
+                                 "stueckzahl", "gesaegt_anzahl", "maserung")},
+        "vorrat": 2})
+
     # Light theme + UI language + mm for consistent screenshots
     api("PUT", "/api/settings", {"language": LANG, "theme": "light", "unit": "mm"})
 
     return {"span": span["id"], "eiche": eiche["id"], "kiefer": kiefer["id"],
+            "leiste": leiste["id"], "schuh": schuh["id"],
             "schrank": schrank["id"], "bank": bank["id"], "regal": regal["id"],
             "span_stock": span_stock}
 
@@ -366,6 +387,43 @@ def shoot(ids: dict):
         hide_toasts(page)
         page.locator(".cut-plan-card").first.screenshot(
             path=shot("defekt"))
+
+        # 7b) Sammelplan: Buchenleisten für Kleiderschrank + Schuhregal
+        # gemeinsam, mit Vergleich getrennt/gemeinsam und Projektfarben
+        page.set_viewport_size({"width": 1280, "height": 1000})
+        page.select_option("#opt-mode", "material")
+        page.wait_for_timeout(400)
+        page.select_option("#opt-material", str(ids["leiste"]))
+        page.wait_for_selector(f'#sammel-panel tr[data-pid="{ids["schuh"]}"]')
+        for pid in (ids["schrank"], ids["schuh"]):
+            box = page.locator(f'#sammel-panel tr[data-pid="{pid}"] .sammel-check')
+            if not box.is_checked():
+                box.check()
+        page.click("#btn-sammel-compare")
+        page.wait_for_selector("#sammel-compare .sammel-note")
+        page.click("#btn-optimize")
+        page.wait_for_selector(".cut-plan-canvas", timeout=30000)
+        page.wait_for_timeout(1000)
+        hide_toasts(page)
+        page.evaluate("window.scrollTo(0, 0)")
+        page.wait_for_timeout(300)
+        page.screenshot(path=shot("sammelplan"))
+        page.select_option("#opt-mode", "project")
+        page.wait_for_timeout(400)
+
+        # 7c) Reiter Teile: Teile aller Projekte, zwei Hocker-Teile angehakt
+        # (Schnittliste / Als Füllteile), Spalte "Regal" mit Vorrat
+        page.set_viewport_size({"width": 1280, "height": 860})
+        page.click('.tab-btn[data-tab="parts"]')
+        page.wait_for_selector("#all-parts-table tbody tr[data-teil]")
+        page.select_option("#parts-material", str(ids["kiefer"]))
+        page.wait_for_timeout(400)
+        for label in ("Hockerbein", "Zarge"):
+            page.check(f'#all-parts-table tbody tr:has-text("{tr(label)}") .parts-check')
+        page.evaluate("window.scrollTo(0, 0)")
+        page.wait_for_timeout(300)
+        page.mouse.move(1270, 850)
+        page.screenshot(path=shot("teile"))
 
         # 8) Einstellungen (ganze Seite inkl. Etiketten + Tastenkürzel)
         page.click('.tab-btn[data-tab="settings"]')

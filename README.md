@@ -27,6 +27,7 @@ CutStock comes in two flavors that share the same optimization core:
 - **Remnants First** -- optionally plan remnants first, then full bars/panels
 - **Combined Plan** -- optimize one material for several projects at once ("Optimize by: Material"), with a separate/combined comparison; cut parts count directly in their project
 - **Filler Parts** -- cut parts from other projects to fill up the waste of bars and panels (no extra material); cut filler parts go into the part stock ("shelf") and are taken over by the other project later
+- **Parts and Cut Lists** -- "Parts" tab with the parts of all projects; cut selected parts as their own cut list or take them along as filler parts; shelf stock per part, correctable by hand
 - **Project Management** -- organize parts by project, build a project several times (number of copies), import/export as JSON, import part lists from CSV
 - **Visual Cut Plans** -- color-coded cutting diagrams with labels and dimensions
 - **Cutting Sequence** -- numbered, kerf-accurate step-by-step sawing order per cut plan (on screen and in the PDF)
@@ -137,9 +138,15 @@ If waste remains at the end of a bar or on a panel, CutStock can fill it with pa
 
 If the same material is used in several projects, it can be optimized together: in the Optimization tab choose "Optimize by: Material (combined plan)", select the material and tick the projects. "Compare" shows how much material this saves over separate plans. Each part in the plan shows its project ("Side → Shelf"); ticked parts count as progress of that project. Unstarted single plans of these projects are replaced; parts lying uncut in a started plan stay there. Each project gets its own colour in the plan (legend with piece counts in the statistics), the PDF lists parts grouped by project, and the Projects tab marks participating projects with a "Combined plan" badge.
 
+![Combined Plan](docs/screenshot_sammelplan_en.png)
+
 ### Parts and Cut Lists
 
 The "Parts" tab shows the parts of all projects, filterable by material and project, with open quantity and shelf stock. Tick parts, enter a quantity and click "Create cut list": the list appears in the Projects tab and is optimized, cut and printed like a project. Ticked-off parts go to the shelf (stock) of the project they come from, which can take them over later with one click. Once everything is cut, CutStock offers to delete the list. Duplicating a cut list keeps it a cut list.
+
+A part's shelf stock can also be corrected by hand in the "Edit part" dialog ("On the shelf"), e.g. after a stock check.
+
+![Parts](docs/screenshot_teile_en.png)
 
 Each plan's header tells you what you are holding: "Bar 2 · offcut 960 mm" or "Panel 1 · full panel 2800 × 2070 mm", how many parts are on it and what is left over (back to stock or waste). The drawing shows each part's name and size.
 
@@ -251,7 +258,7 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | **Parts** | | |
 | GET | `/api/projects/{id}/parts` | List parts of a project |
 | POST | `/api/projects/{id}/parts` | Add a part |
-| PUT | `/api/parts/{id}` | Update a part |
+| PUT | `/api/parts/{id}` | Update a part (optional `vorrat`: set shelf stock) |
 | DELETE | `/api/parts/{id}` | Delete a part |
 | **Optimization and Plans** | | |
 | POST | `/api/optimize` | Optimize and save as the project's plan for the material |
