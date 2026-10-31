@@ -3068,7 +3068,8 @@ function fieldHtml(f, data) {
         input = `<input type="text" name="${f.key}" value="${escAttr(displayVal)}"${req} placeholder="${ph}">`;
     }
 
-    return `<label class="fd-form-label">${escHtml(label)}${unitSuffix}</label>${input}`;
+    const hint = f.hint ? `<small class="form-hint">${escHtml(f.hint)}</small>` : '';
+    return `<label class="fd-form-label">${escHtml(label)}${unitSuffix}</label>${input}${hint}`;
 }
 
 // Schließt nur, wenn Drücken UND Loslassen auf dem Hintergrund passieren.
@@ -3721,6 +3722,11 @@ function openPartDialog(part = null) {
     // Beim Bearbeiten den Gesägt-Fortschritt editierbar machen
     if (isEdit) {
         fields.push({ key: 'gesaegt_anzahl', label: t('part.sawn_count'), type: 'number', min: 0, step: 1 });
+        // Schnittlisten-Kopien haben kein eigenes Regal (gesägt geht ins Ursprungsteil)
+        if (!part.herkunft_teil_id) {
+            fields.push({ key: 'vorrat', label: t('part.shelf_count'), type: 'number', min: 0, step: 1,
+                          hint: t('part.shelf_hint') });
+        }
     }
 
     openModal(title, fields, data, async (formData) => {
@@ -3732,6 +3738,11 @@ function openPartDialog(part = null) {
             ? Math.max(0, Math.min(stk, parseInt(formData.gesaegt_anzahl) || 0))
             : (data.gesaegt_anzahl || 0);
         formData.material_id = parseInt(formData.material_id);
+        if (isEdit && 'vorrat' in formData) {
+            formData.vorrat = Math.max(0, parseInt(formData.vorrat) || 0);
+        } else {
+            delete formData.vorrat;
+        }
         try {
             if (isEdit) {
                 await Api.updatePart(part.id, formData);

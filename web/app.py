@@ -367,6 +367,7 @@ class PartIn(BaseModel):
     stueckzahl: int = 1
     gesaegt_anzahl: int = 0
     maserung: str = "egal"
+    vorrat: Optional[int] = Field(None, ge=0)   # nur beim Bearbeiten: Regal-Bestand korrigieren
 
 
 class PartOut(BaseModel):
@@ -1313,8 +1314,10 @@ def update_part(tid: int, data: PartIn):
     if not rows:
         raise HTTPException(404, "Part not found")
     t.projekt_id = rows["projekt_id"]
-    t = get_db().save_teil(t)
-    return _teil_to_out(t)
+    get_db().save_teil(t)
+    if data.vorrat is not None:
+        get_db().teil_vorrat_setzen(tid, data.vorrat)
+    return _teil_to_out(get_db().get_teil(tid))
 
 
 @app.delete("/api/parts/{tid}", status_code=204)

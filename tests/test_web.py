@@ -948,6 +948,28 @@ class TestSammelplan:
         assert len(self._stuecke(plan_b)) == 1                  # 3 liegen schon bei A
 
 
+class TestRegalKorrektur:
+    """Teil-Dialog: Regal-Bestand von Hand setzen (Inventur)."""
+
+    def test_vorrat_setzen_und_behalten(self, client):
+        mid = client.post("/api/materials", json={"name": "Kiefer", "typ": "Stange"}).json()["id"]
+        pid = client.post("/api/projects", json={"name": "Regal"}).json()["id"]
+        teil = client.post(f"/api/projects/{pid}/parts", json={
+            "label": "Latte", "typ": "Stange", "material_id": mid,
+            "laenge": 500, "stueckzahl": 6}).json()
+        felder = {k: teil[k] for k in ("label", "typ", "material_id", "laenge",
+                                       "breite", "stueckzahl", "gesaegt_anzahl", "maserung")}
+        r = client.put(f"/api/parts/{teil['id']}", json={**felder, "vorrat": 3})
+        assert r.status_code == 200 and r.json()["vorrat"] == 3
+        # Ohne Feld bleibt der Bestand unverändert
+        r = client.put(f"/api/parts/{teil['id']}", json={**felder, "label": "Latte 2"})
+        assert r.json()["vorrat"] == 3 and r.json()["label"] == "Latte 2"
+        r = client.put(f"/api/parts/{teil['id']}", json={**felder, "vorrat": 0})
+        assert r.json()["vorrat"] == 0
+        assert client.put(f"/api/parts/{teil['id']}",
+                          json={**felder, "vorrat": -1}).status_code == 422
+
+
 class TestSchnittliste:
     """Reiter „Teile“: Schnittliste aus einzelnen Teilen, gesägt → Regal."""
 

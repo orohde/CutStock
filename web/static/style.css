@@ -974,3 +974,6 @@ td.expand-toggle:hover { background: rgba(255,255,255,0.05); }
 .parts-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; margin: 0.5rem 0 0.75rem; }
 .parts-filter .cs-select { min-width: 10rem; }
 .parts-selected { color: var(--sapContent_LabelColor); margin-right: 0.5rem; }
+
+/* Erläuterung unter einem Formularfeld */
+.form-hint { display: block; margin-top: 0.25rem; font-size: 0.8rem; color: var(--sapContent_LabelColor); line-height: 1.3; }

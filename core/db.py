@@ -1299,6 +1299,12 @@ class Database:
                           (delta, teil_id))
         self.conn.commit()
 
+    def teil_vorrat_setzen(self, teil_id: int, anzahl: int):
+        """Teile-Vorrat absolut setzen (Inventur, Korrektur von Hand)."""
+        self.conn.execute("UPDATE teil SET vorrat = ? WHERE id=?",
+                          (max(0, int(anzahl)), teil_id))
+        self.conn.commit()
+
     def vorrat_uebernehmen(self, projekt_id: int, material_id: int) -> int:
         """Vorrat der Teile eines Projekts (eines Materials) als gesägt übernehmen.
 

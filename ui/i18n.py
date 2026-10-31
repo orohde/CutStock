@@ -627,6 +627,20 @@ TRANSLATIONS = {
         "de": "Gesägt (Stück):", "en": "Sawn (pieces):",
         "fr": "Scié (pièces) :", "it": "Tagliato (pezzi):",
     },
+    "part.shelf_count": {
+        "de": "Im Regal (fertige Stück):", "en": "On the shelf (finished pieces):",
+        "fr": "En stock (pièces finies) :", "it": "A scaffale (pezzi finiti):",
+    },
+    "part.shelf_hint": {
+        "de": "Fertig gesägte Teile, die schon bereitliegen (z.B. als Füllteil entstanden). "
+              "Hier von Hand korrigieren, etwa nach einer Inventur.",
+        "en": "Finished parts already waiting (e.g. cut as filler parts). "
+              "Correct by hand here, e.g. after a stock check.",
+        "fr": "Pièces finies déjà disponibles (p. ex. découpées comme pièces de remplissage). "
+              "À corriger ici à la main, p. ex. après un inventaire.",
+        "it": "Pezzi finiti già pronti (ad es. tagliati come pezzi di riempimento). "
+              "Correggi qui a mano, ad es. dopo un inventario.",
+    },
     "set.about": {
         "de": "Über / Links", "en": "About / Links",
         "fr": "À propos / Liens", "it": "Info / Link",
