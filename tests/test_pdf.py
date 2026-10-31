@@ -84,3 +84,22 @@ def test_sammelplan_nach_projekt_gruppiert(tmp_path):
     assert pdf.startswith(b"%PDF")
     # Pfeil ist nicht in Helvetica – wird ersetzt statt als Kästchen gedruckt
     assert _schnittliste_zeilen(erg.schnittplaene[0], 1000)[0].startswith("1 × Seite » Tisch")
+
+
+def test_fuellteile_eigener_abschnitt(tmp_path, monkeypatch):
+    from reportlab.pdfgen.canvas import Canvas
+    texte = []
+    orig = Canvas.drawString
+    monkeypatch.setattr(Canvas, "drawString",
+                        lambda self, x, y, t, *a, **k: (texte.append(t), orig(self, x, y, t, *a, **k)))
+    from core.optimize import OptimierungsErgebnis, Platzierung, Schnittplan
+    from core.pdf import export_pdf
+    erg = OptimierungsErgebnis(schnittplaene=[Schnittplan(
+        lagerstueck_id=1, lager_laenge=2000, lager_breite=0,
+        platzierungen=[Platzierung("Seite", 900, x=0),
+                       Platzierung("Leiste → Werkbank", 200, x=903, ist_fuellteil=True)],
+        reste=[], verschnitt_mm=0, verschnitt_prozent=0)])
+    pfad = tmp_path / "f.pdf"
+    export_pdf(erg, pfad, projekt_name="Regal", is_1d=True)
+    i = texte.index("Füllteile (1) – kommen ins Regal ihres Projekts")
+    assert "Seite" in texte[:i] and "Leiste" in texte[i:]   # getrennt, ohne „→ Projekt“

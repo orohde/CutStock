@@ -806,10 +806,10 @@ TRANSLATIONS = {
         "it": "«Riempi» inserisce negli scarti delle barre quanti pezzi ci stanno (quantità = massimo, vuoto = illimitato) – mai più materiale. «Fisso» taglia esattamente quella quantità. I pezzi tagliati vanno nella scorta (scaffale) del loro progetto.",
     },
     "fill.hint_2d": {
-        "de": "Bei Platten werden Füllteile vorerst mit fester Menge mitoptimiert. Gesägte Füllteile kommen in den Vorrat (Regal) ihres Projekts.",
-        "en": "For sheets, filler parts are optimized with a fixed quantity for now. Cut filler parts go into their project's stock (shelf).",
-        "fr": "Pour les panneaux, les pièces de remplissage sont pour l'instant optimisées en quantité fixe. Elles vont ensuite dans le stock (étagère) de leur projet.",
-        "it": "Per i pannelli i pezzi di riempimento sono per ora ottimizzati con quantità fissa. Poi vanno nella scorta (scaffale) del loro progetto.",
+        "de": "„Auffüllen“ setzt so viele Teile in die freien Abfallflächen der Platten, wie hineinpassen (Menge = Obergrenze, leer = beliebig viele) – es wird nie mehr Material gebraucht. „Fest“ sägt genau die Menge mit. Gesägte Füllteile kommen in den Vorrat (Regal) ihres Projekts.",
+        "en": "“Fill” places as many parts into the free waste areas of the panels as fit (quantity = maximum, empty = unlimited) – never uses more material. “Fixed” cuts exactly that quantity. Cut filler parts go into their project's stock (shelf).",
+        "fr": "« Remplir » place autant de pièces que possible dans les zones de chute libres des panneaux (quantité = maximum, vide = illimité) – jamais plus de matériau. « Fixe » coupe exactement cette quantité. Les pièces coupées vont dans le stock (étagère) de leur projet.",
+        "it": "«Riempi» inserisce nelle aree di scarto libere dei pannelli quanti pezzi ci stanno (quantità = massimo, vuoto = illimitato) – mai più materiale. «Fisso» taglia esattamente quella quantità. I pezzi tagliati vanno nella scorta (scaffale) del loro progetto.",
     },
     "fill.all_rests": {
         "de": "Auch verwertbare Reste auffüllen (sonst nur Abfall unter dem Mindest-Restmaß)",

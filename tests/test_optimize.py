@@ -463,3 +463,46 @@ class TestGenetisch:
                               [PlattenVorrat(1, 2000.0, 1000.0, 3)], 3.0)
         assert not erg1.fehlende_teile and len(erg1.schnittplaene) == 1
         assert not erg2.fehlende_teile and len(erg2.schnittplaene) == 1
+
+
+class TestFreieRechtecke2D:
+
+    def test_leere_platte(self):
+        from core.optimize import freie_rechtecke_2d
+        frei = freie_rechtecke_2d([], 1000, 500, 3)
+        assert [(f.x, f.y, f.laenge, f.breite) for f in frei] == [(0, 0, 1000, 500)]
+
+    def test_teil_links_oben(self):
+        from core.optimize import freie_rechtecke_2d
+        frei = freie_rechtecke_2d([(0, 0, 600, 300)], 1000, 500, 3)
+        # Größte freie Fläche zuerst: rechts der volle Streifen, dann unter dem Teil
+        assert sorted((f.x, f.y, f.laenge, f.breite) for f in frei) == [
+            (0, 303, 600, 197), (603, 0, 397, 500)]
+
+    def test_stapel_ergibt_einen_grossen_rest(self):
+        from core.optimize import freie_rechtecke_2d
+        frei = freie_rechtecke_2d([(0, 0, 400, 200), (0, 203, 400, 297)], 1000, 500, 3)
+        assert [(f.x, f.laenge, f.breite) for f in frei] == [(403, 597, 500)]
+
+    def test_volle_platte(self):
+        from core.optimize import freie_rechtecke_2d
+        assert freie_rechtecke_2d([(0, 0, 1000, 500)], 1000, 500, 3) == []
+
+
+class TestFuelleReste2D:
+
+    def test_fuellt_und_teilt(self):
+        from core.optimize import _Freiraum, fuelle_reste_2d
+        frei = [[_Freiraum(0, 0, 400, 200)]]
+        erg = fuelle_reste_2d(frei, [("k", 190, 100, 10, True, True)], 3)
+        assert len(erg) == 2                                   # 2 × 190 nebeneinander
+        assert all(pi == 0 and key == "k" for pi, key, _ in erg)
+        xs = sorted(pl.x for _, _, pl in erg)
+        assert xs == [0, 193]
+
+    def test_obergrenze_und_drehung(self):
+        from core.optimize import _Freiraum, fuelle_reste_2d
+        frei = [[_Freiraum(0, 0, 100, 400)]]
+        assert fuelle_reste_2d(frei, [("k", 300, 90, 5, True, False)], 3) == []
+        erg = fuelle_reste_2d(frei, [("k", 300, 90, 1, True, True)], 3)
+        assert len(erg) == 1 and erg[0][2].gedreht

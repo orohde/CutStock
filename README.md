@@ -26,7 +26,7 @@ CutStock comes in two flavors that share the same optimization core:
 - **Stock Reservation** -- saved plans reserve their pieces that haven't been started yet, so other projects don't plan them (can be switched off); "Discard plan" releases them
 - **Remnants First** -- optionally plan remnants first, then full bars/panels
 - **Combined Plan** -- optimize one material for several projects at once ("Optimize by: Material"), with a separate/combined comparison; cut parts count directly in their project
-- **Filler Parts** -- cut parts from other projects to fill up the bar waste (no extra material); cut filler parts go into the part stock ("shelf") and are taken over by the other project later
+- **Filler Parts** -- cut parts from other projects to fill up the waste of bars and panels (no extra material); cut filler parts go into the part stock ("shelf") and are taken over by the other project later
 - **Project Management** -- organize parts by project, build a project several times (number of copies), import/export as JSON, import part lists from CSV
 - **Visual Cut Plans** -- color-coded cutting diagrams with labels and dimensions
 - **Cutting Sequence** -- numbered, kerf-accurate step-by-step sawing order per cut plan (on screen and in the PDF)
@@ -129,7 +129,7 @@ Select a project, material, saw blade, and algorithm. The optimizer calculates t
 
 ### Filler Parts
 
-If waste remains at the end of a bar, CutStock can fill it with parts from other projects ("Filler parts..."). It never uses more material; filler parts are hatched and show their source project. Once cut, they go into the part stock and are taken over by the other project with one click.
+If waste remains at the end of a bar or on a panel, CutStock can fill it with parts from other projects ("Filler parts..."). It never uses more material; by default only waste below the minimum remnant size is used, optionally usable remnants too. Filler parts are hatched (in the PDF as well, which lists them in a separate section) and show their source project. Once cut, they go into the part stock and are taken over by the other project with one click. Filler parts can also be picked in the "Parts" tab ("As filler parts...").
 
 ![Filler Parts](docs/screenshot_fuellteile_en.png)
 
@@ -139,7 +139,7 @@ If the same material is used in several projects, it can be optimized together: 
 
 ### Parts and Cut Lists
 
-The "Parts" tab shows the parts of all projects, filterable by material and project, with open quantity and shelf stock. Tick parts, enter a quantity and click "Create cut list": the list appears in the Projects tab and is optimized, cut and printed like a project. Ticked-off parts go to the shelf (stock) of the project they come from, which can take them over later with one click. Once everything is cut, the list can be deleted.
+The "Parts" tab shows the parts of all projects, filterable by material and project, with open quantity and shelf stock. Tick parts, enter a quantity and click "Create cut list": the list appears in the Projects tab and is optimized, cut and printed like a project. Ticked-off parts go to the shelf (stock) of the project they come from, which can take them over later with one click. Once everything is cut, CutStock offers to delete the list. Duplicating a cut list keeps it a cut list.
 
 Each plan's header tells you what you are holding: "Bar 2 · offcut 960 mm" or "Panel 1 · full panel 2800 × 2070 mm", how many parts are on it and what is left over (back to stock or waste). The drawing shows each part's name and size.
 

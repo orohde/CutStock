@@ -60,6 +60,7 @@ class Platzierung:
     x: float = 0.0       # position on the stock piece (panels only)
     y: float = 0.0
     gedreht: bool = False
+    ist_fuellteil: bool = False   # Teil eines anderen Projekts (geht ins Regal)
 
 
 @dataclass
@@ -1818,3 +1819,109 @@ def fuelle_rest_1d(rest: float, kerf: float,
     gewaehlt = [items[i] for i in wahl[c_best]]
     gewaehlt.sort(key=lambda it: it[2], reverse=True)
     return [it[0] for it in gewaehlt]
+
+
+def freie_rechtecke_2d(teile: list[tuple[float, float, float, float]],
+                       laenge: float, breite: float, kerf: float) -> list[_Freiraum]:
+    """Freie Rechtecke einer belegten Platte, durch durchgehende Schnitte getrennt.
+
+    teile: (x, y, länge, breite) der platzierten Teile. Zerlegt die Platte rekursiv
+    wie eine Plattensäge: Ein Schnitt läuft von Kante zu Kante durch den Bereich und
+    darf kein Teil schneiden. Bevorzugt Schnitte, die eine möglichst große freie
+    Fläche abtrennen. Unabhängig vom Algorithmus, der die Teile gelegt hat.
+    """
+    eps = 0.5
+    frei: list[_Freiraum] = []
+
+    def zerlegen(x0, y0, x1, y1, ts):
+        if x1 - x0 <= eps or y1 - y0 <= eps:
+            return
+        if not ts:
+            frei.append(_Freiraum(x0, y0, x1 - x0, y1 - y0))
+            return
+        leer = None       # (freie Fläche, vertikal, g0, g1, freie Seite rechts/unten?)
+        trennend = None   # (vertikal, g0, g1)
+        for vertikal in (True, False):
+            lo, hi = (x0, x1) if vertikal else (y0, y1)
+            start = (lambda t: t[0]) if vertikal else (lambda t: t[1])
+            ende = (lambda t: t[0] + t[2]) if vertikal else (lambda t: t[1] + t[3])
+            luecken = {(ende(t), ende(t) + kerf) for t in ts}
+            luecken |= {(start(t) - kerf, start(t)) for t in ts}
+            for g0, g1 in luecken:
+                g0, g1 = max(lo, min(g0, hi)), min(hi, max(g1, lo))
+                vorne = [t for t in ts if ende(t) <= g0 + eps]
+                hinten = [t for t in ts if start(t) >= g1 - eps]
+                if len(vorne) + len(hinten) != len(ts):
+                    continue
+                quer = (y1 - y0) if vertikal else (x1 - x0)
+                if vorne and hinten:
+                    if trennend is None:
+                        trennend = (vertikal, g0, g1)
+                elif vorne and hi - g1 > eps:
+                    f = (hi - g1) * quer
+                    if leer is None or f > leer[0]:
+                        leer = (f, vertikal, g0, g1, True)
+                elif hinten and g0 - lo > eps:
+                    f = (g0 - lo) * quer
+                    if leer is None or f > leer[0]:
+                        leer = (f, vertikal, g0, g1, False)
+        if leer is not None:
+            _, vertikal, g0, g1, _ = leer
+        elif trennend is not None:
+            vertikal, g0, g1 = trennend
+        else:
+            return   # Teil füllt den Bereich ganz aus (oder kein Guillotine-Schnitt)
+        if vertikal:
+            zerlegen(x0, y0, g0, y1, [t for t in ts if t[0] + t[2] <= g0 + eps])
+            zerlegen(g1, y0, x1, y1, [t for t in ts if t[0] >= g1 - eps])
+        else:
+            zerlegen(x0, y0, x1, g0, [t for t in ts if t[1] + t[3] <= g0 + eps])
+            zerlegen(x0, g1, x1, y1, [t for t in ts if t[1] >= g1 - eps])
+
+    zerlegen(0.0, 0.0, laenge, breite, teile)
+    return frei
+
+
+def fuelle_reste_2d(platten: list[list[_Freiraum]],
+                    kandidaten: list[tuple[object, float, float, int, bool, bool]],
+                    kerf: float) -> list[tuple[int, object, Platzierung]]:
+    """Freie Rechtecke mehrerer Platten mit Füllteilen belegen (Best-Area-Fit).
+
+    platten: je Platte die freien Rechtecke, die belegt werden dürfen.
+    kandidaten: (Schlüssel, Länge, Breite, maximale Anzahl, normal ok, gedreht ok).
+    Große Teile zuerst; jedes Teil kommt in das Rechteck, das am wenigsten Fläche
+    übrig lässt, geteilt wird wie bei optimize_2d. Liefert (Platten-Index, Schlüssel,
+    Platzierung) mit Koordinaten auf der Platte.
+    """
+    frei = [(pi, fr) for pi, frs in enumerate(platten) for fr in frs]
+    gesamt = sum(fr.flaeche for _, fr in frei)
+    einzel = []
+    for key, l, b, maximal, normal_ok, gedreht_ok in kandidaten:
+        if l <= 0 or b <= 0 or maximal <= 0:
+            continue
+        n = min(maximal, int(gesamt // (l * b)))
+        einzel.extend([(key, l, b, normal_ok, gedreht_ok)] * n)
+    einzel.sort(key=lambda e: e[1] * e[2], reverse=True)
+
+    ergebnis: list[tuple[int, object, Platzierung]] = []
+    for key, l, b, normal_ok, gedreht_ok in einzel:
+        best = None   # (Restfläche, Index in frei, gedreht)
+        for i, (_, fr) in enumerate(frei):
+            for gedreht in [g for g, ok in ((False, normal_ok), (True, gedreht_ok)) if ok]:
+                tl, tb = (b, l) if gedreht else (l, b)
+                if tl <= fr.laenge and tb <= fr.breite:
+                    rest = fr.flaeche - tl * tb
+                    if best is None or rest < best[0]:
+                        best = (rest, i, gedreht)
+        if best is None:
+            continue
+        _, i, gedreht = best
+        pi, fr = frei.pop(i)
+        tl, tb = (b, l) if gedreht else (l, b)
+        ergebnis.append((pi, key, Platzierung(teil_label="", laenge=tl, breite=tb,
+                                              x=fr.x, y=fr.y, gedreht=gedreht)))
+        if fr.laenge - tl - kerf > 0:
+            frei.append((pi, _Freiraum(fr.x + tl + kerf, fr.y, fr.laenge - tl - kerf, tb)))
+        if fr.breite - tb - kerf > 0:
+            frei.append((pi, _Freiraum(fr.x, fr.y + tb + kerf, fr.laenge, fr.breite - tb - kerf)))
+    return ergebnis

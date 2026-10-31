@@ -48,6 +48,8 @@ from core.optimize import (
     optimize_2d_ga,
     optimize_2d_nested,
     fuelle_rest_1d,
+    fuelle_reste_2d,
+    freie_rechtecke_2d,
 )
 from core.pdf import export_pdf
 from ui.i18n import LANGUAGES, TRANSLATIONS
@@ -690,6 +692,7 @@ def _out_to_ergebnis(data: OptimizeResult) -> OptimierungsErgebnis:
                         x=p.x,
                         y=p.y,
                         gedreht=p.gedreht,
+                        ist_fuellteil=p.ist_fuellteil,
                     )
                     for p in sp.platzierungen
                 ],
@@ -1204,7 +1207,9 @@ def clone_project(pid: int):
     existing = db.get_projekt(pid)
     if not existing:
         raise HTTPException(404, "Project not found")
-    clone = Projekt(name=f"{existing.name} (Kopie)", anzahl=existing.anzahl)
+    # Eine Schnittliste bleibt beim Duplizieren eine Schnittliste (samt Herkunft)
+    art = "liste" if existing.art == "liste" else ""
+    clone = Projekt(name=f"{existing.name} (Kopie)", anzahl=existing.anzahl, art=art)
     clone = db.save_projekt(clone)
     for t in db.list_teile(pid):
         ct = Teil(
@@ -1217,6 +1222,7 @@ def clone_project(pid: int):
             stueckzahl=t.stueckzahl,
             gesaegt_anzahl=0,
             maserung=t.maserung,
+            herkunft_teil_id=t.herkunft_teil_id,
         )
         db.save_teil(ct)
     clone.teile = db.list_teile(clone.id)
@@ -1496,7 +1502,7 @@ def run_optimization(req: OptimizeRequest):
             if int(f.get("menge") or 0) > 0:
                 fuell_fest.append(ft)
                 offen[ft.id] = int(f["menge"])
-        elif is_1d:
+        else:
             fuell_auf.append((ft, int(f.get("menge") or 0)))
     teile = teile + fuell_fest
     fuell_ids = {t.id for t in fuell_fest} | {t.id for t, _ in fuell_auf}
@@ -1860,7 +1866,61 @@ def _plan_speichern(projekt, material, blade, algorithmus, bretter, fehlende, be
 
 def _reste_auffuellen(bretter: list[PlanBrett], auffuellen: list[tuple[Teil, int]],
                       kerf: float, material: Material, alle_reste: bool):
-    """Den Rest am Ende jeder Stange mit Füllteilen belegen (Durchgang 2, nur 1D).
+    if material.typ != MaterialTyp.STANGE:
+        _reste_auffuellen_2d(bretter, auffuellen, kerf, material, alle_reste)
+    else:
+        _reste_auffuellen_1d(bretter, auffuellen, kerf, material, alle_reste)
+
+
+def _reste_auffuellen_2d(bretter: list[PlanBrett], auffuellen: list[tuple[Teil, int]],
+                         kerf: float, material: Material, alle_reste: bool):
+    """Freie Flächen der Platten mit Füllteilen belegen (Durchgang 2).
+
+    Wie bei Stangen standardmäßig nur Abfall: Flächen, die beim Einbuchen nicht ins
+    Lager kämen (kleiner als das Mindest-Restmaß). Ohne Mindest-Restmaß ist jede
+    freie Fläche auffüllbar. Platten mit Defekten bleiben außen vor.
+    """
+    min_l, min_b = material.rest_min_laenge, material.rest_min_breite
+    ohne_min = min_l <= 0 and min_b <= 0
+
+    def abfall(fr) -> bool:
+        return fr.laenge < min_l or fr.breite < min_b
+
+    kandidaten_bretter, flaechen = [], []
+    for b in bretter:
+        if b.defekte or not b.stuecke:
+            continue
+        frei = freie_rechtecke_2d([(st.x, st.y, st.laenge, st.breite) for st in b.stuecke],
+                                  b.lager_laenge, b.lager_breite, kerf)
+        frei = [fr for fr in frei if alle_reste or ohne_min or abfall(fr)]
+        if frei:
+            kandidaten_bretter.append(b)
+            flaechen.append(frei)
+    if not kandidaten_bretter:
+        return
+    nach_id = {t.id: t for t, _ in auffuellen}
+    kandidaten = []
+    for t, m in auffuellen:
+        normal_ok, gedreht_ok = drehung_fuer_teil(material.maserung, t.maserung)
+        kandidaten.append((t.id, t.laenge, t.breite, m if m > 0 else 10 ** 6,
+                           normal_ok, gedreht_ok))
+    for pi, tid, pl in fuelle_reste_2d(flaechen, kandidaten, kerf):
+        t = nach_id[tid]
+        kandidaten_bretter[pi].stuecke.append(PlanStueck(
+            teil_id=tid, teil_label=t.label, laenge=pl.laenge, breite=pl.breite,
+            x=pl.x, y=pl.y, gedreht=pl.gedreht, ist_fuellteil=True))
+    for b in kandidaten_bretter:
+        flaeche = b.lager_laenge * b.lager_breite
+        b.verschnitt_mm = max(0.0, flaeche - sum(st.laenge * st.breite for st in b.stuecke))
+        b.verschnitt_prozent = round(b.verschnitt_mm / flaeche * 100, 1) if flaeche else 0
+        b.reste = [[fr.laenge, fr.breite] for fr in freie_rechtecke_2d(
+            [(st.x, st.y, st.laenge, st.breite) for st in b.stuecke],
+            b.lager_laenge, b.lager_breite, kerf)]
+
+
+def _reste_auffuellen_1d(bretter: list[PlanBrett], auffuellen: list[tuple[Teil, int]],
+                         kerf: float, material: Material, alle_reste: bool):
+    """Den Rest am Ende jeder Stange mit Füllteilen belegen (Durchgang 2).
 
     Standard: nur echter Abfall, also Reste unter dem Mindest-Restmaß. Hat das
     Material kein Mindest-Restmaß, gilt jeder Rest als auffüllbar. Stangen mit
@@ -2616,6 +2676,22 @@ WEB_EXTRA_TRANSLATIONS = {
     "parts.list_name": {"de": "Name der Schnittliste", "en": "Cut list name", "fr": "Nom de la liste de coupe", "it": "Nome della lista di taglio"},
     "parts.list_default": {"de": "Schnittliste {datum}", "en": "Cut list {datum}", "fr": "Liste de coupe {datum}", "it": "Lista di taglio {datum}"},
     "parts.list_created": {"de": "Schnittliste „{name}“ angelegt", "en": "Cut list “{name}” created", "fr": "Liste de coupe « {name} » créée", "it": "Lista di taglio «{name}» creata"},
+    "parts.list_done": {
+        "de": "Die Schnittliste „{name}“ ist komplett gesägt, alle Teile liegen im Regal ihrer Projekte.\n\nListe jetzt löschen?",
+        "en": "Cut list “{name}” is fully cut; all parts are on the shelf of their projects.\n\nDelete the list now?",
+        "fr": "La liste de coupe « {name} » est entièrement découpée ; toutes les pièces sont sur l’étagère de leurs projets.\n\nSupprimer la liste maintenant ?",
+        "it": "La lista di taglio «{name}» è tutta tagliata; tutti i pezzi sono sullo scaffale dei loro progetti.\n\nEliminare ora la lista?",
+    },
+    "parts.as_fill": {"de": "Als Füllteile…", "en": "As filler parts…", "fr": "Comme pièces de remplissage…", "it": "Come pezzi di riempimento…"},
+    "parts.fill_target": {"de": "In den Plan von Projekt", "en": "Into the plan of project", "fr": "Dans le plan du projet", "it": "Nel piano del progetto"},
+    "parts.fill_hint": {
+        "de": "Die Teile werden beim nächsten Optimieren dieses Projekts mitgesägt. „Auffüllen“ nutzt nur Abfall (Menge = Obergrenze), „Fest“ sägt genau die Menge. Gesägt kommen sie ins Regal ihres Projekts.",
+        "en": "The parts are cut along the next time this project is optimized. “Fill” only uses waste (quantity = maximum), “Fixed” cuts exactly that quantity. Once cut they go to the shelf of their project.",
+        "fr": "Les pièces seront découpées lors de la prochaine optimisation de ce projet. « Remplir » n’utilise que les chutes (quantité = maximum), « Fixe » découpe exactement la quantité. Découpées, elles vont sur l’étagère de leur projet.",
+        "it": "I pezzi verranno tagliati alla prossima ottimizzazione di questo progetto. «Riempi» usa solo gli scarti (quantità = massimo), «Fisso» taglia esattamente la quantità. Tagliati, vanno sullo scaffale del loro progetto.",
+    },
+    "parts.fill_one_material": {"de": "Füllteile müssen alle aus einem Material sein.", "en": "Filler parts must all be of one material.", "fr": "Les pièces de remplissage doivent être du même matériau.", "it": "I pezzi di riempimento devono essere tutti dello stesso materiale."},
+    "parts.fill_no_target": {"de": "Kein anderes Projekt braucht dieses Material.", "en": "No other project uses this material.", "fr": "Aucun autre projet n’utilise ce matériau.", "it": "Nessun altro progetto usa questo materiale."},
     "parts.list_badge": {"de": "Schnittliste", "en": "Cut list", "fr": "Liste de coupe", "it": "Lista di taglio"},
     "parts.list_hint": {
         "de": "Schnittliste: Gesägte Teile kommen ins Regal ihres Herkunftsprojekts. Ist alles gesägt, kannst du die Liste löschen.",

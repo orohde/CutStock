@@ -1765,6 +1765,25 @@ async function refreshAfterSawing() {
         State.projects = await Api.getProjects();
         renderProjects();
     } catch { /* ignore */ }
+    if (!sawModeActive()) offerCutListDelete();
+}
+
+// Fertig gesägte Schnittliste: einmal anbieten, sie zu löschen (die Teile
+// liegen ja schon im Regal ihrer Projekte).
+function offerCutListDelete() {
+    const projId = parseInt(document.getElementById('opt-project')?.value);
+    const liste = State.projects.find(p => p.id === projId && p.art === 'liste');
+    if (!liste?.teile?.length || State.cutListOffered?.has(liste.id)) return;
+    if (!liste.teile.every(x => x.gesaegt_anzahl >= x.gesamt_anzahl)) return;
+    (State.cutListOffered ??= new Set()).add(liste.id);
+    openConfirmDialog(t('parts.list_done', { name: liste.name }), async () => {
+        try {
+            await Api.deleteProject(liste.id);
+            if (State.selectedProjectId === liste.id) State.selectedProjectId = null;
+            await renderProjects();
+            renderOptDropdowns();
+        } catch { /* handled */ }
+    });
 }
 
 // „Bestätigen": alle noch nicht markierten Stücke auf einmal als gesägt markieren.
@@ -1891,6 +1910,61 @@ function updatePartsSelection() {
     const n = PartsSel.size;
     document.getElementById('parts-selected').textContent = n ? t('parts.selected', { n }) : '';
     document.getElementById('btn-create-cutlist').disabled = n === 0;
+    document.getElementById('btn-parts-fill').disabled = n === 0;
+}
+
+// Ausgewählte Teile als Füllteile in den Plan eines anderen Projekts übernehmen
+function partsAsFillers() {
+    const gewaehlt = [...PartsSel.entries()].map(([id, menge]) =>
+        ({ teil: State.allParts.find(x => x.teil_id === id), menge })).filter(g => g.teil);
+    const mats = new Set(gewaehlt.map(g => g.teil.material_id));
+    if (mats.size !== 1) { showToast(t('parts.fill_one_material'), 'error'); return; }
+    const matId = [...mats][0];
+    const herkunft = new Set(gewaehlt.map(g => g.teil.projekt_id));
+    const ziele = State.projects.filter(p => p.art !== 'liste' && !herkunft.has(p.id)
+        && (p.teile || []).some(x => x.material_id === matId));
+    if (!ziele.length) { showToast(t('parts.fill_no_target'), 'error'); return; }
+
+    const overlay = document.getElementById('modal-overlay');
+    const body = document.getElementById('modal-body');
+    const saveBtn = document.getElementById('modal-save');
+    document.getElementById('modal-title').textContent = t('parts.as_fill');
+    saveBtn.style.display = '';
+    saveBtn.textContent = t('btn.save');
+    body.innerHTML = `<div class="form-group">
+        <label class="fd-form-label" for="pf-target">${escHtml(t('parts.fill_target'))}</label>
+        <select id="pf-target" class="cs-select">${ziele.map(p =>
+            `<option value="${p.id}">${escHtml(p.name)}</option>`).join('')}</select>
+    </div>
+    <div class="form-group">
+        <label class="fd-form-label" for="pf-mode">${escHtml(t('fill.mode'))}</label>
+        <select id="pf-mode" class="cs-select">
+            <option value="auffuellen">${escHtml(t('fill.mode_fill'))}</option>
+            <option value="fest">${escHtml(t('fill.mode_fixed'))}</option>
+        </select>
+    </div>
+    <p class="saw-hint">${escHtml(t('parts.fill_hint'))}</p>`;
+    overlay.classList.remove('hidden');
+    overlay.classList.add('active');
+    saveBtn.onclick = async () => {
+        const projId = parseInt(document.getElementById('pf-target').value);
+        const modus = document.getElementById('pf-mode').value;
+        closeModal();
+        // Zum Plan dieses Projekts wechseln; dessen bisherige Füllteile bleiben erhalten
+        document.querySelector('.tab-btn[data-tab="optimization"]')?.click();
+        if (State.optMode !== 'project') setOptMode('project', matId);
+        document.getElementById('opt-project').value = String(projId);
+        updateOptMaterialDropdown();
+        document.getElementById('opt-material').value = String(matId);
+        await loadSavedPlan();
+        const key = `${projId}:${matId}`;
+        const alt = State.fillSel?.key === key ? State.fillSel : { key, items: [], alle: false };
+        const items = new Map(alt.items.map(f => [f.teil_id, f]));
+        gewaehlt.forEach(g => items.set(g.teil.teil_id, { teil_id: g.teil.teil_id, modus, menge: g.menge }));
+        State.fillSel = { key, items: [...items.values()], alle: alt.alle };
+        updateFillButton();
+        showToast(t('fill.saved_hint'), 'info');
+    };
 }
 
 function createCutList() {
@@ -1956,7 +2030,7 @@ async function openFillDialog() {
     const hint = is1D ? t('fill.hint_1d') : t('fill.hint_2d');
     const rows = kandidaten.map(k => {
         const f = gewaehlt.get(k.teil_id);
-        const modus = f?.modus || (is1D ? 'auffuellen' : 'fest');
+        const modus = f?.modus || 'auffuellen';
         return `<tr class="fd-table__row" data-teil="${k.teil_id}">
             <td class="fd-table__cell"><input type="checkbox" class="cs-checkbox fill-check"${f ? ' checked' : ''}></td>
             <td class="fd-table__cell">${escHtml(k.label)}</td>
@@ -1965,7 +2039,7 @@ async function openFillDialog() {
             <td class="fd-table__cell num">${k.offen}</td>
             <td class="fd-table__cell num">${k.vorrat || ''}</td>
             <td class="fd-table__cell">
-                <select class="cs-select fill-mode"${is1D ? '' : ' disabled'}>
+                <select class="cs-select fill-mode">
                     <option value="auffuellen"${modus === 'auffuellen' ? ' selected' : ''}>${escHtml(t('fill.mode_fill'))}</option>
                     <option value="fest"${modus === 'fest' ? ' selected' : ''}>${escHtml(t('fill.mode_fixed'))}</option>
                 </select>
@@ -1976,8 +2050,8 @@ async function openFillDialog() {
     }).join('');
     body.innerHTML = kandidaten.length ? `
         <p class="saw-hint" style="margin-bottom:.5rem">${escHtml(hint)}</p>
-        ${is1D ? `<label class="opt-check" style="margin-bottom:.5rem"><input type="checkbox" id="fill-all-rests" class="cs-checkbox"${sel.alle ? ' checked' : ''}>
-            <span>${escHtml(t('fill.all_rests'))}</span></label>` : ''}
+        <label class="opt-check" style="margin-bottom:.5rem"><input type="checkbox" id="fill-all-rests" class="cs-checkbox"${sel.alle ? ' checked' : ''}>
+            <span>${escHtml(t('fill.all_rests'))}</span></label>
         <div class="fill-table-wrap"><table class="fd-table fill-table"><thead class="fd-table__header"><tr class="fd-table__row">
             <th class="fd-table__cell"></th>
             <th class="fd-table__cell">${escHtml(t('fill.part'))}</th>
@@ -2003,7 +2077,7 @@ async function openFillDialog() {
         const items = [];
         body.querySelectorAll('tr[data-teil]').forEach(tr => {
             if (!tr.querySelector('.fill-check').checked) return;
-            const modus = is1D ? tr.querySelector('.fill-mode').value : 'fest';
+            const modus = tr.querySelector('.fill-mode').value;
             const menge = Math.max(0, parseInt(tr.querySelector('.fill-qty').value) || 0);
             if (modus === 'fest' && menge <= 0) return;
             items.push({ teil_id: parseInt(tr.dataset.teil), modus, menge });
@@ -2250,6 +2324,7 @@ function closeSawMode() {
     document.getElementById('saw-overlay').classList.remove('active');
     // Refresh the inline plans in case pieces were marked in workshop mode
     document.querySelectorAll('.cut-plan-canvas').forEach(c => redrawPlanForCanvas(c));
+    offerCutListDelete();
 }
 
 function sawModeActive() {
@@ -4471,6 +4546,7 @@ function initEvents() {
     ['parts-material', 'parts-project', 'parts-only-open'].forEach(id =>
         document.getElementById(id)?.addEventListener('change', () => renderAllPartsTable()));
     document.getElementById('btn-create-cutlist')?.addEventListener('click', () => createCutList());
+    document.getElementById('btn-parts-fill')?.addEventListener('click', () => partsAsFillers());
 
     // ----- Etiketten -----
     document.getElementById('btn-labels')?.addEventListener('click', () => printPartLabels());

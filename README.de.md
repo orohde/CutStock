@@ -26,7 +26,7 @@ CutStock gibt es in zwei Varianten, die denselben Optimierungskern teilen:
 - **Lager-Reservierung** -- gespeicherte Plaene reservieren ihre noch nicht angefangenen Stuecke, andere Projekte verplanen sie nicht (abschaltbar); "Plan verwerfen" gibt sie frei
 - **Reste zuerst** -- auf Wunsch erst nur Reste verplanen, dann ganze Stangen/Platten
 - **Sammelplan** -- ein Material fuer mehrere Projekte gemeinsam optimieren ("Optimieren nach: Material"), mit Vergleich getrennt/gemeinsam; gesaegte Teile zaehlen direkt im jeweiligen Projekt
-- **Fuellteile** -- Teile anderer Projekte mitsaegen, um den Abfall der Stangen aufzufuellen (ohne zusaetzliches Material); gesaegte Fuellteile kommen in den Teile-Vorrat ("Regal") und werden spaeter vom anderen Projekt uebernommen
+- **Fuellteile** -- Teile anderer Projekte mitsaegen, um den Abfall von Stangen und Platten aufzufuellen (ohne zusaetzliches Material); gesaegte Fuellteile kommen in den Teile-Vorrat ("Regal") und werden spaeter vom anderen Projekt uebernommen
 - **Projektverwaltung** -- Teile nach Projekten organisieren, Projekt mehrfach bauen (Anzahl Exemplare), Import/Export als JSON, Teilelisten-Import aus CSV
 - **Visuelle Schnittplaene** -- farbkodierte Zuschnittschemata mit Labels und Massen
 - **Schnittfolge** -- nummerierte, massgenaue Schrittliste pro Schnittplan (Kerf eingerechnet, auch im PDF)
@@ -130,7 +130,7 @@ Projekt, Material, Saegeblatt und Algorithmus waehlen. Der Optimierer berechnet 
 
 ### Fuellteile
 
-Bleibt am Ende einer Stange Abfall, kann CutStock ihn mit Teilen aus anderen Projekten auffuellen ("Fuellteile..."). Es wird nie mehr Material verbraucht; die Fuellteile sind schraffiert und tragen ihr Herkunftsprojekt. Gesaegt kommen sie in den Teile-Vorrat und werden beim anderen Projekt mit einem Klick uebernommen.
+Bleibt am Ende einer Stange oder auf einer Platte Abfall, kann CutStock ihn mit Teilen aus anderen Projekten auffuellen ("Fuellteile..."). Es wird nie mehr Material verbraucht; standardmaessig wird nur Abfall unter dem Mindest-Restmass belegt, per Haekchen auch verwertbare Reste. Die Fuellteile sind schraffiert (auch im PDF, dort mit eigenem Abschnitt in der Stueckliste) und tragen ihr Herkunftsprojekt. Gesaegt kommen sie in den Teile-Vorrat und werden beim anderen Projekt mit einem Klick uebernommen. Fuellteile lassen sich auch im Reiter "Teile" auswaehlen ("Als Fuellteile...").
 
 ![Fuellteile](docs/screenshot_fuellteile.png)
 
@@ -140,7 +140,7 @@ Wird dasselbe Material in mehreren Projekten gebraucht, kann man es gemeinsam op
 
 ### Teile und Schnittlisten
 
-Der Reiter "Teile" zeigt die Teile aller Projekte, filterbar nach Material und Projekt, mit offener Stueckzahl und Regal-Vorrat. Teile anhaken, Menge eintragen und "Schnittliste erstellen": Es entsteht eine Schnittliste, die im Projekte-Tab erscheint und wie ein Projekt optimiert, gesaegt und gedruckt wird. Abgehakte Teile kommen ins Regal (Vorrat) ihres Herkunftsprojekts, das sie spaeter per Klick uebernimmt. Ist alles gesaegt, kann die Liste geloescht werden.
+Der Reiter "Teile" zeigt die Teile aller Projekte, filterbar nach Material und Projekt, mit offener Stueckzahl und Regal-Vorrat. Teile anhaken, Menge eintragen und "Schnittliste erstellen": Es entsteht eine Schnittliste, die im Projekte-Tab erscheint und wie ein Projekt optimiert, gesaegt und gedruckt wird. Abgehakte Teile kommen ins Regal (Vorrat) ihres Herkunftsprojekts, das sie spaeter per Klick uebernimmt. Ist alles gesaegt, bietet CutStock an, die Liste zu loeschen. Beim Duplizieren bleibt eine Schnittliste eine Schnittliste.
 
 Die Kopfzeile jedes Plans sagt, was man in der Hand hat: "Stange 2 · Rest 960 mm" bzw. "Platte 1 · ganze Platte 2800 × 2070 mm", wie viele Teile darauf liegen und was uebrig bleibt (zurueck ins Lager oder Abfall). In der Zeichnung steht bei jedem Teil sein Name und seine Masse.
 

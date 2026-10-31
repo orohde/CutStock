@@ -918,7 +918,8 @@ class Database:
         p.anzahl = max(1, int(p.anzahl or 1))
         if p.id is None:
             cur = self.conn.execute(
-                "INSERT INTO projekt (name, anzahl) VALUES (?,?)", (p.name, p.anzahl)
+                "INSERT INTO projekt (name, anzahl, art) VALUES (?,?,?)",
+                (p.name, p.anzahl, p.art)
             )
             p.id = cur.lastrowid
         else:
@@ -1042,11 +1043,11 @@ class Database:
             cur = self.conn.execute(
                 """INSERT INTO teil
                    (projekt_id, label, typ, material_id, laenge, breite,
-                    stueckzahl, gesaegt_anzahl, maserung, status)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    stueckzahl, gesaegt_anzahl, maserung, status, herkunft_teil_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (t.projekt_id, t.label, t.typ.value, t.material_id,
                  t.laenge, t.breite, t.stueckzahl, t.gesaegt_anzahl,
-                 t.maserung.value, t.status.value),
+                 t.maserung.value, t.status.value, t.herkunft_teil_id),
             )
             t.id = cur.lastrowid
         else:

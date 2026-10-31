@@ -801,6 +801,34 @@ class TestFuellteile:
 # Sammelplan: ein Material, mehrere Projekte gemeinsam
 # =====================================================================
 
+class TestFuellteile2D:
+
+    def test_platten_auffuellen_nur_abfall(self, client):
+        mid = client.post("/api/materials", json={
+            "name": "MDF", "typ": "Platte", "rest_min_laenge": 300,
+            "rest_min_breite": 300}).json()["id"]
+        client.post("/api/stock", json={"material_id": mid, "laenge": 1000, "breite": 500,
+                                        "stueckzahl": 5})
+        bid = client.post("/api/blades", json={"name": "B", "schnittbreite": 3}).json()["id"]
+        haupt = client.post("/api/projects", json={"name": "Haupt"}).json()["id"]
+        # 800 × 500: rechts bleibt ein 197 mm breiter Streifen = Abfall
+        client.post(f"/api/projects/{haupt}/parts", json={
+            "label": "Boden", "typ": "Platte", "material_id": mid,
+            "laenge": 800, "breite": 500, "stueckzahl": 1})
+        anderes = client.post("/api/projects", json={"name": "Anderes"}).json()["id"]
+        fid = client.post(f"/api/projects/{anderes}/parts", json={
+            "label": "Leiste", "typ": "Platte", "material_id": mid,
+            "laenge": 150, "breite": 100, "stueckzahl": 1}).json()["id"]
+        plan = client.post("/api/optimize", json={
+            "project_id": haupt, "material_id": mid, "blade_id": bid,
+            "fuellteile": [{"teil_id": fid, "modus": "auffuellen", "menge": 0}]}).json()
+        assert len(plan["schnittplaene"]) == 1
+        fuell = [p for p in plan["schnittplaene"][0]["platzierungen"] if p["ist_fuellteil"]]
+        assert len(fuell) == 4                                   # 4 × 100 in 197 × 500
+        assert all(p["x"] >= 803 for p in fuell)
+        assert fuell[0]["teil_label"] == "Leiste → Anderes"
+
+
 class TestSammelplan:
 
     def _setup(self, client):
@@ -988,3 +1016,10 @@ class TestSchnittliste:
             "project_id": teile["A"]["projekt_id"], "material_id": mid, "blade_id": bid}).json()
         n = sum(len(sp["platzierungen"]) for sp in plan["schnittplaene"])
         assert n == 1   # 4 offen − 3 ungesägt in der Schnittliste
+
+    def test_duplizieren_bleibt_schnittliste(self, client):
+        _, _, teile = self._setup(client)
+        liste = self._liste(client, [{"teil_id": teile["A"]["id"], "menge": 2}])
+        kopie = client.post(f"/api/projects/{liste['id']}/clone").json()
+        assert kopie["art"] == "liste"
+        assert kopie["teile"][0]["herkunft_teil_id"] == teile["A"]["id"]

@@ -75,6 +75,21 @@ def _latin1(txt: str) -> str:
     return txt.replace("→", "»").encode("latin-1", "replace").decode("latin-1")
 
 
+def _schraffur(c: canvas.Canvas, x: float, y: float, w: float, h: float):
+    """Füllteile schraffiert, wie in der App."""
+    p = c.beginPath()
+    p.rect(x, y, w, h)
+    c.saveState()
+    c.clipPath(p, stroke=0, fill=0)
+    c.setStrokeColor(colors.Color(1, 1, 1, alpha=0.6))
+    c.setLineWidth(0.6)
+    i = -h
+    while i < w:
+        c.line(x + i, y, x + i + h, y + h)
+        i += 5
+    c.restoreState()
+
+
 def _fit_size(text: str, font: str, size: float, min_size: float,
               max_w: float) -> float | None:
     """Größte Schriftgröße ≤ size, bei der text in max_w passt (sonst None)."""
@@ -220,12 +235,30 @@ def _teil_von(label: str) -> str:
 def _draw_stueckliste(c: canvas.Canvas, cur: _PageCursor,
                       erg: OptimierungsErgebnis, farb_map: dict, is_1d: bool,
                       projekt_name: str = ""):
-    # Je Teil (Label + Maß) eine Zeile mit der Anzahl
+    # Je Teil (Label + Maß) eine Zeile mit der Anzahl; Füllteile in eigenem Abschnitt
     teile: dict[tuple[str, float, float], int] = {}
+    fuell: dict[tuple[str, float, float], int] = {}
     for plan in erg.schnittplaene:
         for p in plan.platzierungen:
+            ziel = fuell if p.ist_fuellteil else teile
             key = (p.teil_label, round(p.laenge, 1), round(p.breite, 1))
-            teile[key] = teile.get(key, 0) + 1
+            ziel[key] = ziel.get(key, 0) + 1
+    _draw_teile_tabelle(c, cur, teile, farb_map, is_1d, projekt_name)
+    if fuell:
+        cur.advance(4)
+        cur.need(40)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(MARGIN, cur.y,
+                     f"Füllteile ({sum(fuell.values())}) – kommen ins Regal ihres Projekts")
+        cur.advance(14)
+        _draw_teile_tabelle(c, cur, fuell, farb_map, is_1d, projekt_name)
+
+
+def _draw_teile_tabelle(c: canvas.Canvas, cur: _PageCursor,
+                        teile: dict[tuple[str, float, float], int], farb_map: dict,
+                        is_1d: bool, projekt_name: str):
+    if not teile:
+        return
 
     # Teile aus anderen Projekten (Sammelplan, Füllteile) nach Projekt gruppieren;
     # das Projekt steht dann als Zwischenüberschrift statt hinter jedem Label
@@ -411,6 +444,8 @@ def _draw_2d_rect(c: canvas.Canvas, plan: Schnittplan, farb_map: dict,
         c.setStrokeColor(colors.black)
         c.setLineWidth(0.3)
         c.rect(x, y, rw, rh, fill=1, stroke=1)
+        if p.ist_fuellteil:
+            _schraffur(c, x, y, rw, rh)
 
         # Beschriftung nur, wenn sie ins Teil passt (sonst schrumpfen/weglassen)
         c.setFillColor(colors.black)
@@ -501,6 +536,8 @@ def _draw_1d_plans(c: canvas.Canvas, cur: _PageCursor,
             c.setStrokeColor(colors.black)
             c.setLineWidth(0.3)
             c.rect(x, bar_y + 1, w, bar_h - 2, fill=1, stroke=1)
+            if p.ist_fuellteil:
+                _schraffur(c, x, bar_y + 1, w, bar_h - 2)
 
             # Label + Länge, wenn sie ins Teil passen; sonst nur die Länge
             c.setFillColor(colors.black)
