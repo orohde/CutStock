@@ -14,6 +14,14 @@ was man dort sieht, was man dort tut und welche Begriffe dazugehören.
 
 Für Programme, Scanner und Maschinen: [REST-API](api.md).
 
+## Desktop-App: im Browser, aber lokal
+
+Die Desktop-App (macOS, Windows) öffnet sich in deinem Standard-Browser. Das ist kein
+Online-Dienst: CutStock läuft komplett auf deinem eigenen Rechner, der Browser zeigt nur die
+Oberfläche an. Es wird keine Internetverbindung gebraucht, und die Daten bleiben auf deinem
+Rechner (auf dem Mac auf Wunsch per iCloud zwischen deinen Macs abgeglichen). Zum Beenden gibt
+es oben rechts den Knopf „Beenden“.
+
 ## Begriffe
 
 - **Material** – ein Werkstoff, z. B. „Alu Profil 40x40“ (Stange) oder „MDF 19 mm“ (Platte).

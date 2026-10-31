@@ -6,6 +6,8 @@ Der Reiter **Lager** beantwortet die Frage „Was liegt wo?“. Links stehen die
 rechts der Inhalt des gewählten Orts. Bestand anlegen und ändern geschieht weiter im
 Reiter [Material](1-material.md) – hier geht es um die Orte und darum, was dort liegt.
 
+![Lager](../screenshot_lager.png)
+
 ## Lagerorte
 
 Lagerorte sind eine feste Liste (Regal, Plattenwagen, Restekiste …). Jedes Material liegt an

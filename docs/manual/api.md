@@ -79,6 +79,7 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | DELETE | `/api/parts/{id}` | Delete a part |
 | **Optimization and Plans** | | |
 | POST | `/api/optimize` | Optimize and save as the project's plan for the material |
+| POST | `/api/plans/{id}/fill-choice` | Choose the filling of a group of equal bar offcuts (`wahl: null` = automatic) |
 | GET | `/api/projects/{id}/plans/{material_id}` | Get the saved plan (`null` if there is none) |
 | POST | `/api/plan-pieces/{id}` | Mark a piece as cut / undo (`{"gesaegt": true}`), updates progress and stock |
 | POST | `/api/plans/{id}/confirm-all` | Mark all open pieces of the plan as cut |
@@ -101,6 +102,9 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | GET | `/api/backup` | Download database backup (ZIP) |
 | POST | `/api/restore` | Restore from backup (ZIP) |
 | GET | `/api/i18n/{lang}` | Translations for a language |
+| POST | `/api/seed` | Create sample data (empty database only) |
+| GET | `/api/is-desktop` | Is CutStock running as the desktop app? |
+| POST | `/api/shutdown` | Quit the desktop app (desktop app only) |
 
 ## Optimization request
 

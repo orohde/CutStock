@@ -3091,7 +3091,7 @@ def get_version():
         "version": APP_VERSION,
         "repo": GITHUB_REPO,
         "github_url": f"https://github.com/{GITHUB_REPO}",
-        "website_url": "https://worldgate.de/cutstock/",
+        "website_url": "https://cutstock.app/",
         "releases_api": f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
         # Bestimmt, welche Update-Anleitung die Oberfläche zeigt
         "docker": IS_DOCKER,

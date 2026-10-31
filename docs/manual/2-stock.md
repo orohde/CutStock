@@ -6,6 +6,8 @@ The **Stock** tab answers the question "What is where?". On the left are the sto
 on the right the contents of the selected location. Adding and changing stock still happens in
 the [Material](1-material.md) tab – this tab is about the locations and what is stored there.
 
+![Stock](../screenshot_lager.png)
+
 ## Locations
 
 Locations are a fixed list (rack, panel cart, offcut box …). Every material is stored at exactly

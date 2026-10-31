@@ -14,6 +14,13 @@ what you see there, what you do there and the terms that go with it.
 
 For programs, scanners and machines: [REST API](api.md).
 
+## Desktop app: in the browser, but local
+
+The desktop app (macOS, Windows) opens in your default browser. It is not an online service:
+CutStock runs entirely on your own computer, the browser only shows the interface. No internet
+connection is needed, and your data stays on your computer (on the Mac optionally synced between
+your Macs via iCloud). To quit, use the "Quit" button at the top right.
+
 ## Terms
 
 - **Material** – a raw material, e.g. "Alu profile 40x40" (bar) or "MDF 19 mm" (panel).
