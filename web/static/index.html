@@ -36,6 +36,11 @@
         </a>
       </li>
       <li class="fd-tabs__item" role="presentation">
+        <a class="fd-tabs__link tab-btn" role="tab" aria-selected="false" data-tab="parts" href="#">
+          <span class="fd-tabs__tag" data-i18n="tab.parts">Teile</span>
+        </a>
+      </li>
+      <li class="fd-tabs__item" role="presentation">
         <a class="fd-tabs__link tab-btn" role="tab" aria-selected="false" data-tab="optimization" href="#">
           <span class="fd-tabs__tag" data-i18n="tab.optimization">Optimierung</span>
         </a>
@@ -159,6 +164,44 @@
               <tbody class="fd-table__body"></tbody>
             </table>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-parts" class="tab-content">
+      <div class="panel">
+        <div class="panel-header">
+          <h2 class="fd-title fd-title--h5" data-i18n="parts.title">Teile aller Projekte</h2>
+          <div class="toolbar">
+            <span id="parts-selected" class="parts-selected"></span>
+            <button id="btn-create-cutlist" class="fd-button fd-button--emphasized" type="button" data-i18n="parts.create_list" disabled>Schnittliste erstellen</button>
+          </div>
+        </div>
+        <p class="saw-hint" data-i18n="parts.hint"></p>
+        <div class="parts-filter">
+          <label class="fd-form-label" for="parts-material" data-i18n="parts.filter_material">Material</label>
+          <select id="parts-material" class="cs-select"></select>
+          <label class="fd-form-label" for="parts-project" data-i18n="parts.filter_project">Projekt</label>
+          <select id="parts-project" class="cs-select"></select>
+          <label class="opt-check"><input type="checkbox" id="parts-only-open" class="cs-checkbox">
+            <span data-i18n="parts.only_open">nur offene</span></label>
+        </div>
+        <div class="table-wrap">
+          <table id="all-parts-table" class="fd-table">
+            <thead class="fd-table__header">
+              <tr class="fd-table__row">
+                <th class="fd-table__cell"></th>
+                <th class="fd-table__cell" data-i18n="parts.col_part">Teil</th>
+                <th class="fd-table__cell" data-i18n="parts.filter_project">Projekt</th>
+                <th class="fd-table__cell" data-i18n="parts.filter_material">Material</th>
+                <th class="fd-table__cell" data-i18n="parts.col_size">Maße</th>
+                <th class="fd-table__cell num" data-i18n="parts.col_open">offen</th>
+                <th class="fd-table__cell num" data-i18n="parts.col_stock">Regal</th>
+                <th class="fd-table__cell" data-i18n="parts.col_qty">Menge</th>
+              </tr>
+            </thead>
+            <tbody class="fd-table__body"></tbody>
+          </table>
         </div>
       </div>
     </section>
@@ -378,7 +421,7 @@
             </tr>
           </thead>
           <tbody class="fd-table__body">
-            <tr class="fd-table__row"><td class="fd-table__cell"><kbd>1</kbd> &ndash; <kbd>4</kbd></td><td class="fd-table__cell" data-i18n="hotkey.tabs">Tab wechseln</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd>1</kbd> &ndash; <kbd>5</kbd></td><td class="fd-table__cell" data-i18n="hotkey.tabs">Tab wechseln</td></tr>
             <tr class="fd-table__row"><td class="fd-table__cell"><kbd class="hotkey-edit" data-action="new">N</kbd></td><td class="fd-table__cell" data-i18n="hotkey.new">Neues Element (Material / Projekt / Bauteil / Saegeblatt)</td></tr>
             <tr class="fd-table__row"><td class="fd-table__cell"><kbd class="hotkey-edit" data-action="edit">E</kbd></td><td class="fd-table__cell" data-i18n="hotkey.edit">Ausgewaehltes Element bearbeiten</td></tr>
             <tr class="fd-table__row"><td class="fd-table__cell"><kbd class="hotkey-edit" data-action="delete">Entf</kbd></td><td class="fd-table__cell" data-i18n="hotkey.delete">Ausgewaehltes Element loeschen</td></tr>

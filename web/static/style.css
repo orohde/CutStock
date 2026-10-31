@@ -969,3 +969,8 @@ td.expand-toggle:hover { background: rgba(255,255,255,0.05); }
 .sammel-legend { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; }
 .sammel-legend > span { display: inline-flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
 .sammel-legend .saw-dot { width: 0.7rem; height: 0.7rem; display: inline-block; }
+
+/* Reiter „Teile“ */
+.parts-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; margin: 0.5rem 0 0.75rem; }
+.parts-filter .cs-select { min-width: 10rem; }
+.parts-selected { color: var(--sapContent_LabelColor); margin-right: 0.5rem; }

@@ -382,6 +382,7 @@ class PartOut(BaseModel):
     offen_anzahl: int
     gesamt_anzahl: int = 0     # stueckzahl × Exemplare des Projekts
     vorrat: int = 0            # fertige Teile im Regal (z.B. als Füllteil entstanden)
+    herkunft_teil_id: int = 0  # nur in Schnittlisten: gesägt → Vorrat dieses Teils
 
 
 class ProjectIn(BaseModel):
@@ -397,6 +398,7 @@ class ProjectOut(BaseModel):
     plaene: list[PlanStatusOut] = []
     # Materialien, für die das Projekt in einem Sammelplan steckt: {material_id: Name}
     sammel: dict[int, str] = {}
+    art: str = ""   # "" = normales Projekt, "liste" = Schnittliste
 
 
 class FuellKandidatOut(BaseModel):
@@ -648,6 +650,7 @@ def _teil_to_out(t: Teil) -> PartOut:
         offen_anzahl=t.offen_anzahl,
         gesamt_anzahl=t.gesamt_anzahl,
         vorrat=t.vorrat,
+        herkunft_teil_id=t.herkunft_teil_id,
     )
 
 
@@ -662,6 +665,7 @@ def _projekt_to_out(p: Projekt) -> ProjectOut:
                               gesaegt=r["gesaegt"], angefangen=bool(r["angefangen"]))
                 for r in get_db().list_plan_status(p.id)] if p.id else [],
         sammel=get_db().sammel_von_projekt(p.id) if p.id else {},
+        art=p.art,
     )
 
 
@@ -1116,6 +1120,55 @@ def delete_blade(bid: int):
 @app.get("/api/projects", response_model=list[ProjectOut])
 def list_projects():
     return [_projekt_to_out(p) for p in get_db().list_projekte()]
+
+
+class AllPartOut(BaseModel):
+    teil_id: int
+    label: str
+    projekt_id: int
+    projekt: str
+    material_id: int
+    laenge: float
+    breite: float
+    offen: int
+    gesamt: int
+    vorrat: int
+
+
+class CutListEntry(BaseModel):
+    teil_id: int
+    menge: int = Field(ge=1, le=10000)
+
+
+class CutListIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    eintraege: list[CutListEntry] = Field(min_length=1)
+
+
+@app.get("/api/parts", response_model=list[AllPartOut])
+def list_all_parts():
+    """Alle Teile aller Projekte – für den Reiter „Teile“."""
+    return [AllPartOut(teil_id=k["teil"].id, label=k["teil"].label, projekt=k["projekt"],
+                       projekt_id=k["teil"].projekt_id, material_id=k["teil"].material_id,
+                       laenge=k["teil"].laenge, breite=k["teil"].breite,
+                       offen=k["teil"].offen_anzahl, gesamt=k["teil"].gesamt_anzahl,
+                       vorrat=k["teil"].vorrat)
+            for k in get_db().alle_teile()]
+
+
+@app.post("/api/cut-lists", response_model=ProjectOut, status_code=201)
+def create_cut_list(data: CutListIn):
+    """Schnittliste aus einzelnen Teilen: wird wie ein Projekt optimiert und gesägt,
+    die gesägten Teile gehen in den Vorrat ihrer Herkunftsteile."""
+    db = get_db()
+    erlaubt = {k["teil"].id for k in db.alle_teile()}
+    mengen: dict[int, int] = {}
+    for e in data.eintraege:
+        if e.teil_id not in erlaubt:
+            raise HTTPException(404, f"Part {e.teil_id} not found")
+        mengen[e.teil_id] = mengen.get(e.teil_id, 0) + e.menge
+    liste = db.schnittliste_anlegen(data.name.strip(), list(mengen.items()))
+    return _projekt_to_out(liste)
 
 
 @app.get("/api/projects/{pid}", response_model=ProjectOut)
@@ -2020,11 +2073,18 @@ def discard_plan(plan_id: int):
 
 def _gesaegt_buchen(db: Database, st: PlanStueck, delta: int):
     """Gesägtes Stück verbuchen: Füllteile gehen in den Vorrat ihres Teils ("Regal"),
-    alle anderen zählen als Fortschritt des Projekts."""
+    alle anderen zählen als Fortschritt des Projekts. Teile einer Schnittliste zählen
+    für die Liste und landen zusätzlich im Vorrat ihres Herkunftsteils."""
     if st.ist_fuellteil:
         db.teil_vorrat_aendern(st.teil_id, delta)
-    else:
-        db.teil_gesaegt_aendern(st.teil_id, delta)
+        return
+    vorher = db.get_teil(st.teil_id)
+    db.teil_gesaegt_aendern(st.teil_id, delta)
+    if vorher and vorher.herkunft_teil_id:
+        nachher = db.get_teil(st.teil_id)
+        geaendert = nachher.gesaegt_anzahl - vorher.gesaegt_anzahl
+        if geaendert:
+            db.teil_vorrat_aendern(vorher.herkunft_teil_id, geaendert)
 
 
 @app.get("/api/projects/{pid}/fill-candidates/{mid}", response_model=list[FuellKandidatOut])
@@ -2511,6 +2571,12 @@ WEB_EXTRA_TRANSLATIONS = {
     "bar.to_stock": {"de": "zurück ins Lager", "en": "back to stock", "fr": "retour en stock", "it": "torna in magazzino"},
     "bar.to_waste": {"de": "Abfall", "en": "waste", "fr": "déchet", "it": "scarto"},
     "bar.no_left": {"de": "kein Rest", "en": "no offcut", "fr": "aucune chute", "it": "nessun ritaglio"},
+    "plate.title": {"de": "Platte {n}", "en": "Panel {n}", "fr": "Panneau {n}", "it": "Pannello {n}"},
+    "plate.whole": {"de": "ganze Platte", "en": "full panel", "fr": "panneau entier", "it": "pannello intero"},
+    "plate.used": {"de": "{p} % genutzt", "en": "{p} % used", "fr": "{p} % utilisé", "it": "{p} % usato"},
+    "plate.rest_to_stock": {"de": "Rest {masse} → zurück ins Lager", "en": "offcut {masse} → back to stock", "fr": "chute {masse} → retour en stock", "it": "ritaglio {masse} → torna in magazzino"},
+    "plate.small_one": {"de": "1 kleines Stück → Abfall", "en": "1 small piece → waste", "fr": "1 petite chute → déchet", "it": "1 pezzo piccolo → scarto"},
+    "plate.small_n": {"de": "{n} kleine Stücke → Abfall", "en": "{n} small pieces → waste", "fr": "{n} petites chutes → déchet", "it": "{n} pezzi piccoli → scarto"},
     "sammel.select_projects": {"de": "Bitte mindestens ein Projekt auswählen.", "en": "Please select at least one project.", "fr": "Veuillez choisir au moins un projet.", "it": "Seleziona almeno un progetto."},
     "sammel.confirm_replace": {
         "de": "Die Einzelpläne von {names} sind noch nicht angefangen und werden durch den Sammelplan ersetzt.",
@@ -2527,6 +2593,36 @@ WEB_EXTRA_TRANSLATIONS = {
     "sammel.stat_projects": {"de": "Projekte", "en": "Projects", "fr": "Projets", "it": "Progetti"},
     "sammel.one_project": {"de": "1 Projekt", "en": "1 project", "fr": "1 projet", "it": "1 progetto"},
     "sammel.n_projects": {"de": "{n} Projekte", "en": "{n} projects", "fr": "{n} projets", "it": "{n} progetti"},
+    "tab.parts": {"de": "Teile", "en": "Parts", "fr": "Pièces", "it": "Pezzi"},
+    "parts.title": {"de": "Teile aller Projekte", "en": "Parts of all projects", "fr": "Pièces de tous les projets", "it": "Pezzi di tutti i progetti"},
+    "parts.hint": {
+        "de": "Teile anhaken und Stückzahl eintragen. „Schnittliste erstellen“ legt eine Liste an, die du wie ein Projekt optimierst und sägst. Gesägte Teile kommen ins Regal (Vorrat) ihres Projekts, das sie später per Klick übernimmt.",
+        "en": "Tick parts and enter a quantity. “Create cut list” makes a list you optimize and cut like a project. Cut parts go to the shelf (stock) of their project, which can take them over later with one click.",
+        "fr": "Cochez des pièces et indiquez une quantité. « Créer une liste de coupe » crée une liste à optimiser et découper comme un projet. Les pièces découpées vont sur l’étagère (stock) de leur projet, qui peut les reprendre plus tard en un clic.",
+        "it": "Spunta i pezzi e inserisci una quantità. «Crea lista di taglio» crea una lista da ottimizzare e tagliare come un progetto. I pezzi tagliati vanno sullo scaffale (scorta) del loro progetto, che potrà riprenderli con un clic.",
+    },
+    "parts.filter_material": {"de": "Material", "en": "Material", "fr": "Matériau", "it": "Materiale"},
+    "parts.filter_project": {"de": "Projekt", "en": "Project", "fr": "Projet", "it": "Progetto"},
+    "parts.all": {"de": "alle", "en": "all", "fr": "tous", "it": "tutti"},
+    "parts.only_open": {"de": "nur offene", "en": "open only", "fr": "ouvertes seulement", "it": "solo aperti"},
+    "parts.col_part": {"de": "Teil", "en": "Part", "fr": "Pièce", "it": "Pezzo"},
+    "parts.col_size": {"de": "Maße", "en": "Size", "fr": "Dimensions", "it": "Misure"},
+    "parts.col_open": {"de": "offen", "en": "open", "fr": "ouvert", "it": "aperti"},
+    "parts.col_stock": {"de": "Regal", "en": "Shelf", "fr": "Étagère", "it": "Scaffale"},
+    "parts.col_qty": {"de": "Menge", "en": "Qty", "fr": "Qté", "it": "Qtà"},
+    "parts.none": {"de": "Keine Teile gefunden.", "en": "No parts found.", "fr": "Aucune pièce trouvée.", "it": "Nessun pezzo trovato."},
+    "parts.selected": {"de": "{n} ausgewählt", "en": "{n} selected", "fr": "{n} sélectionnées", "it": "{n} selezionati"},
+    "parts.create_list": {"de": "Schnittliste erstellen", "en": "Create cut list", "fr": "Créer une liste de coupe", "it": "Crea lista di taglio"},
+    "parts.list_name": {"de": "Name der Schnittliste", "en": "Cut list name", "fr": "Nom de la liste de coupe", "it": "Nome della lista di taglio"},
+    "parts.list_default": {"de": "Schnittliste {datum}", "en": "Cut list {datum}", "fr": "Liste de coupe {datum}", "it": "Lista di taglio {datum}"},
+    "parts.list_created": {"de": "Schnittliste „{name}“ angelegt", "en": "Cut list “{name}” created", "fr": "Liste de coupe « {name} » créée", "it": "Lista di taglio «{name}» creata"},
+    "parts.list_badge": {"de": "Schnittliste", "en": "Cut list", "fr": "Liste de coupe", "it": "Lista di taglio"},
+    "parts.list_hint": {
+        "de": "Schnittliste: Gesägte Teile kommen ins Regal ihres Herkunftsprojekts. Ist alles gesägt, kannst du die Liste löschen.",
+        "en": "Cut list: cut parts go to the shelf of the project they come from. Once everything is cut, you can delete the list.",
+        "fr": "Liste de coupe : les pièces découpées vont sur l’étagère de leur projet d’origine. Une fois tout découpé, vous pouvez supprimer la liste.",
+        "it": "Lista di taglio: i pezzi tagliati vanno sullo scaffale del progetto d’origine. Quando è tutto tagliato puoi eliminare la lista.",
+    },
     "sammel.badge": {"de": "Sammelplan", "en": "Combined plan", "fr": "Plan groupé", "it": "Piano combinato"},
     "sammel.open": {"de": "Sammelplan öffnen", "en": "Open combined plan", "fr": "Ouvrir le plan groupé", "it": "Apri piano combinato"},
     "upd.download": {"de": "Neue Version herunterladen", "en": "Download new version", "fr": "Télécharger la nouvelle version", "it": "Scarica la nuova versione"},

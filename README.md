@@ -137,6 +137,12 @@ If waste remains at the end of a bar, CutStock can fill it with parts from other
 
 If the same material is used in several projects, it can be optimized together: in the Optimization tab choose "Optimize by: Material (combined plan)", select the material and tick the projects. "Compare" shows how much material this saves over separate plans. Each part in the plan shows its project ("Side → Shelf"); ticked parts count as progress of that project. Unstarted single plans of these projects are replaced; parts lying uncut in a started plan stay there. Each project gets its own colour in the plan (legend with piece counts in the statistics), the PDF lists parts grouped by project, and the Projects tab marks participating projects with a "Combined plan" badge.
 
+### Parts and Cut Lists
+
+The "Parts" tab shows the parts of all projects, filterable by material and project, with open quantity and shelf stock. Tick parts, enter a quantity and click "Create cut list": the list appears in the Projects tab and is optimized, cut and printed like a project. Ticked-off parts go to the shelf (stock) of the project they come from, which can take them over later with one click. Once everything is cut, the list can be deleted.
+
+Each plan's header tells you what you are holding: "Bar 2 · offcut 960 mm" or "Panel 1 · full panel 2800 × 2070 mm", how many parts are on it and what is left over (back to stock or waste). The drawing shows each part's name and size.
+
 ### Optimization -- Panels
 
 2D guillotine packing for panels. All cuts go edge-to-edge, keeping every remnant rectangular and reusable. The numbered cutting sequence below each plan tells you exactly where to cut, with the saw kerf already accounted for.
@@ -256,6 +262,8 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | GET | `/api/projects/{id}/fill-candidates/{material_id}` | Possible filler parts from other projects |
 | GET | `/api/sammel/{material_id}` | Combined plan status and eligible projects |
 | POST | `/api/sammel/optimize` | Create/replace and compute the combined plan |
+| GET | `/api/parts` | Parts of all projects ("Parts" tab) |
+| POST | `/api/cut-lists` | Create a cut list from individual parts |
 | POST | `/api/sammel/compare` | Compare separate vs. combined (not saved) |
 | POST | `/api/projects/{id}/take-stock/{material_id}` | Take part stock ("shelf") over as cut |
 | **Export** | | |

@@ -138,6 +138,12 @@ Bleibt am Ende einer Stange Abfall, kann CutStock ihn mit Teilen aus anderen Pro
 
 Wird dasselbe Material in mehreren Projekten gebraucht, kann man es gemeinsam optimieren: Im Optimierungs-Tab "Optimieren nach: Material (Sammelplan)" waehlen, Material auswaehlen und die Projekte anhaken. "Vergleichen" zeigt, wie viel Material das gegenueber getrennten Plaenen spart. Im Plan steht bei jedem Teil sein Projekt ("Seite → Regal"); abgehakte Teile zaehlen als Fortschritt dieses Projekts. Nicht angefangene Einzelplaene der Projekte werden ersetzt; Teile, die ungesaegt in einem angefangenen Plan liegen, bleiben dort. Jedes Projekt bekommt im Plan eine eigene Farbe (Legende mit Stueckzahl in der Statistik), das PDF listet die Teile nach Projekt gruppiert, und im Projekte-Tab markiert ein Hinweis "Sammelplan" die beteiligten Projekte.
 
+### Teile und Schnittlisten
+
+Der Reiter "Teile" zeigt die Teile aller Projekte, filterbar nach Material und Projekt, mit offener Stueckzahl und Regal-Vorrat. Teile anhaken, Menge eintragen und "Schnittliste erstellen": Es entsteht eine Schnittliste, die im Projekte-Tab erscheint und wie ein Projekt optimiert, gesaegt und gedruckt wird. Abgehakte Teile kommen ins Regal (Vorrat) ihres Herkunftsprojekts, das sie spaeter per Klick uebernimmt. Ist alles gesaegt, kann die Liste geloescht werden.
+
+Die Kopfzeile jedes Plans sagt, was man in der Hand hat: "Stange 2 · Rest 960 mm" bzw. "Platte 1 · ganze Platte 2800 × 2070 mm", wie viele Teile darauf liegen und was uebrig bleibt (zurueck ins Lager oder Abfall). In der Zeichnung steht bei jedem Teil sein Name und seine Masse.
+
 ### Optimierung -- Platten
 
 2D Guillotine-Packing fuer Plattenwerkstoffe. Alle Schnitte gehen von Kante zu Kante, so dass alle Reste Rechtecke bleiben und wiederverwendbar sind. Die nummerierte Schnittfolge unter jedem Plan sagt exakt, wo gesaegt wird -- die Saegeblattbreite ist bereits eingerechnet.
@@ -257,6 +263,8 @@ Anfragen von der eigenen Web-Oberflaeche (Same-Origin) und von localhost sind im
 | GET | `/api/projects/{id}/fill-candidates/{material_id}` | Moegliche Fuellteile aus anderen Projekten |
 | GET | `/api/sammel/{material_id}` | Sammelplan-Status und moegliche Projekte |
 | POST | `/api/sammel/optimize` | Sammelplan anlegen/ersetzen und berechnen |
+| GET | `/api/parts` | Teile aller Projekte (Reiter "Teile") |
+| POST | `/api/cut-lists` | Schnittliste aus einzelnen Teilen anlegen |
 | POST | `/api/sammel/compare` | Vergleich getrennt/gemeinsam (ohne Speichern) |
 | POST | `/api/projects/{id}/take-stock/{material_id}` | Teile-Vorrat ("Regal") als gesaegt uebernehmen |
 | **Export** | | |

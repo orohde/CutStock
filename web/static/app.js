@@ -229,6 +229,8 @@ const Api = {
     compareSammel: (data) => fetchJSON('/api/sammel/compare', 'POST', data),
     getFillCandidates: (projectId, materialId) =>
         fetchJSON(`/api/projects/${projectId}/fill-candidates/${materialId}`),
+    getAllParts: () => fetchJSON('/api/parts'),
+    createCutList: (data) => fetchJSON('/api/cut-lists', 'POST', data),
     takePartStock: (projectId, materialId) =>
         fetchJSON(`/api/projects/${projectId}/take-stock/${materialId}`, 'POST'),
 
@@ -604,7 +606,7 @@ async function renderProjects() {
     tbody.innerHTML = State.projects.map(p => {
         const selected = p.id === State.selectedProjectId ? ' selected' : '';
         const copies = p.anzahl > 1 ? ` <span class="proj-copies">×${p.anzahl}</span>` : '';
-        return `<tr class="fd-table__row ${selected}" data-id="${p.id}"><td class="fd-table__cell">${escHtml(p.name)}${copies}${planBadge(p)}${sammelBadge(p)}</td></tr>`;
+        return `<tr class="fd-table__row ${selected}" data-id="${p.id}"><td class="fd-table__cell">${escHtml(p.name)}${copies}${planBadge(p)}${sammelBadge(p)}${cutListBadge(p)}</td></tr>`;
     }).join('');
 
     tbody.querySelectorAll('tr[data-id]').forEach(row => {
@@ -634,6 +636,12 @@ function sammelBadge(project) {
     const names = Object.values(project.sammel || {});
     if (!names.length) return '';
     return ` <span class="plan-badge sammel-badge" title="${escAttr(names.join(', '))}">&#128279; ${escHtml(t('sammel.badge'))}</span>`;
+}
+
+// Schnittliste: gesägte Teile gehen ins Regal ihres Herkunftsprojekts
+function cutListBadge(project) {
+    if (project.art !== 'liste') return '';
+    return ` <span class="plan-badge sammel-badge" title="${escAttr(t('parts.list_hint'))}">&#128203; ${escHtml(t('parts.list_badge'))}</span>`;
 }
 
 function selectProjectRow(id) {
@@ -1250,14 +1258,7 @@ function renderOptResults({ quiet = false } = {}) {
                 ${seqHtml}
             </div>`;
             return `<div class="cut-plan-card">
-                <div class="plan-header">
-                    <strong>${t('opt.preview')} ${i + 1}</strong>
-                    <span>${formatDim(plan.lager_laenge)}${plan.lager_breite ? ' x ' + formatDim(plan.lager_breite) : ''}</span>
-                    <span>${plan.platzierungen.length} ${t('proj.parts')}</span>
-                    <span>${t('stat.utilization')}: ${(100 - plan.verschnitt_prozent).toFixed(1)}%</span>
-                    <span class="waste">${t('stat.total_waste')}: ${plan.verschnitt_prozent.toFixed(1)}%</span>
-                    <button class="fd-button btn-zoom" data-plan-index="${i}" type="button" title="${escAttr(t('opt.zoom'))}" aria-label="${escAttr(t('opt.zoom'))}">&#128269;</button>
-                </div>
+                ${plateHeadHtml(plan, i, mat)}
                 <div class="plan-piece-info" data-plan-index="${i}">${planPieceInfo(plan)}</div>
                 <canvas class="cut-plan-canvas" data-plan-index="${i}"
                     style="width:100%;height:${canvasHeight}px"></canvas>
@@ -1704,7 +1705,7 @@ function drawCutPlan(canvas, plan, material) {
     if (is1D) {
         draw1D(ctx, canvasW, canvasH, plan, colorMap, hits, material?.besaeumung || 0);
     } else {
-        draw2D(ctx, canvasW, canvasH, plan, colorMap, hits);
+        draw2D(ctx, canvasW, canvasH, plan, colorMap, hits, material?.besaeumung || 0);
     }
     canvas._hits = hits;
 
@@ -1799,6 +1800,137 @@ function updateFillButton() {
     if (!btn) return;
     const n = State.fillSel?.key === currentFillKey() ? (State.fillSel.items || []).length : 0;
     btn.textContent = n ? `${t('fill.button').replace('…', '')} (${n})` : t('fill.button');
+}
+
+// ---------------------------------------------------------------------------
+// Reiter „Teile“: Teile aller Projekte, daraus eine Schnittliste erstellen
+// ---------------------------------------------------------------------------
+
+// Auswahl bleibt beim Filtern erhalten: teil_id -> Menge
+const PartsSel = new Map();
+
+async function renderAllParts() {
+    let teile;
+    try {
+        teile = await Api.getAllParts();
+        if (!State.materials.length) State.materials = await Api.getMaterials();
+    } catch { return; }
+    State.allParts = teile;
+
+    const matSel = document.getElementById('parts-material');
+    const projSel = document.getElementById('parts-project');
+    const keep = (sel) => sel.value;
+    const matVal = keep(matSel), projVal = keep(projSel);
+    const matIds = new Set(teile.map(x => x.material_id));
+    matSel.innerHTML = `<option value="">${escHtml(t('parts.all'))}</option>` +
+        State.materials.filter(m => matIds.has(m.id))
+            .map(m => `<option value="${m.id}">${escHtml(m.name)}</option>`).join('');
+    const projekte = [...new Map(teile.map(x => [x.projekt_id, x.projekt])).entries()];
+    projSel.innerHTML = `<option value="">${escHtml(t('parts.all'))}</option>` +
+        projekte.map(([id, name]) => `<option value="${id}">${escHtml(name)}</option>`).join('');
+    matSel.value = matIds.has(parseInt(matVal)) ? matVal : '';
+    projSel.value = projekte.some(([id]) => String(id) === projVal) ? projVal : '';
+    // Teile, die es nicht mehr gibt, aus der Auswahl nehmen
+    const ids = new Set(teile.map(x => x.teil_id));
+    [...PartsSel.keys()].forEach(id => { if (!ids.has(id)) PartsSel.delete(id); });
+    renderAllPartsTable();
+}
+
+function renderAllPartsTable() {
+    const tbody = document.querySelector('#all-parts-table tbody');
+    if (!tbody) return;
+    const matId = parseInt(document.getElementById('parts-material').value) || 0;
+    const projId = parseInt(document.getElementById('parts-project').value) || 0;
+    const onlyOpen = document.getElementById('parts-only-open').checked;
+    const matName = (id) => State.materials.find(m => m.id === id)?.name || '';
+    const rows = (State.allParts || []).filter(x =>
+        (!matId || x.material_id === matId) && (!projId || x.projekt_id === projId)
+        && (!onlyOpen || x.offen > 0));
+    tbody.innerHTML = rows.length ? rows.map(x => {
+        const menge = PartsSel.get(x.teil_id);
+        return `<tr class="fd-table__row" data-teil="${x.teil_id}">
+            <td class="fd-table__cell"><input type="checkbox" class="cs-checkbox parts-check"${menge ? ' checked' : ''}></td>
+            <td class="fd-table__cell">${escHtml(x.label)}</td>
+            <td class="fd-table__cell">${escHtml(x.projekt)}</td>
+            <td class="fd-table__cell">${escHtml(matName(x.material_id))}</td>
+            <td class="fd-table__cell num">${dimText(x.laenge, x.breite)}</td>
+            <td class="fd-table__cell num">${x.offen}</td>
+            <td class="fd-table__cell num">${x.vorrat || ''}</td>
+            <td class="fd-table__cell"><input type="number" class="parts-qty" min="1" step="1" style="width:5rem"
+                value="${menge || ''}" placeholder="${x.offen || 1}"></td>
+        </tr>`;
+    }).join('') : `<tr><td class="empty-state" colspan="8">${escHtml(t('parts.none'))}</td></tr>`;
+
+    tbody.querySelectorAll('tr[data-teil]').forEach(tr => {
+        const id = parseInt(tr.dataset.teil);
+        const teil = State.allParts.find(x => x.teil_id === id);
+        const check = tr.querySelector('.parts-check');
+        const qty = tr.querySelector('.parts-qty');
+        // Ohne eigene Angabe: so viele wie offen, bei fertigen Teilen eins
+        check.addEventListener('change', () => {
+            if (check.checked) {
+                const n = parseInt(qty.value) || teil.offen || 1;
+                qty.value = n;
+                PartsSel.set(id, n);
+            } else {
+                PartsSel.delete(id);
+            }
+            updatePartsSelection();
+        });
+        qty.addEventListener('input', () => {
+            const n = parseInt(qty.value) || 0;
+            check.checked = n > 0;
+            if (n > 0) PartsSel.set(id, n); else PartsSel.delete(id);
+            updatePartsSelection();
+        });
+    });
+    updatePartsSelection();
+}
+
+function updatePartsSelection() {
+    const n = PartsSel.size;
+    document.getElementById('parts-selected').textContent = n ? t('parts.selected', { n }) : '';
+    document.getElementById('btn-create-cutlist').disabled = n === 0;
+}
+
+function createCutList() {
+    if (!PartsSel.size) return;
+    const overlay = document.getElementById('modal-overlay');
+    const body = document.getElementById('modal-body');
+    const saveBtn = document.getElementById('modal-save');
+    document.getElementById('modal-title').textContent = t('parts.create_list');
+    saveBtn.style.display = '';
+    saveBtn.textContent = t('btn.save');
+    const datum = new Date().toLocaleDateString(State.settings?.language || undefined);
+    body.innerHTML = `<div class="form-group">
+        <label class="fd-form-label" for="cutlist-name">${escHtml(t('parts.list_name'))}</label>
+        <input id="cutlist-name" class="fd-input" type="text" maxlength="200"
+            value="${escAttr(t('parts.list_default', { datum }))}">
+    </div>
+    <p class="saw-hint">${escHtml(t('parts.list_hint'))}</p>`;
+    overlay.classList.remove('hidden');
+    overlay.classList.add('active');
+    const input = document.getElementById('cutlist-name');
+    input.focus();
+    input.select();
+    saveBtn.onclick = async () => {
+        const name = input.value.trim();
+        if (!name) { input.focus(); return; }
+        try {
+            const liste = await Api.createCutList({
+                name,
+                eintraege: [...PartsSel.entries()].map(([teil_id, menge]) => ({ teil_id, menge })),
+            });
+            closeModal();
+            PartsSel.clear();
+            showToast(t('parts.list_created', { name: liste.name }), 'success');
+            // Direkt zur neuen Liste im Projekte-Reiter
+            State.selectedProjectId = liste.id;
+            document.querySelector('.tab-btn[data-tab="projects"]')?.click();
+        } catch (e) {
+            showToast(e.message, 'error');
+        }
+    };
 }
 
 async function openFillDialog() {
@@ -2060,6 +2192,28 @@ function barHeadHtml(plan, i, mat) {
     </div>`;
 }
 
+function plateHeadHtml(plan, i, mat) {
+    const trim = 2 * (mat?.besaeumung || 0);
+    const art = plan.ist_rest ? t('bar.rest') : t('plate.whole');
+    const n = plan.platzierungen.length;
+    const minL = mat?.rest_min_laenge ?? 0;
+    const minB = mat?.rest_min_breite ?? 0;
+    // Gleiche Regel wie beim Einbuchen (db.rest_einbuchen)
+    const reste = (plan.reste || []).filter(r => r[0] > 0.5 && r[1] > 0.5);
+    const lager = reste.filter(r => r[0] >= minL && r[1] >= minB);
+    const klein = reste.length - lager.length;
+    const restTexte = lager.map(r => t('plate.rest_to_stock',
+        { masse: `${formatDim(Math.round(r[0]))} × ${formatDim(Math.round(r[1]))}` }));
+    if (klein) restTexte.push(klein === 1 ? t('plate.small_one') : t('plate.small_n', { n: klein }));
+    const used = t('plate.used', { p: (100 - plan.verschnitt_prozent).toFixed(0) });
+    return `<div class="plan-header bar-head">
+        <strong>${escHtml(t('plate.title', { n: i + 1 }))} · ${escHtml(art)} ${formatDim(plan.lager_laenge + trim)} × ${formatDim(plan.lager_breite + trim)}</strong>
+        <span>${escHtml(n === 1 ? t('bar.one_part') : t('bar.n_parts', { n }))} · ${escHtml(used)}</span>
+        ${restTexte.length ? `<span>${escHtml(restTexte.join(', '))}</span>` : `<span>${escHtml(t('bar.no_left'))}</span>`}
+        <button class="fd-button btn-zoom" data-plan-index="${i}" type="button" title="${escAttr(t('opt.zoom'))}" aria-label="${escAttr(t('opt.zoom'))}">&#128269;</button>
+    </div>`;
+}
+
 function planPieceInfo(plan) {
     const parts = [];
     if (plan.stueck_code) {
@@ -2115,7 +2269,7 @@ function renderSawMode() {
     const total = plans.reduce((s, p) => s + p.platzierungen.length, 0);
     const done = plans.reduce((s, p) => s + p.platzierungen.filter(x => x._done).length, 0);
     document.getElementById('saw-plan-label').textContent =
-        `${is1D ? t('bar.title', { n: sawPlanIdx + 1 }) : `${t('opt.preview')} ${sawPlanIdx + 1}`} / ${plans.length}`;
+        `${t(is1D ? 'bar.title' : 'plate.title', { n: sawPlanIdx + 1 })} / ${plans.length}`;
     document.getElementById('saw-progress-text').textContent =
         done >= total ? t('saw.done') : `${done} / ${total}`;
     document.getElementById('saw-progress-fill').style.width =
@@ -2409,7 +2563,7 @@ function currentKerf() {
     return blade?.schnittbreite || 0;
 }
 
-function draw2D(ctx, canvasW, canvasH, plan, colorMap, hits) {
+function draw2D(ctx, canvasW, canvasH, plan, colorMap, hits, besaeumung = 0) {
     // Uniform mm→px scale: fit the panel into the padded canvas while
     // preserving the aspect ratio, then center the leftover space.
     const padding = 40;
@@ -2480,19 +2634,31 @@ function draw2D(ctx, canvasW, canvasH, plan, colorMap, hits) {
         ctx.lineWidth = 0.5;
         ctx.strokeRect(px, py, pw, ph);
 
-        // Label text
+        // Beschriftung: Teilname, darunter die Maße (wie bei den Stangen)
         const fontSize = Math.max(9, Math.min(14, Math.min(pw, ph) / 4));
-        ctx.font = `bold ${fontSize}px -apple-system, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        const label = p.teil_label;
-        const textW = ctx.measureText(label).width;
-
-        if (textW < pw - 4 && fontSize < ph - 4) {
+        const fits = (txt, font) => { ctx.font = font; return ctx.measureText(txt).width < pw - 4; };
+        const nameFont = `bold ${fontSize}px -apple-system, sans-serif`;
+        const dimFont = `${Math.max(8, fontSize - 2)}px -apple-system, sans-serif`;
+        let name = p.teil_label;
+        if (!fits(name, nameFont)) name = p.teil_label.split(' → ')[0];
+        const dims = `${formatDim(Math.round(p.laenge))} × ${formatDim(Math.round(p.breite))}`;
+        const showName = fits(name, nameFont) && fontSize < ph - 4;
+        const showDims = showName && fits(dims, dimFont) && fontSize * 2.4 < ph - 4;
+        const shadowText = (txt, font, y) => {
+            ctx.font = font;
             ctx.fillStyle = 'rgba(0,0,0,0.4)';
-            ctx.fillText(label, px + pw / 2 + 1, py + ph / 2 + 1);
+            ctx.fillText(txt, px + pw / 2 + 1, y + 1);
             ctx.fillStyle = '#fff';
-            ctx.fillText(label, px + pw / 2, py + ph / 2);
+            ctx.fillText(txt, px + pw / 2, y);
+        };
+        const cy = py + ph / 2;
+        if (showDims) {
+            shadowText(name, nameFont, cy - fontSize * 0.6);
+            shadowText(dims, dimFont, cy + fontSize * 0.65);
+        } else if (showName) {
+            shadowText(name, nameFont, cy);
         }
 
         // Rotation indicator
@@ -2560,14 +2726,14 @@ function draw2D(ctx, canvasW, canvasH, plan, colorMap, hits) {
     ctx.font = '11px -apple-system, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillText(formatDim(plan.lager_laenge), offsetX + stockW / 2, offsetY + stockH + 6);
+    ctx.fillText(formatDim(plan.lager_laenge + 2 * besaeumung), offsetX + stockW / 2, offsetY + stockH + 6);
 
     ctx.save();
     ctx.translate(offsetX - 6, offsetY + stockH / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
-    ctx.fillText(formatDim(plan.lager_breite), 0, 0);
+    ctx.fillText(formatDim(plan.lager_breite + 2 * besaeumung), 0, 0);
     ctx.restore();
 }
 
@@ -2828,6 +2994,18 @@ function fieldHtml(f, data) {
     }
 
     return `<label class="fd-form-label">${escHtml(label)}${unitSuffix}</label>${input}`;
+}
+
+// Schließt nur, wenn Drücken UND Loslassen auf dem Hintergrund passieren.
+// Sonst schließt ein Markieren im Dialog, das außerhalb endet, den Dialog.
+function onBackdropClick(el, fn) {
+    if (!el) return;
+    let downOnBackdrop = false;
+    el.addEventListener('mousedown', (e) => { downOnBackdrop = e.target === el; });
+    el.addEventListener('click', (e) => {
+        if (downOnBackdrop && e.target === el) fn();
+        downOnBackdrop = false;
+    });
 }
 
 function closeModal() {
@@ -3100,7 +3278,6 @@ async function openDefectListDialog(stockId) {
 
     overlay.classList.remove('hidden');
     overlay.classList.add('active');
-    overlay.onclick = (e) => { if (e.target === overlay) overlay.classList.remove('active'); };
 }
 
 function openDefectDialog(stockId, isPlatte, pieces, defect, onDone) {
@@ -3869,6 +4046,7 @@ function initEvents() {
 
             if (tabId === 'material') { renderMaterials(); }
             else if (tabId === 'projects') { renderProjects(); }
+            else if (tabId === 'parts') { renderAllParts(); }
             else if (tabId === 'optimization') { renderOptDropdowns(); }
             else if (tabId === 'settings') { renderSettings(); renderBlades(); renderLicense(); }
         });
@@ -4287,9 +4465,12 @@ function initEvents() {
         if (zb) { e.preventDefault(); openPlanZoom(parseInt(zb.dataset.planIndex)); }
     });
     document.getElementById('zoom-close')?.addEventListener('click', () => closePlanZoom());
-    document.getElementById('zoom-overlay')?.addEventListener('click', (e) => {
-        if (e.target.id === 'zoom-overlay') closePlanZoom();
-    });
+    onBackdropClick(document.getElementById('zoom-overlay'), () => closePlanZoom());
+
+    // ----- Reiter „Teile“ -----
+    ['parts-material', 'parts-project', 'parts-only-open'].forEach(id =>
+        document.getElementById(id)?.addEventListener('change', () => renderAllPartsTable()));
+    document.getElementById('btn-create-cutlist')?.addEventListener('click', () => createCutList());
 
     // ----- Etiketten -----
     document.getElementById('btn-labels')?.addEventListener('click', () => printPartLabels());
@@ -4320,9 +4501,7 @@ function initEvents() {
     });
 
     // ----- Modal overlay click to close -----
-    document.getElementById('modal-overlay')?.addEventListener('click', (e) => {
-        if (e.target.id === 'modal-overlay') closeModal();
-    });
+    onBackdropClick(document.getElementById('modal-overlay'), () => closeModal());
 
     // ----- Modal cancel button -----
     document.getElementById('modal-cancel')?.addEventListener('click', () => closeModal());
@@ -4373,8 +4552,8 @@ function initEvents() {
         const tab = document.querySelector('.tab-btn.active')?.dataset.tab;
 
         // Tab switching: 1-4
-        if (e.key >= '1' && e.key <= '4' && !e.ctrlKey && !e.metaKey && !e.altKey) {
-            const tabs = ['material', 'projects', 'optimization', 'settings'];
+        if (e.key >= '1' && e.key <= '5' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            const tabs = ['material', 'projects', 'parts', 'optimization', 'settings'];
             const target = tabs[parseInt(e.key) - 1];
             const btn = document.querySelector(`.tab-btn[data-tab="${target}"]`);
             if (btn) { e.preventDefault(); btn.click(); }

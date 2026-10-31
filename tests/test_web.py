@@ -918,3 +918,73 @@ class TestSammelplan:
         plan_b = client.post("/api/optimize", json={
             "project_id": b, "material_id": mid, "blade_id": bid}).json()
         assert len(self._stuecke(plan_b)) == 1                  # 3 liegen schon bei A
+
+
+class TestSchnittliste:
+    """Reiter „Teile“: Schnittliste aus einzelnen Teilen, gesägt → Regal."""
+
+    def _setup(self, client):
+        mid = client.post("/api/materials", json={"name": "Alu", "typ": "Stange"}).json()["id"]
+        client.post("/api/stock", json={"material_id": mid, "laenge": 2000, "stueckzahl": 10})
+        bid = client.post("/api/blades", json={"name": "B", "schnittbreite": 3}).json()["id"]
+        teile = {}
+        for name, laenge in (("A", 695), ("B", 600)):
+            pid = client.post("/api/projects", json={"name": name}).json()["id"]
+            teile[name] = client.post(f"/api/projects/{pid}/parts", json={
+                "label": "Schiene", "typ": "Stange", "material_id": mid,
+                "laenge": laenge, "stueckzahl": 4}).json()
+        return mid, bid, teile
+
+    def _liste(self, client, eintraege, name="Liste 1"):
+        r = client.post("/api/cut-lists", json={"name": name, "eintraege": eintraege})
+        assert r.status_code == 201, r.text
+        return r.json()
+
+    def test_alle_teile_ohne_listen(self, client):
+        _, _, teile = self._setup(client)
+        self._liste(client, [{"teil_id": teile["A"]["id"], "menge": 2}])
+        ids = {t["id"] for t in teile.values()}
+        alle = client.get("/api/parts").json()
+        assert ids <= {x["teil_id"] for x in alle}
+        assert not any(x["projekt"] == "Liste 1" for x in alle)   # Liste selbst fehlt
+
+    def test_liste_kopiert_teile_mit_herkunft(self, client):
+        _, _, teile = self._setup(client)
+        liste = self._liste(client, [{"teil_id": teile["A"]["id"], "menge": 2},
+                                     {"teil_id": teile["B"]["id"], "menge": 3}])
+        assert liste["art"] == "liste"
+        kopien = sorted((t["label"], t["stueckzahl"], t["herkunft_teil_id"])
+                        for t in liste["teile"])
+        assert kopien == [("Schiene (A)", 2, teile["A"]["id"]),
+                          ("Schiene (B)", 3, teile["B"]["id"])]
+        assert any(p["art"] == "liste" for p in client.get("/api/projects").json())
+
+    def test_unbekanntes_teil(self, client):
+        r = client.post("/api/cut-lists", json={"name": "X",
+                                                "eintraege": [{"teil_id": 999, "menge": 1}]})
+        assert r.status_code == 404
+
+    def test_gesaegt_geht_ins_regal(self, client):
+        mid, bid, teile = self._setup(client)
+        liste = self._liste(client, [{"teil_id": teile["A"]["id"], "menge": 2}])
+        plan = client.post("/api/optimize", json={
+            "project_id": liste["id"], "material_id": mid, "blade_id": bid}).json()
+        stueck = plan["schnittplaene"][0]["platzierungen"][0]
+        client.post(f"/api/plan-pieces/{stueck['id']}", json={"gesaegt": True})
+        a = client.get(f"/api/projects/{teile['A']['projekt_id']}").json()["teile"][0]
+        kopie = client.get(f"/api/projects/{liste['id']}").json()["teile"][0]
+        assert (a["vorrat"], a["gesaegt_anzahl"]) == (1, 0)   # Regal, kein Fortschritt
+        assert kopie["gesaegt_anzahl"] == 1
+        client.post(f"/api/plan-pieces/{stueck['id']}", json={"gesaegt": False})
+        a = client.get(f"/api/projects/{teile['A']['projekt_id']}").json()["teile"][0]
+        assert a["vorrat"] == 0
+
+    def test_herkunftsprojekt_plant_listenteile_nicht_doppelt(self, client):
+        mid, bid, teile = self._setup(client)
+        liste = self._liste(client, [{"teil_id": teile["A"]["id"], "menge": 3}])
+        client.post("/api/optimize", json={
+            "project_id": liste["id"], "material_id": mid, "blade_id": bid})
+        plan = client.post("/api/optimize", json={
+            "project_id": teile["A"]["projekt_id"], "material_id": mid, "blade_id": bid}).json()
+        n = sum(len(sp["platzierungen"]) for sp in plan["schnittplaene"])
+        assert n == 1   # 4 offen − 3 ungesägt in der Schnittliste

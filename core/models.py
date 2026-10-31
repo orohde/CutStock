@@ -88,7 +88,8 @@ class Projekt:
     name: str = ""
     anzahl: int = 1        # Exemplare: das Projekt wird so oft gebaut
     teile: list[Teil] = field(default_factory=list)
-    art: str = ""          # "sammel" = Sammelplan mehrerer Projekte (ohne eigene Teile)
+    art: str = ""          # "sammel" = Sammelplan mehrerer Projekte (ohne eigene Teile),
+                           # "liste" = Schnittliste (Kopien von Teilen, gesägt → Vorrat)
 
 
 @dataclass
@@ -110,6 +111,8 @@ class Teil:
     # Fertig gesägte Teile auf Vorrat ("Regal"), z.B. als Füllteil eines anderen
     # Projekts entstanden. Wird nur über eigene Methoden geändert, nicht per save_teil.
     vorrat: int = 0
+    # Nur in Schnittlisten: das Teil, in dessen Vorrat gesägte Stücke gehen
+    herkunft_teil_id: int = 0
 
     @property
     def gesamt_anzahl(self) -> int:

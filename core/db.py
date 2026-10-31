@@ -175,7 +175,9 @@ CREATE TABLE IF NOT EXISTS teil (
     gesaegt_anzahl INTEGER NOT NULL DEFAULT 0,
     maserung    TEXT    NOT NULL DEFAULT 'egal',
     status      TEXT    NOT NULL DEFAULT 'offen' CHECK(status IN ('offen','gesägt')),
-    vorrat      INTEGER NOT NULL DEFAULT 0
+    vorrat      INTEGER NOT NULL DEFAULT 0,
+    -- Teil einer Schnittliste: Kopie dieses Teils. Gesägte Stücke gehen in dessen Vorrat.
+    herkunft_teil_id INTEGER NOT NULL DEFAULT 0
 );
 
 -- Gespeicherte Schnittpläne (ein Plan je Projekt + Material).
@@ -273,7 +275,7 @@ class Database:
     PFLICHT_SPALTEN = {
         "projekt": {"anzahl", "art", "sammel_material_id"},
         "lagerstueck": {"ist_rest"},
-        "teil": {"vorrat"},
+        "teil": {"vorrat", "herkunft_teil_id"},
         "schnittplan": {"fuell_alle_reste"},
         "schnittplan_stueck": {"ist_fuellteil"},
         "material": {"kuerzel", "lagerort", "lagerort_reste"},
@@ -386,6 +388,9 @@ class Database:
         if "vorrat" not in teil_cols:
             self.conn.execute(
                 "ALTER TABLE teil ADD COLUMN vorrat INTEGER NOT NULL DEFAULT 0")
+        if "herkunft_teil_id" not in teil_cols:
+            self.conn.execute(
+                "ALTER TABLE teil ADD COLUMN herkunft_teil_id INTEGER NOT NULL DEFAULT 0")
         sp_cols = {row[1] for row in
                    self.conn.execute("PRAGMA table_info(schnittplan)").fetchall()}
         if "fuell_alle_reste" not in sp_cols:
@@ -935,7 +940,7 @@ class Database:
             "SELECT * FROM projekt WHERE art != 'sammel' ORDER BY name").fetchall()
         projekte = []
         for r in rows:
-            p = Projekt(id=r["id"], name=r["name"], anzahl=r["anzahl"])
+            p = Projekt(id=r["id"], name=r["name"], anzahl=r["anzahl"], art=r["art"])
             p.teile = self.list_teile(p.id)
             projekte.append(p)
         return projekte
@@ -993,14 +998,23 @@ class Database:
         Diese Stücke sind schon verplant und dürfen in keinem zweiten Plan auftauchen
         (Einzelplan, Sammelplan, Füllteil mit fester Menge), sonst wird doppelt gesägt.
         """
+        # Teile einer Schnittliste zählen auch für ihr Herkunftsteil: Sie landen in
+        # dessen Vorrat und würden sonst im Plan des Herkunftsprojekts nochmal gesägt.
         rows = self.conn.execute(
-            """SELECT s.teil_id, COUNT(*) AS n FROM schnittplan_stueck s
+            """SELECT s.teil_id, t.herkunft_teil_id AS herkunft, COUNT(*) AS n
+               FROM schnittplan_stueck s
                JOIN schnittplan_brett b ON b.id = s.brett_id
                JOIN schnittplan p ON p.id = b.schnittplan_id
+               LEFT JOIN teil t ON t.id = s.teil_id
                WHERE p.material_id=? AND p.projekt_id != ? AND s.gesaegt=0
                      AND s.teil_id IS NOT NULL
                GROUP BY s.teil_id""", (material_id, ausser_projekt)).fetchall()
-        return {r["teil_id"]: r["n"] for r in rows}
+        anzahl: dict[int, int] = {}
+        for r in rows:
+            anzahl[r["teil_id"]] = anzahl.get(r["teil_id"], 0) + r["n"]
+            if r["herkunft"]:
+                anzahl[r["herkunft"]] = anzahl.get(r["herkunft"], 0) + r["n"]
+        return anzahl
 
     def delete_projekt(self, pid: int):
         self.conn.execute("DELETE FROM schnittplan WHERE projekt_id=?", (pid,))
@@ -1073,6 +1087,8 @@ class Database:
             status=TeilStatus(row["status"]),
             exemplare=row["exemplare"] if "exemplare" in row.keys() else 1,
             vorrat=row["vorrat"] if "vorrat" in row.keys() else 0,
+            herkunft_teil_id=(row["herkunft_teil_id"]
+                              if "herkunft_teil_id" in row.keys() else 0),
         )
 
     # ------------------------------------------------------------------
@@ -1311,9 +1327,43 @@ class Database:
         rows = self.conn.execute(
             """SELECT t.*, p.anzahl AS exemplare, p.name AS projekt_name FROM teil t
                JOIN projekt p ON p.id = t.projekt_id
-               WHERE t.material_id=? AND t.projekt_id != ?
+               WHERE t.material_id=? AND t.projekt_id != ? AND p.art = ''
                ORDER BY p.name, t.label""", (material_id, projekt_id)).fetchall()
         return [{"teil": self._row_to_teil(r), "projekt": r["projekt_name"]} for r in rows]
+
+    def alle_teile(self) -> list[dict]:
+        """Teile aller normalen Projekte (ohne Sammelpläne und Schnittlisten)."""
+        rows = self.conn.execute(
+            """SELECT t.*, p.anzahl AS exemplare, p.name AS projekt_name FROM teil t
+               JOIN projekt p ON p.id = t.projekt_id
+               WHERE p.art = '' ORDER BY p.name, t.label""").fetchall()
+        return [{"teil": self._row_to_teil(r), "projekt": r["projekt_name"]} for r in rows]
+
+    def schnittliste_anlegen(self, name: str, eintraege: list[tuple[int, int]]) -> Projekt:
+        """Schnittliste: Projekt (art='liste') mit Kopien der gewählten Teile.
+
+        Jede Kopie merkt sich ihr Herkunftsteil; heißt „Label (Projekt)“, damit Teile
+        gleichen Namens aus verschiedenen Projekten unterscheidbar bleiben.
+        """
+        cur = self.conn.execute(
+            "INSERT INTO projekt (name, anzahl, art) VALUES (?,1,'liste')", (name,))
+        lid = cur.lastrowid
+        for teil_id, menge in eintraege:
+            row = self.conn.execute(
+                """SELECT t.*, p.name AS projekt_name FROM teil t
+                   JOIN projekt p ON p.id = t.projekt_id WHERE t.id=?""",
+                (teil_id,)).fetchone()
+            if not row or menge <= 0:
+                continue
+            self.conn.execute(
+                """INSERT INTO teil (projekt_id, label, typ, material_id, laenge, breite,
+                       stueckzahl, maserung, herkunft_teil_id)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (lid, f"{row['label']} ({row['projekt_name']})", row["typ"],
+                 row["material_id"], row["laenge"], row["breite"], menge,
+                 row["maserung"], teil_id))
+        self.conn.commit()
+        return self.get_projekt(lid)
 
     def projekt_neu_starten(self, projekt_id: int):
         """Fortschritt aller Teile zurücksetzen und Pläne löschen (Lager bleibt)."""
