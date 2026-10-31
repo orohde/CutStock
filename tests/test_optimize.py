@@ -506,3 +506,44 @@ class TestFuelleReste2D:
         assert fuelle_reste_2d(frei, [("k", 300, 90, 5, True, False)], 3) == []
         erg = fuelle_reste_2d(frei, [("k", 300, 90, 1, True, True)], 3)
         assert len(erg) == 1 and erg[0][2].gedreht
+
+
+class TestFuellung1D:
+
+    def test_bevorzugt_teile_mit_menge(self):
+        from core.optimize import fuelle_rest_1d
+        # gleich viel belegt: 2 × 200 (bevorzugt) statt 4 × 100
+        assert fuelle_rest_1d(410, 3, [("a", 100, 9, False), ("b", 200, 2, True)]) == ["b", "b"]
+        # weniger Abfall geht vor
+        assert fuelle_rest_1d(410, 3, [("a", 133, 9, False), ("b", 190, 2, True)]) == ["a"] * 3
+
+    def test_bei_gleichstand_weniger_schnitte(self):
+        from core.optimize import fuelle_rest_1d
+        assert fuelle_rest_1d(410, 0, [("a", 100, 9), ("b", 200, 2)]) == ["b", "b"]
+
+    def test_vorschlaege_nur_vollstaendige(self):
+        from core.optimize import fuell_vorschlaege_1d
+        v = fuell_vorschlaege_1d(776, 3, [("a", 253, 99, False), ("b", 250, 3, True),
+                                          ("c", 400, 2, False)])
+        assert v[0] == ({"a": 3}, 8)
+        assert ({"c": 1, "a": 1}, 117) in v
+        assert all(r >= 0 for _, r in v)
+        assert fuell_vorschlaege_1d(100, 3, [("a", 253, 9)]) == []
+
+
+class TestMaxProStange:
+
+    def test_begrenzt_teile_je_stange(self):
+        r = optimize_1d([("A", 610, 60)], [StangenVorrat(1, 2000, 100)], 3, max_pro_stange=2)
+        assert len(r.schnittplaene) == 30
+        assert {len(s.platzierungen) for s in r.schnittplaene} == {2}
+
+    def test_gemischte_teile(self):
+        r = optimize_1d([("A", 610, 7), ("B", 300, 9)], [StangenVorrat(1, 2000, 100)], 3,
+                        max_pro_stange=2)
+        assert len(r.schnittplaene) == 8 and not r.fehlende_teile
+
+    def test_mit_defekten(self):
+        from core.optimize import _optimize_1d_bfd
+        r = _optimize_1d_bfd([("A", 610, 5)], [StangenVorrat(1, 2000, 10)], 3, None, 2)
+        assert [len(s.platzierungen) for s in r.schnittplaene] == [2, 2, 1]

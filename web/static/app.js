@@ -231,6 +231,7 @@ const Api = {
         fetchJSON(`/api/projects/${projectId}/fill-candidates/${materialId}`),
     getAllParts: () => fetchJSON('/api/parts'),
     createCutList: (data) => fetchJSON('/api/cut-lists', 'POST', data),
+    setFillChoice: (planId, data) => fetchJSON(`/api/plans/${planId}/fill-choice`, 'POST', data),
     takePartStock: (projectId, materialId) =>
         fetchJSON(`/api/projects/${projectId}/take-stock/${materialId}`, 'POST'),
 
@@ -787,13 +788,14 @@ async function loadSavedPlan() {
     if (mode === 'material' && matId) await loadSammel(matId);
     renderSammelPanel();
     const projId = optProjId();
+    updateMaxPerBar();
     if (!projId || !matId) { clearOptResult(); return; }
     let plan = null;
     try { plan = await Api.getSavedPlan(projId, matId); } catch { /* offline o.ä. */ }
     // Auswahl hat sich während des Ladens geändert → Ergebnis verwerfen
     if (State.optMode !== mode || optProjId() !== projId ||
         parseInt(document.getElementById('opt-material')?.value) !== matId) return;
-    if (!plan) { clearOptResult(); return; }
+    if (!plan) { setMaxPerBar(0); clearOptResult(); return; }
     adoptPlan(plan);
     const bladeSel = document.getElementById('opt-blade');
     if (plan.saegeblatt_id && bladeSel?.querySelector(`option[value="${plan.saegeblatt_id}"]`)) {
@@ -816,6 +818,7 @@ function adoptPlan(plan) {
         alle: !!plan.fuell_alle_reste,
     };
     updateFillButton();
+    setMaxPerBar(plan.max_pro_stange);
     (plan.schnittplaene || []).forEach(sp =>
         sp.platzierungen.forEach(p => { p._done = !!p.gesaegt; }));
     State.optimizationResult = plan;
@@ -882,6 +885,25 @@ function applyOptMode() {
     document.getElementById('opt-project-group')?.classList.toggle('hidden', sammel);
     document.getElementById('btn-fill')?.classList.toggle('hidden', sammel);
     document.getElementById('btn-restart')?.classList.toggle('hidden', sammel);
+    updateMaxPerBar();
+}
+
+// „Max. je Stange“: nur bei Stangen im Projekt-Modus
+function updateMaxPerBar() {
+    const matId = parseInt(document.getElementById('opt-material')?.value);
+    const is1D = State.materials.find(m => m.id === matId)?.typ === 'Stange';
+    document.getElementById('opt-max-group')?.classList.toggle('hidden',
+        State.optMode === 'material' || !is1D);
+}
+
+function setMaxPerBar(n) {
+    const input = document.getElementById('opt-max-per-bar');
+    if (input) input.value = n > 0 ? String(n) : '';
+}
+
+function maxPerBar() {
+    if (document.getElementById('opt-max-group')?.classList.contains('hidden')) return 0;
+    return Math.max(0, parseInt(document.getElementById('opt-max-per-bar')?.value) || 0);
 }
 
 async function loadSammel(matId) {
@@ -1241,7 +1263,7 @@ function renderOptResults({ quiet = false } = {}) {
 
         const kerf = currentKerf();
         const hint = `<p class="saw-hint">${t('opt.saw_hint')}</p>`;
-        plansEl.innerHTML = hint + plans.map((plan, i) => {
+        plansEl.innerHTML = (is1D ? fillSuggestionsHtml(result) : '') + hint + plans.map((plan, i) => {
             const canvasHeight = is1D ? 100 : 400;
             const seq = buildCutSequence(plan, is1D, kerf);
             const seqHtml = seq.length ? `<details class="cut-seq">
@@ -1275,6 +1297,7 @@ function renderOptResults({ quiet = false } = {}) {
         });
 
         setupSeqHover(plansEl);
+        setupFillSuggestions(plansEl);
     }
 
     if (actionsEl) actionsEl.style.display = '';
@@ -1936,19 +1959,11 @@ function partsAsFillers() {
         <select id="pf-target" class="cs-select">${ziele.map(p =>
             `<option value="${p.id}">${escHtml(p.name)}</option>`).join('')}</select>
     </div>
-    <div class="form-group">
-        <label class="fd-form-label" for="pf-mode">${escHtml(t('fill.mode'))}</label>
-        <select id="pf-mode" class="cs-select">
-            <option value="auffuellen">${escHtml(t('fill.mode_fill'))}</option>
-            <option value="fest">${escHtml(t('fill.mode_fixed'))}</option>
-        </select>
-    </div>
     <p class="saw-hint">${escHtml(t('parts.fill_hint'))}</p>`;
     overlay.classList.remove('hidden');
     overlay.classList.add('active');
     saveBtn.onclick = async () => {
         const projId = parseInt(document.getElementById('pf-target').value);
-        const modus = document.getElementById('pf-mode').value;
         closeModal();
         // Zum Plan dieses Projekts wechseln; dessen bisherige Füllteile bleiben erhalten
         document.querySelector('.tab-btn[data-tab="optimization"]')?.click();
@@ -1960,10 +1975,11 @@ function partsAsFillers() {
         const key = `${projId}:${matId}`;
         const alt = State.fillSel?.key === key ? State.fillSel : { key, items: [], alle: false };
         const items = new Map(alt.items.map(f => [f.teil_id, f]));
-        gewaehlt.forEach(g => items.set(g.teil.teil_id, { teil_id: g.teil.teil_id, modus, menge: g.menge }));
+        gewaehlt.forEach(g => items.set(g.teil.teil_id,
+            { teil_id: g.teil.teil_id, modus: 'auffuellen', menge: g.menge }));
         State.fillSel = { key, items: [...items.values()], alle: alt.alle };
         updateFillButton();
-        showToast(t('fill.saved_hint'), 'info');
+        document.getElementById('btn-optimize')?.click();
     };
 }
 
@@ -2025,12 +2041,11 @@ async function openFillDialog() {
     const saveBtn = document.getElementById('modal-save');
     document.getElementById('modal-title').textContent = t('fill.title');
     saveBtn.style.display = '';
-    saveBtn.textContent = t('btn.save');
+    saveBtn.textContent = t('fill.apply');
 
     const hint = is1D ? t('fill.hint_1d') : t('fill.hint_2d');
     const rows = kandidaten.map(k => {
         const f = gewaehlt.get(k.teil_id);
-        const modus = f?.modus || 'auffuellen';
         return `<tr class="fd-table__row" data-teil="${k.teil_id}">
             <td class="fd-table__cell"><input type="checkbox" class="cs-checkbox fill-check"${f ? ' checked' : ''}></td>
             <td class="fd-table__cell">${escHtml(k.label)}</td>
@@ -2038,14 +2053,8 @@ async function openFillDialog() {
             <td class="fd-table__cell num">${dimText(k.laenge, k.breite)}</td>
             <td class="fd-table__cell num">${k.offen}</td>
             <td class="fd-table__cell num">${k.vorrat || ''}</td>
-            <td class="fd-table__cell">
-                <select class="cs-select fill-mode">
-                    <option value="auffuellen"${modus === 'auffuellen' ? ' selected' : ''}>${escHtml(t('fill.mode_fill'))}</option>
-                    <option value="fest"${modus === 'fest' ? ' selected' : ''}>${escHtml(t('fill.mode_fixed'))}</option>
-                </select>
-            </td>
-            <td class="fd-table__cell"><input type="number" class="fill-qty" min="0" step="1" style="width:5rem"
-                value="${f?.menge || ''}" placeholder="${escAttr(modus === 'fest' ? '' : t('fill.qty_max'))}"></td>
+            <td class="fd-table__cell"><input type="number" class="fill-qty" min="0" step="1" style="width:6rem"
+                value="${f?.menge || ''}" placeholder="${escAttr(t('fill.qty_any'))}"></td>
         </tr>`;
     }).join('');
     body.innerHTML = kandidaten.length ? `
@@ -2059,7 +2068,6 @@ async function openFillDialog() {
             <th class="fd-table__cell">${escHtml(t('fill.size'))}</th>
             <th class="fd-table__cell">${escHtml(t('fill.open'))}</th>
             <th class="fd-table__cell">${escHtml(t('fill.stock'))}</th>
-            <th class="fd-table__cell">${escHtml(t('fill.mode'))}</th>
             <th class="fd-table__cell">${escHtml(t('fill.qty'))}</th>
         </tr></thead><tbody>${rows}</tbody></table></div>`
         : `<p class="empty-state">${escHtml(t('fill.none'))}</p>`;
@@ -2075,18 +2083,62 @@ async function openFillDialog() {
     overlay.classList.add('active');
     saveBtn.onclick = () => {
         const items = [];
+        // Eine Menge ist Obergrenze und Vorrang zugleich, leer = so viele wie passen
         body.querySelectorAll('tr[data-teil]').forEach(tr => {
             if (!tr.querySelector('.fill-check').checked) return;
-            const modus = tr.querySelector('.fill-mode').value;
             const menge = Math.max(0, parseInt(tr.querySelector('.fill-qty').value) || 0);
-            if (modus === 'fest' && menge <= 0) return;
-            items.push({ teil_id: parseInt(tr.dataset.teil), modus, menge });
+            items.push({ teil_id: parseInt(tr.dataset.teil), modus: 'auffuellen', menge });
         });
         State.fillSel = { key, items, alle: !!document.getElementById('fill-all-rests')?.checked };
         closeModal();
         updateFillButton();
-        showToast(t('fill.saved_hint'), 'info');
+        document.getElementById('btn-optimize')?.click();
     };
+}
+
+// Füllung der Stangenreste: je Gruppe gleicher Reste die besten Kombinationen zur Wahl
+function fillSuggestionsHtml(result) {
+    const gruppen = result.fuell_vorschlaege || [];
+    if (!gruppen.length) return '';
+    const teileText = (teile) => teile.map(x =>
+        `${x.anzahl}× ${escHtml(x.label.split(' → ')[0])} (${formatDim(x.laenge)})`).join(' + ');
+    return `<details class="fill-sug" open><summary>${escHtml(t('sug.title'))}</summary>
+        <p class="saw-hint">${escHtml(t('sug.hint'))}</p>
+        ${gruppen.map((g, gi) => `<div class="fill-sug-group">
+            <div class="fill-sug-head">
+                <strong>${escHtml(t('sug.group', { rest: formatDim(g.rest), n: g.stangen }))}</strong>
+                <span class="fill-sug-mode">${escHtml(g.manuell ? t('sug.manual') : t('sug.automatic'))}</span>
+            </div>
+            <ul class="fill-sug-list">${g.vorschlaege.map((v, vi) => `<li${vi === g.gewaehlt ? ' class="chosen"' : ''}>
+                <span>${teileText(v.teile)}</span>
+                <span class="fill-sug-rest">${escHtml(t('sug.rest_after', { rest: formatDim(v.rest) }))}</span>
+                ${vi === g.gewaehlt
+                    ? `<span class="fill-sug-badge">&#10003; ${escHtml(t('sug.chosen'))}</span>`
+                    : `<button class="fd-button fd-button--compact" type="button" data-sug="${gi}:${vi}">${escHtml(t('sug.choose'))}</button>`}
+            </li>`).join('')}</ul>
+            ${g.automatisch ? `<p class="saw-hint">${escHtml(t('sug.fallback', { n: g.automatisch }))}</p>` : ''}
+            <div class="fill-sug-actions">
+                ${g.gewaehlt === -1 ? '' : `<button class="fd-button fd-button--compact" type="button" data-sug="${gi}:none">${escHtml(t('sug.nothing'))}</button>`}
+                ${g.manuell ? `<button class="fd-button fd-button--compact" type="button" data-sug="${gi}:auto">${escHtml(t('sug.auto'))}</button>` : ''}
+            </div>
+        </div>`).join('')}
+    </details>`;
+}
+
+function setupFillSuggestions(root) {
+    root.querySelectorAll('[data-sug]').forEach(btn => btn.addEventListener('click', async () => {
+        const result = State.optimizationResult;
+        if (!result?.plan_id) return;
+        const [gi, vi] = btn.dataset.sug.split(':');
+        const g = result.fuell_vorschlaege[parseInt(gi)];
+        const wahl = vi === 'auto' ? null : vi === 'none' ? []
+            : g.vorschlaege[parseInt(vi)].teile.map(x => ({ teil_id: x.teil_id, anzahl: x.anzahl }));
+        root.querySelectorAll('[data-sug]').forEach(b => { b.disabled = true; });
+        try {
+            adoptPlan(await Api.setFillChoice(result.plan_id, { gruppe: g.gruppe, wahl }));
+        } catch { await loadSavedPlan(); return; }
+        renderOptResults({ quiet: true });
+    }));
 }
 
 // Teile-Vorrat des angezeigten Projekts übernehmen und neu optimieren
@@ -4352,6 +4404,7 @@ function initEvents() {
                 blade_id: bladeId,
                 algorithm: algo,
                 reste_zuerst: !!document.getElementById('opt-rests-first')?.checked,
+                max_pro_stange: maxPerBar(),
                 ...fillRequest(projId, matId),
             }));
             renderOptResults();
@@ -4372,7 +4425,10 @@ function initEvents() {
 
     document.getElementById('btn-fill')?.addEventListener('click', () => openFillDialog());
     ['opt-project', 'opt-material'].forEach(id =>
-        document.getElementById(id)?.addEventListener('change', () => updateFillButton()));
+        document.getElementById(id)?.addEventListener('change', () => {
+            updateFillButton();
+            updateMaxPerBar();
+        }));
 
     document.getElementById('btn-discard-plan')?.addEventListener('click', () => {
         if (!State.optimizationResult) return;

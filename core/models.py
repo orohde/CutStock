@@ -201,6 +201,11 @@ class GespeicherterPlan:
     # Füllteile aus anderen Projekten: [{"teil_id", "modus": "auffuellen"|"fest", "menge"}]
     fuellteile: list = field(default_factory=list)
     fuell_alle_reste: bool = False   # auch verwertbare Reste auffüllen (sonst nur Abfall)
+    max_pro_stange: int = 0          # Stangen: höchstens so viele Teile je Stange (0 = egal)
+    # Stangen: gewählte Füllung je Restlänge {"776.0": [{"teil_id", "anzahl"}]}, [] = nichts
+    fuell_wahl: dict = field(default_factory=dict)
+    # Stangen: Füllvorschläge je Gruppe gleicher Reste (zum Anzeigen, siehe web/app.py)
+    fuell_vorschlaege: list = field(default_factory=list)
 
 
 def stueck_code(kuerzel: str, nr: int) -> str:

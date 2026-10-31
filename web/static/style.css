@@ -977,3 +977,36 @@ td.expand-toggle:hover { background: rgba(255,255,255,0.05); }
 
 /* Erläuterung unter einem Formularfeld */
 .form-hint { display: block; margin-top: 0.25rem; font-size: 0.8rem; color: var(--sapContent_LabelColor); line-height: 1.3; }
+
+/* Max. Teile je Stange */
+.opt-max-input { width: 5.5rem; z-index: auto; }   /* fd-input hat z-index 1 → läge sonst über Dialogen */
+
+/* Füllung der Stangenreste: Vorschläge je Gruppe gleicher Reste */
+.fill-sug {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--sapGroup_TitleBorderColor, #d9d9d9);
+  border-radius: 0.5rem;
+  background: var(--sapTile_Background, #fff);
+}
+.fill-sug summary {
+  cursor: pointer;
+  font-weight: 600;
+  user-select: none;
+}
+.fill-sug-group { margin-top: 0.5rem; }
+.fill-sug-group + .fill-sug-group {
+  border-top: 1px solid var(--sapGroup_TitleBorderColor, #d9d9d9);
+  padding-top: 0.5rem;
+}
+.fill-sug-head { display: flex; gap: 0.75rem; align-items: baseline; flex-wrap: wrap; }
+.fill-sug-mode { font-size: 0.8125rem; color: var(--sapContent_LabelColor, #556b82); }
+.fill-sug-list { list-style: none; margin: 0.25rem 0; padding: 0; }
+.fill-sug-list li {
+  display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;
+  padding: 0.25rem 0.5rem; border-radius: 0.25rem;
+}
+.fill-sug-list li.chosen { background: var(--sapList_SelectionBackgroundColor, #ebf8ff); }
+.fill-sug-rest { color: var(--sapContent_LabelColor, #556b82); font-size: 0.8125rem; }
+.fill-sug-badge { color: var(--sapPositiveColor, #256f3a); font-weight: 600; font-size: 0.8125rem; }
+.fill-sug-actions { display: flex; gap: 0.5rem; }

@@ -47,6 +47,7 @@ from core.optimize import (
     optimize_2d,
     optimize_2d_ga,
     optimize_2d_nested,
+    fuell_vorschlaege_1d,
     fuelle_rest_1d,
     fuelle_reste_2d,
     freie_rechtecke_2d,
@@ -430,6 +431,12 @@ class OptimizeRequest(BaseModel):
     # Füllteile aus anderen Projekten; None = Auswahl des bisherigen Plans behalten
     fuellteile: Optional[list[FuellteilIn]] = None
     fuell_alle_reste: Optional[bool] = None   # auch verwertbare Reste füllen
+    max_pro_stange: Optional[int] = None      # Stangen: max. Teile je Stange, None = behalten
+
+
+class FuellWahlIn(BaseModel):
+    gruppe: str                         # Gruppe gleicher Stangenreste, z.B. "776.0"
+    wahl: Optional[list[dict]] = None   # [{teil_id, anzahl}], [] = nichts, None = Automatik
 
 
 class PlatzierungOut(BaseModel):
@@ -493,6 +500,9 @@ class OptimizeResult(BaseModel):
     fuellteile: list[dict] = []          # Auswahl [{teil_id, modus, menge}]
     fuell_alle_reste: bool = False
     vorrat_verfuegbar: list[dict] = []   # eigene Teile mit Vorrat: [{teil_id, label, anzahl}]
+    max_pro_stange: int = 0
+    # Stangen: Füllvorschläge je Gruppe gleicher Reste, siehe _reste_auffuellen_1d
+    fuell_vorschlaege: list[dict] = []
 
 
 class PlanStatusOut(BaseModel):
@@ -1377,9 +1387,13 @@ def _lage_ohne(lage: _Lagerlage, erg: OptimierungsErgebnis) -> _Lagerlage:
 
 
 def _berechnen(material: Material, kerf: float, algorithm: str, reste_zuerst: bool,
-               teile: list[Teil], mengen: dict[int, int], lage: _Lagerlage
-               ) -> OptimierungsErgebnis:
-    """Teile (Mengen je ID) auf das freie Lager verteilen, ohne zu speichern."""
+               teile: list[Teil], mengen: dict[int, int], lage: _Lagerlage,
+               max_pro_stange: int = 0) -> OptimierungsErgebnis:
+    """Teile (Mengen je ID) auf das freie Lager verteilen, ohne zu speichern.
+
+    max_pro_stange > 0 (nur Stangen): höchstens so viele Teile je Stange. Das kann
+    nur der Muster-Optimierer, der genetische Algorithmus wird dann übergangen.
+    """
     is_1d = material.typ == MaterialTyp.STANGE
     besaeumung = material.besaeumung
     teil_drehung: dict[str, tuple[bool, bool]] = {}
@@ -1394,9 +1408,10 @@ def _berechnen(material: Material, kerf: float, algorithm: str, reste_zuerst: bo
             teil_tuples = [(t.label, t.laenge, mengen[t.id]) for t in tl]
             stock = [StangenVorrat(ls.id, ls.laenge - 2 * besaeumung, ls.stueckzahl)
                      for ls in lager if ls.laenge - 2 * besaeumung > 0]
-            if algorithm == "ga":
+            if algorithm == "ga" and not max_pro_stange:
                 return optimize_1d_ga(teil_tuples, stock, kerf, lage.defekte_lauf)
-            return optimize_1d(teil_tuples, stock, kerf, lage.defekte_lauf)
+            return optimize_1d(teil_tuples, stock, kerf, lage.defekte_lauf,
+                               max_pro_stange=max_pro_stange)
         teil_tuples = [(t.label, t.laenge, t.breite, mengen[t.id]) for t in tl]
         stock = [PlattenVorrat(ls.id, ls.laenge - 2 * besaeumung,
                                ls.breite - 2 * besaeumung, ls.stueckzahl)
@@ -1471,6 +1486,11 @@ def run_optimization(req: OptimizeRequest):
                      else (alt.fuellteile if alt else []))
     fuell_alle = (req.fuell_alle_reste if req.fuell_alle_reste is not None
                   else (alt.fuell_alle_reste if alt else False))
+    max_pro_stange = 0
+    if is_1d:
+        max_pro_stange = max(0, req.max_pro_stange if req.max_pro_stange is not None
+                             else (alt.max_pro_stange if alt else 0))
+    fuell_wahl = alt.fuell_wahl if alt else {}
     behalten = _angefangene_bretter(alt, is_1d)
     schon_geplant = _schon_geplant(behalten)
     # Was ungesägt in anderen Plänen liegt (Sammelplan, Füllteil), ist schon verplant
@@ -1484,18 +1504,54 @@ def run_optimization(req: OptimizeRequest):
     if not teile:
         if behalten:
             return _plan_speichern(projekt, material, blade, req.algorithm, behalten,
-                                   [], [], fuell_auswahl, fuell_alle)
+                                   [], [], fuell_auswahl, fuell_alle, max_pro_stange,
+                                   fuell_wahl)
         if any(anderswo.get(t.id) for t in projekt.teile if t.material_id == material.id):
             sammel = db.sammel_von_projekt(projekt.id).get(material.id)
             raise HTTPException(409, f"All open parts are already in “{sammel}”."
                                 if sammel else "All open parts are already in another plan")
         raise HTTPException(400, "No open parts for this material")
 
-    # Füllteile: Teile anderer Projekte desselben Materials. Im Plan heißen sie
-    # "Label → Projekt", damit sie unterscheidbar sind (der Optimizer kennt nur Labels).
-    fuell_fest: list[Teil] = []
-    fuell_auf: list[tuple[Teil, int]] = []
-    for f in fuell_auswahl:
+    fuell_fest, fuell_auf = _fuellteile_laden(db, projekt, material, fuell_auswahl)
+    for ft in fuell_fest:
+        offen[ft.id] = next(int(f["menge"]) for f in fuell_auswahl if f["teil_id"] == ft.id)
+    teile = teile + fuell_fest
+    fuell_ids = {t.id for t in fuell_fest} | {t.id for t, _ in fuell_auf}
+
+    kerf = blade.schnittbreite
+    lage = _lagerlage(db, req.material_id, ausser_projekt=req.project_id)
+    ergebnis = _berechnen(material, kerf, req.algorithm, req.reste_zuerst, teile,
+                          {t.id: offen[t.id] for t in teile}, lage, max_pro_stange)
+
+    neue = _ergebnis_to_bretter(ergebnis, lage.defekte_map, teile, offen)
+    for b in neue:
+        for st in b.stuecke:
+            st.ist_fuellteil = st.teil_id in fuell_ids
+    vorschlaege: list[dict] = []
+    if fuell_auf:
+        vorschlaege = _reste_auffuellen(neue, fuell_auf, kerf, material, fuell_alle,
+                                        fuell_wahl)
+    bedarf = []
+    if ergebnis.fehlende_teile:
+        bedarf = [m.model_dump() for m in _berechne_materialbedarf(
+            ergebnis.fehlende_teile, teile, lage.vorrat_alle, material, kerf)]
+    return _plan_speichern(projekt, material, blade, req.algorithm, behalten + neue,
+                           ergebnis.fehlende_teile, bedarf, fuell_auswahl, fuell_alle,
+                           max_pro_stange, fuell_wahl, vorschlaege)
+
+
+def _fuellteile_laden(db: Database, projekt: Projekt, material: Material, auswahl: list[dict]
+                      ) -> tuple[list[Teil], list[tuple[Teil, int]]]:
+    """Füllteil-Auswahl eines Plans in Teile umwandeln: (fest, [(Teil, Menge)] zum Auffüllen).
+
+    Füllteile sind Teile anderer Projekte desselben Materials. Im Plan heißen sie
+    "Label → Projekt", damit sie unterscheidbar sind (der Optimizer kennt nur Labels).
+    "fest" stammt aus älteren Plänen (genau diese Menge, notfalls mit mehr Material);
+    neue Auswahlen füllen nur auf, eine Menge ist dann Obergrenze und Vorrang zugleich.
+    """
+    fest: list[Teil] = []
+    auf: list[tuple[Teil, int]] = []
+    for f in auswahl:
         t = db.get_teil(f["teil_id"])
         if not t or t.material_id != material.id or t.projekt_id == projekt.id:
             continue
@@ -1503,30 +1559,56 @@ def run_optimization(req: OptimizeRequest):
         ft = replace(t, label=f"{t.label} → {herkunft.name if herkunft else '?'}")
         if f.get("modus") == "fest":
             if int(f.get("menge") or 0) > 0:
-                fuell_fest.append(ft)
-                offen[ft.id] = int(f["menge"])
+                fest.append(ft)
         else:
-            fuell_auf.append((ft, int(f.get("menge") or 0)))
-    teile = teile + fuell_fest
-    fuell_ids = {t.id for t in fuell_fest} | {t.id for t, _ in fuell_auf}
+            auf.append((ft, int(f.get("menge") or 0)))
+    return fest, auf
 
-    kerf = blade.schnittbreite
-    lage = _lagerlage(db, req.material_id, ausser_projekt=req.project_id)
-    ergebnis = _berechnen(material, kerf, req.algorithm, req.reste_zuerst, teile,
-                          {t.id: offen[t.id] for t in teile}, lage)
 
-    neue = _ergebnis_to_bretter(ergebnis, lage.defekte_map, teile, offen)
-    for b in neue:
-        for st in b.stuecke:
-            st.ist_fuellteil = st.teil_id in fuell_ids
-    if fuell_auf:
-        _reste_auffuellen(neue, fuell_auf, kerf, material, fuell_alle)
-    bedarf = []
-    if ergebnis.fehlende_teile:
-        bedarf = [m.model_dump() for m in _berechne_materialbedarf(
-            ergebnis.fehlende_teile, teile, lage.vorrat_alle, material, kerf)]
-    return _plan_speichern(projekt, material, blade, req.algorithm, behalten + neue,
-                           ergebnis.fehlende_teile, bedarf, fuell_auswahl, fuell_alle)
+@app.post("/api/plans/{plan_id}/fill-choice", response_model=OptimizeResult)
+def set_fill_choice(plan_id: int, data: FuellWahlIn):
+    """Füllung einer Gruppe gleicher Stangenreste wählen (wahl=None: Automatik).
+
+    Rechnet nur den Auffüll-Durchgang neu; die Teile des Projekts bleiben, wo sie
+    sind. Angefangene Stangen bleiben unverändert.
+    """
+    db = get_db()
+    plan = db.get_plan_by_id(plan_id)
+    if not plan:
+        raise HTTPException(404, "Plan not found")
+    projekt = db.get_projekt(plan.projekt_id)
+    material = db.get_material(plan.material_id)
+    if not projekt or not material or material.typ != MaterialTyp.STANGE:
+        raise HTTPException(400, "Fill choice is only available for bars")
+    wahl = dict(plan.fuell_wahl)
+    if data.wahl is None:
+        wahl.pop(data.gruppe, None)
+    else:
+        wahl[data.gruppe] = [{"teil_id": int(w["teil_id"]), "anzahl": int(w["anzahl"])}
+                             for w in data.wahl if int(w.get("anzahl") or 0) > 0]
+    _, auf = _fuellteile_laden(db, projekt, material, plan.fuellteile)
+    auf_ids = {t.id for t, _ in auf}
+    kerf = plan.kerf
+    offen = []
+    for b in plan.bretter:
+        if b.verbraucht or any(st.gesaegt for st in b.stuecke):
+            continue
+        # Bisherige Auffüll-Teile herunternehmen, Rest wie vor dem Auffüllen
+        ohne = [st for st in b.stuecke if not (st.ist_fuellteil and st.teil_id in auf_ids)]
+        if len(ohne) != len(b.stuecke) and ohne:
+            b.stuecke = ohne
+            genutzt = sum(st.laenge for st in ohne)
+            b.verschnitt_mm = max(0.0, b.lager_laenge - genutzt - kerf * (len(ohne) - 1))
+            b.verschnitt_prozent = round(b.verschnitt_mm / b.lager_laenge * 100, 1)
+            rest = b.lager_laenge - (max(st.x + st.laenge for st in ohne) + kerf)
+            b.reste = [[rest]] if rest > 0 else []
+        offen.append(b)
+    plan.fuell_vorschlaege = (_reste_auffuellen_1d(offen, auf, kerf, material,
+                                                   plan.fuell_alle_reste, wahl)
+                              if auf else [])
+    gruppen = {g["gruppe"] for g in plan.fuell_vorschlaege}
+    plan.fuell_wahl = {k: v for k, v in wahl.items() if k in gruppen}
+    return _plan_to_out(db.save_plan(plan))
 
 
 # ---------------------------------------------------------------------------
@@ -1855,7 +1937,8 @@ def _eingabe_hash(projekt: Projekt, material: Material, kerf: float) -> str:
 
 
 def _plan_speichern(projekt, material, blade, algorithmus, bretter, fehlende, bedarf,
-                    fuellteile=(), fuell_alle_reste=False) -> OptimizeResult:
+                    fuellteile=(), fuell_alle_reste=False, max_pro_stange=0,
+                    fuell_wahl=None, fuell_vorschlaege=()) -> OptimizeResult:
     db = get_db()
     plan = GespeicherterPlan(
         projekt_id=projekt.id, material_id=material.id, saegeblatt_id=blade.id,
@@ -1863,16 +1946,22 @@ def _plan_speichern(projekt, material, blade, algorithmus, bretter, fehlende, be
         eingabe_hash=_eingabe_hash(projekt, material, blade.schnittbreite),
         fehlende_teile=list(fehlende), materialbedarf=list(bedarf), bretter=bretter,
         fuellteile=list(fuellteile), fuell_alle_reste=bool(fuell_alle_reste),
+        max_pro_stange=int(max_pro_stange or 0), fuell_vorschlaege=list(fuell_vorschlaege),
     )
+    # Nur Wahlen für Gruppen, die es im neuen Plan gibt
+    gruppen = {g["gruppe"] for g in plan.fuell_vorschlaege}
+    plan.fuell_wahl = {k: v for k, v in (fuell_wahl or {}).items() if k in gruppen}
     return _plan_to_out(db.save_plan(plan))
 
 
 def _reste_auffuellen(bretter: list[PlanBrett], auffuellen: list[tuple[Teil, int]],
-                      kerf: float, material: Material, alle_reste: bool):
+                      kerf: float, material: Material, alle_reste: bool,
+                      wahl: dict | None = None) -> list[dict]:
+    """Durchgang 2: Reste mit Füllteilen belegen. Liefert bei Stangen die Vorschläge."""
     if material.typ != MaterialTyp.STANGE:
         _reste_auffuellen_2d(bretter, auffuellen, kerf, material, alle_reste)
-    else:
-        _reste_auffuellen_1d(bretter, auffuellen, kerf, material, alle_reste)
+        return []
+    return _reste_auffuellen_1d(bretter, auffuellen, kerf, material, alle_reste, wahl)
 
 
 def _reste_auffuellen_2d(bretter: list[PlanBrett], auffuellen: list[tuple[Teil, int]],
@@ -1922,16 +2011,34 @@ def _reste_auffuellen_2d(bretter: list[PlanBrett], auffuellen: list[tuple[Teil, 
 
 
 def _reste_auffuellen_1d(bretter: list[PlanBrett], auffuellen: list[tuple[Teil, int]],
-                         kerf: float, material: Material, alle_reste: bool):
+                         kerf: float, material: Material, alle_reste: bool,
+                         wahl: dict | None = None) -> list[dict]:
     """Den Rest am Ende jeder Stange mit Füllteilen belegen (Durchgang 2).
 
     Standard: nur echter Abfall, also Reste unter dem Mindest-Restmaß. Hat das
     Material kein Mindest-Restmaß, gilt jeder Rest als auffüllbar. Stangen mit
     Defekten bleiben außen vor (ihre freien Stücke liegen nicht am Ende).
+
+    Stangen mit gleichem Rest bilden eine Gruppe (Schlüssel: Rest auf 0,1 mm).
+    Je Gruppe gibt es Vorschläge (mit den Mengen vor ihrer ersten Stange).
+    `wahl` legt je Gruppe eine Füllung fest ({gruppe: [{teil_id, anzahl}]}, [] =
+    nichts); reicht die Menge für eine Stange nicht mehr, füllt dort die Automatik.
+    Teile mit Mengenangabe werden bevorzugt (siehe fuelle_rest_1d).
+    Liefert die Gruppen: [{gruppe, rest, stangen, vorschlaege: [{teile, rest}],
+    gewaehlt (Index, -1 = nichts), manuell, automatisch (Stangen ohne die Wahl)}].
     """
+    wahl = wahl or {}
     rest_min = material.rest_min_laenge
     vorrat = {t.id: (m if m > 0 else 10 ** 6) for t, m in auffuellen}
+    bevorzugt = {t.id: m > 0 for t, m in auffuellen}
     nach_id = {t.id: t for t, _ in auffuellen}
+    gruppen: dict[str, dict] = {}
+
+    def teile_liste(anzahl: dict[int, int]) -> list[dict]:
+        return [{"teil_id": tid, "label": nach_id[tid].label,
+                 "laenge": nach_id[tid].laenge, "anzahl": n}
+                for tid, n in sorted(anzahl.items(), key=lambda e: -nach_id[e[0]].laenge)]
+
     for b in bretter:
         if b.defekte or not b.stuecke:
             continue
@@ -1940,9 +2047,53 @@ def _reste_auffuellen_1d(bretter: list[PlanBrett], auffuellen: list[tuple[Teil, 
         rest = b.lager_laenge - start
         if rest <= 0 or not (alle_reste or rest_min <= 0 or rest < rest_min):
             continue
-        kandidaten = [(tid, nach_id[tid].laenge, n) for tid, n in vorrat.items() if n > 0]
+        kandidaten = [(tid, nach_id[tid].laenge, n, bevorzugt[tid])
+                      for tid, n in vorrat.items() if n > 0]
+        key = f"{rest:.1f}"
+        g = gruppen.get(key)
+        if g is None:
+            vorschlaege = fuell_vorschlaege_1d(rest, kerf, kandidaten, knoten=20_000)
+            if not vorschlaege:
+                continue   # hier passt kein Füllteil hinein
+            g = gruppen[key] = {
+                "gruppe": key, "rest": round(rest, 1), "stangen": 0,
+                "vorschlaege": [{"teile": teile_liste(a), "rest": round(r, 1)}
+                                for a, r in vorschlaege],
+                "gewaehlt": None, "manuell": key in wahl, "automatisch": 0}
+        g["stangen"] += 1
+
+        gewaehlt = None
+        if key in wahl:
+            soll = {int(w["teil_id"]): int(w["anzahl"]) for w in wahl[key]}
+            belegt = sum((nach_id[tid].laenge + kerf) * n
+                         for tid, n in soll.items() if tid in nach_id)
+            if (all(tid in nach_id and vorrat[tid] >= n for tid, n in soll.items())
+                    and belegt <= rest + kerf + 1e-6):
+                gewaehlt = [tid for tid, n in soll.items() for _ in range(n)]
+                gewaehlt.sort(key=lambda tid: -nach_id[tid].laenge)
+            else:
+                g["automatisch"] += 1
+        if gewaehlt is None:
+            gewaehlt = fuelle_rest_1d(rest, kerf, kandidaten)
+
+        if g["stangen"] == 1:
+            anzahl: dict[int, int] = {}
+            for tid in gewaehlt:
+                anzahl[tid] = anzahl.get(tid, 0) + 1
+            liste = teile_liste(anzahl)
+            if not liste:
+                g["gewaehlt"] = -1
+            else:
+                idx = next((i for i, v in enumerate(g["vorschlaege"]) if v["teile"] == liste), None)
+                if idx is None:   # z.B. Automatik außerhalb der Liste → vorne dazu
+                    belegt = sum((it["laenge"] + kerf) * it["anzahl"] for it in liste)
+                    g["vorschlaege"].insert(0, {"teile": liste,
+                                                "rest": round(max(0.0, rest - belegt), 1)})
+                    idx = 0
+                g["gewaehlt"] = idx
+
         pos = start
-        for tid in fuelle_rest_1d(rest, kerf, kandidaten):
+        for tid in gewaehlt:
             t = nach_id[tid]
             b.stuecke.append(PlanStueck(teil_id=tid, teil_label=t.label, laenge=t.laenge,
                                         x=pos, ist_fuellteil=True))
@@ -1953,6 +2104,7 @@ def _reste_auffuellen_1d(bretter: list[PlanBrett], auffuellen: list[tuple[Teil, 
         b.verschnitt_prozent = round(b.verschnitt_mm / b.lager_laenge * 100, 1)
         rest_neu = b.lager_laenge - (max(st.x + st.laenge for st in b.stuecke) + kerf)
         b.reste = [[rest_neu]] if rest_neu > 0 else []
+    return list(gruppen.values())
 
 
 def _plan_to_out(plan: GespeicherterPlan) -> OptimizeResult:
@@ -2042,6 +2194,8 @@ def _plan_to_out(plan: GespeicherterPlan) -> OptimizeResult:
         lager_fehlt=lager_fehlt,
         fuellteile=plan.fuellteile,
         fuell_alle_reste=plan.fuell_alle_reste,
+        max_pro_stange=plan.max_pro_stange,
+        fuell_vorschlaege=plan.fuell_vorschlaege,
         vorrat_verfuegbar=[
             {"teil_id": t.id, "label": t.label, "anzahl": min(t.vorrat, t.offen_anzahl)}
             for t in (projekt.teile if projekt else [])
@@ -2508,6 +2662,38 @@ async def restore_backup(file: UploadFile = File(...)):
 
 
 WEB_EXTRA_TRANSLATIONS = {
+    "fill.qty_any": {"de": "beliebig", "en": "any", "fr": "libre", "it": "libero"},
+    "fill.apply": {"de": "Übernehmen und optimieren", "en": "Apply and optimize",
+                   "fr": "Appliquer et optimiser", "it": "Applica e ottimizza"},
+    "opt.max_per_bar": {"de": "Max. je Stange", "en": "Max. per bar", "fr": "Max. par barre", "it": "Max. per barra"},
+    "opt.max_per_bar_hint": {
+        "de": "Höchstens so viele Teile auf eine Stange – lässt gezielt Platz für Füllteile. Leer = so viele wie passen.",
+        "en": "At most this many parts per bar – deliberately leaves room for filler parts. Empty = as many as fit.",
+        "fr": "Au plus ce nombre de pièces par barre – laisse volontairement de la place pour les pièces de remplissage. Vide = autant que possible.",
+        "it": "Al massimo questi pezzi per barra – lascia apposta spazio per i pezzi di riempimento. Vuoto = quanti ci stanno.",
+    },
+    "sug.title": {"de": "Füllung der Reste", "en": "Filling the remnants", "fr": "Remplissage des chutes", "it": "Riempimento degli sfridi"},
+    "sug.hint": {
+        "de": "Die Wahl gilt für alle Stangen mit diesem Rest. Teile mit Mengenangabe haben bei gleichem Abfall Vorrang, danach weniger Schnitte.",
+        "en": "The choice applies to all bars with this remnant. With equal waste, parts with a quantity take priority, then fewer cuts.",
+        "fr": "Le choix vaut pour toutes les barres avec cette chute. À chute égale, les pièces avec quantité sont prioritaires, puis moins de coupes.",
+        "it": "La scelta vale per tutte le barre con questo sfrido. A parità di scarto hanno la precedenza i pezzi con quantità, poi meno tagli.",
+    },
+    "sug.group": {"de": "Rest {rest} auf {n} Stange(n)", "en": "Remnant {rest} on {n} bar(s)",
+                  "fr": "Chute {rest} sur {n} barre(s)", "it": "Sfrido {rest} su {n} barra/e"},
+    "sug.rest_after": {"de": "danach {rest} Abfall", "en": "then {rest} waste", "fr": "ensuite {rest} de chute", "it": "poi {rest} di scarto"},
+    "sug.manual": {"de": "von Hand gewählt", "en": "chosen by hand", "fr": "choisi à la main", "it": "scelto a mano"},
+    "sug.automatic": {"de": "automatisch", "en": "automatic", "fr": "automatique", "it": "automatico"},
+    "sug.choose": {"de": "Wählen", "en": "Choose", "fr": "Choisir", "it": "Scegli"},
+    "sug.chosen": {"de": "gewählt", "en": "chosen", "fr": "choisi", "it": "scelto"},
+    "sug.nothing": {"de": "Nichts einplanen", "en": "Plan nothing", "fr": "Ne rien prévoir", "it": "Niente"},
+    "sug.auto": {"de": "Automatik", "en": "Automatic", "fr": "Automatique", "it": "Automatico"},
+    "sug.fallback": {
+        "de": "Bei {n} Stange(n) reichte die Menge nicht für diese Wahl – dort automatisch gefüllt.",
+        "en": "On {n} bar(s) the quantity didn't suffice for this choice – filled automatically there.",
+        "fr": "Sur {n} barre(s), la quantité ne suffisait pas pour ce choix – rempli automatiquement.",
+        "it": "Su {n} barra/e la quantità non bastava per questa scelta – riempito automaticamente.",
+    },
     "mat.empty": {"de": "Keine Materialien vorhanden.", "en": "No materials.", "fr": "Aucun matériau.", "it": "Nessun materiale."},
     "stock.empty": {"de": "Kein Lagerbestand.", "en": "No stock.", "fr": "Pas de stock.", "it": "Nessuna scorta."},
     "parts.empty": {"de": "Keine Teile vorhanden.", "en": "No parts.", "fr": "Aucune pièce.", "it": "Nessuna parte."},
@@ -2688,10 +2874,10 @@ WEB_EXTRA_TRANSLATIONS = {
     "parts.as_fill": {"de": "Als Füllteile…", "en": "As filler parts…", "fr": "Comme pièces de remplissage…", "it": "Come pezzi di riempimento…"},
     "parts.fill_target": {"de": "In den Plan von Projekt", "en": "Into the plan of project", "fr": "Dans le plan du projet", "it": "Nel piano del progetto"},
     "parts.fill_hint": {
-        "de": "Die Teile werden beim nächsten Optimieren dieses Projekts mitgesägt. „Auffüllen“ nutzt nur Abfall (Menge = Obergrenze), „Fest“ sägt genau die Menge. Gesägt kommen sie ins Regal ihres Projekts.",
-        "en": "The parts are cut along the next time this project is optimized. “Fill” only uses waste (quantity = maximum), “Fixed” cuts exactly that quantity. Once cut they go to the shelf of their project.",
-        "fr": "Les pièces seront découpées lors de la prochaine optimisation de ce projet. « Remplir » n’utilise que les chutes (quantité = maximum), « Fixe » découpe exactement la quantité. Découpées, elles vont sur l’étagère de leur projet.",
-        "it": "I pezzi verranno tagliati alla prossima ottimizzazione di questo progetto. «Riempi» usa solo gli scarti (quantità = massimo), «Fisso» taglia esattamente la quantità. Tagliati, vanno sullo scaffale del loro progetto.",
+        "de": "Der Plan des Projekts wird gleich neu berechnet: Die Teile kommen in den Abfall der Stangen bzw. Platten (die Menge ist Obergrenze und hat Vorrang). Gesägt kommen sie ins Regal ihres Projekts.",
+        "en": "The project's plan is recalculated right away: the parts go into the waste of the bars or panels (the quantity is a maximum and takes priority). Once cut they go to the shelf of their project.",
+        "fr": "Le plan du projet est recalculé tout de suite : les pièces vont dans les chutes des barres ou panneaux (la quantité est un maximum et prioritaire). Découpées, elles vont sur l’étagère de leur projet.",
+        "it": "Il piano del progetto viene ricalcolato subito: i pezzi vanno negli scarti di barre o pannelli (la quantità è un massimo e ha la precedenza). Tagliati, vanno sullo scaffale del loro progetto.",
     },
     "parts.fill_one_material": {"de": "Füllteile müssen alle aus einem Material sein.", "en": "Filler parts must all be of one material.", "fr": "Les pièces de remplissage doivent être du même matériau.", "it": "I pezzi di riempimento devono essere tutti dello stesso materiale."},
     "parts.fill_no_target": {"de": "Kein anderes Projekt braucht dieses Material.", "en": "No other project uses this material.", "fr": "Aucun autre projet n’utilise ce matériau.", "it": "Nessun altro progetto usa questo materiale."},

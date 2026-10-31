@@ -104,8 +104,11 @@ def optimize_1d(
     kerf: float = 3.0,
     defekte: dict[int, dict[int, list]] | None = None,
     refine_zeit: float = 1.0,
+    max_pro_stange: int = 0,
 ) -> OptimierungsErgebnis:
     """1D cutting-stock optimization (pattern-based, ILP-optimal).
+
+    max_pro_stange > 0 limits the parts per bar (keeps room for fill parts).
 
     Uses a two-phase approach:
       1. Patterns – column generation (`_generate_columns`) finds the
@@ -126,7 +129,7 @@ def optimize_1d(
         any(dl for dl in dm.values()) for dm in defekte.values())
 
     if has_defects:
-        return _optimize_1d_bfd(teile, vorrat, kerf, defekte)
+        return _optimize_1d_bfd(teile, vorrat, kerf, defekte, max_pro_stange)
 
     demand: dict[float, int] = {}
     labels_by_len: dict[float, list[str]] = {}
@@ -154,14 +157,15 @@ def optimize_1d(
     if _HAS_SCIPY:
         try:
             cg_patterns = _generate_columns(demand, bar_counts,
-                                            distinct_lengths, kerf)
+                                            distinct_lengths, kerf, max_pro_stange)
         except Exception:
             cg_patterns = []
     seen = set()
     all_patterns: list[tuple[float, dict[float, int], float]] = []
     for bar_len, pat in cg_patterns + [
             (bl, p) for bl in bar_types
-            for p in _enumerate_patterns(bl, distinct_lengths, kerf)]:
+            for p in _enumerate_patterns(bl, distinct_lengths, kerf,
+                                         max_parts=max_pro_stange)]:
         key = (bar_len, tuple(sorted(pat.items())))
         if key in seen:
             continue
@@ -225,7 +229,8 @@ def optimize_1d(
                 leftover_vorrat.append(StangenVorrat(
                     svlist[0].lagerstueck_id, bl, bc))
         if leftover_vorrat:
-            fallback = _optimize_1d_bfd(leftover_teile, leftover_vorrat, kerf, None)
+            fallback = _optimize_1d_bfd(leftover_teile, leftover_vorrat, kerf, None,
+                                        max_pro_stange)
         else:
             fallback = OptimierungsErgebnis(
                 fehlende_teile=[lab for lab, _, _ in leftover_teile])
@@ -527,7 +532,7 @@ _ILP_SELECT_TIME = 0.5   # seconds for the integer pattern selection
 _KNAPSACK_NODES = 5_000  # per pricing; the best pattern found so far is enough
 
 
-def _generate_columns(demand, bar_supply, distinct_lengths, kerf):
+def _generate_columns(demand, bar_supply, distinct_lengths, kerf, max_parts=0):
     """Column generation (Gilmore–Gomory) for the LP relaxation.
 
     Solves "minimize bar material" over a growing set of patterns. The
@@ -539,7 +544,7 @@ def _generate_columns(demand, bar_supply, distinct_lengths, kerf):
     selection than a truncated enumeration.
 
     Unmet demand is allowed at a high price (slack), so the LP stays
-    feasible when the stock runs out.
+    feasible when the stock runs out. max_parts > 0 limits parts per pattern.
     """
     from scipy.optimize import linprog
 
@@ -577,7 +582,7 @@ def _generate_columns(demand, bar_supply, distinct_lengths, kerf):
         for l in lengths:
             if l <= bl + 1e-9:
                 fit = int((bl - l + 1e-6) // (l + kerf)) + 1
-                _add(bl, {l: min(fit, demand[l])})
+                _add(bl, {l: min(fit, demand[l], max_parts or fit)})
 
     b_ub = np.array([-float(demand[l]) for l in lengths]
                     + [float(bar_supply[bl]) for bl in bar_lens])
@@ -591,7 +596,7 @@ def _generate_columns(demand, bar_supply, distinct_lengths, kerf):
         prices = {l: duals[i] for i, l in enumerate(lengths)}
         added = False
         for k, bl in enumerate(bar_lens):
-            pat, value = _knapsack(bl, lengths, prices, demand, kerf)
+            pat, value = _knapsack(bl, lengths, prices, demand, kerf, max_parts)
             # reduced cost = cost - Σ price·count - supply dual (≤ 0)
             if value > bl + 1e-3 + duals[m + k] + 1e-6 and _add(bl, pat):
                 added = True
@@ -600,9 +605,10 @@ def _generate_columns(demand, bar_supply, distinct_lengths, kerf):
     return cols
 
 
-def _knapsack(bar_len, lengths, prices, demand, kerf):
+def _knapsack(bar_len, lengths, prices, demand, kerf, max_parts=0):
     """Bounded knapsack by branch and bound: the pattern for `bar_len`
-    with the highest total price. Returns ({length: count}, value)."""
+    with the highest total price (at most `max_parts` parts if > 0).
+    Returns ({length: count}, value)."""
     cap = bar_len + kerf + 1e-6   # every part takes its length + one kerf
     items = sorted(((l, prices[l]) for l in lengths
                     if prices[l] > 1e-9 and l <= bar_len + 1e-9),
@@ -623,25 +629,28 @@ def _knapsack(bar_len, lengths, prices, demand, kerf):
                 break
         return value
 
-    def _dfs(k, rest, value):
+    def _dfs(k, rest, value, n):
         nodes[0] += 1
         if value > best[0]:
             best[0], best[1] = value, dict(cur)
-        if k >= len(items) or nodes[0] > _KNAPSACK_NODES:
+        if k >= len(items) or nodes[0] > _KNAPSACK_NODES or (max_parts and n >= max_parts):
             return
         if value + _bound(k, rest) <= best[0] + 1e-9:
             return
         l, p = items[k]
         w = l + kerf
-        for cnt in range(min(demand[l], int(rest // w)), -1, -1):
+        hoechstens = min(demand[l], int(rest // w))
+        if max_parts:
+            hoechstens = min(hoechstens, max_parts - n)
+        for cnt in range(hoechstens, -1, -1):
             if cnt:
                 cur[l] = cnt
             else:
                 cur.pop(l, None)
-            _dfs(k + 1, rest - cnt * w, value + cnt * p)
+            _dfs(k + 1, rest - cnt * w, value + cnt * p, n + cnt)
         cur.pop(l, None)
 
-    _dfs(0, cap, 0.0)
+    _dfs(0, cap, 0.0, 0)
     return best[1], best[0]
 
 
@@ -650,16 +659,21 @@ def _enumerate_patterns(
     lengths: list[float],
     kerf: float,
     _max_patterns: int = 5000,
+    max_parts: int = 0,
 ) -> list[dict[float, int]]:
     """Enumerate feasible cutting patterns for a bar via bounded DFS.
 
-    Returns only maximal patterns (where no additional part fits).
+    Returns only maximal patterns (where no additional part fits, or
+    `max_parts` parts are reached if > 0).
     """
     patterns: list[dict[float, int]] = []
 
     def _dfs(idx: int, remaining: float, current: dict[float, int],
              n_parts: int) -> None:
         if len(patterns) >= _max_patterns:
+            return
+        if max_parts and n_parts >= max_parts:
+            patterns.append(dict(current))
             return
         is_maximal = True
         for i in range(idx, len(lengths)):
@@ -668,6 +682,8 @@ def _enumerate_patterns(
             if remaining >= needed:
                 is_maximal = False
                 max_count = int((remaining - l) // (l + kerf)) + 1 if l + kerf > 0 else 1
+                if max_parts:
+                    max_count = min(max_count, max_parts - n_parts)
                 for c in range(max_count, 0, -1):
                     total_needed = c * l + (c - 1) * kerf
                     if n_parts > 0:
@@ -693,8 +709,12 @@ def _optimize_1d_bfd(
     vorrat: list[StangenVorrat],
     kerf: float = 3.0,
     defekte: dict[int, dict[int, list]] | None = None,
+    max_pro_stange: int = 0,
 ) -> OptimierungsErgebnis:
-    """Best-Fit-Decreasing fallback for 1D (handles defects)."""
+    """Best-Fit-Decreasing fallback for 1D (handles defects).
+
+    max_pro_stange > 0: at most that many parts per bar (all its segments).
+    """
     einzelteile: list[tuple[str, float]] = []
     for label, laenge, anzahl in teile:
         einzelteile.extend((label, laenge) for _ in range(anzahl))
@@ -735,11 +755,14 @@ def _optimize_1d_bfd(
             bar_idx += 1
 
     fehlend: list[str] = []
+    pro_stange: dict[int, int] = {}   # Teile je physischer Stange (_bar)
 
     for label, teil_laenge in einzelteile:
         best_stange = None
         best_rest = float('inf')
         for stange in verfuegbar:
+            if max_pro_stange and pro_stange.get(stange["_bar"], 0) >= max_pro_stange:
+                continue
             benoetigte_breite = teil_laenge
             if stange["platzierungen"]:
                 benoetigte_breite += kerf
@@ -760,6 +783,7 @@ def _optimize_1d_bfd(
                             x=pos + best_stange["_offset"])
             )
             best_stange["rest"] -= benoetigte_breite
+            pro_stange[best_stange["_bar"]] = pro_stange.get(best_stange["_bar"], 0) + 1
         else:
             fehlend.append(label)
 
@@ -1786,39 +1810,114 @@ def _build_2d_result(platten, fehlend, kerf=3.0):
     return ergebnis
 
 
-def fuelle_rest_1d(rest: float, kerf: float,
-                   kandidaten: list[tuple[object, float, int]]) -> list[object]:
-    """Einen Stangenrest möglichst voll mit Füllteilen belegen (beschränkter Rucksack).
+def _fuell_items(rest: float, kerf: float, kandidaten):
+    """Kandidaten (Schlüssel, Länge, max. Anzahl[, bevorzugt]) vereinheitlichen.
 
-    rest: freie Länge ab der Schnittfuge nach dem letzten Teil.
-    kandidaten: (Schlüssel, Länge, maximale Anzahl). Jedes Teil braucht seine Länge
-    plus eine Fuge; die Fuge des letzten Teils darf über das Stangenende hinausgehen.
-    Liefert die Schlüssel der gewählten Teile (Länge absteigend), maximiert die
-    belegte Länge. Rechnet in ganzen Millimetern.
+    Liefert (Kapazität in ganzen mm, [(Schlüssel, Gewicht mm, Länge, max, bevorzugt)]).
+    Jedes Teil braucht seine Länge plus eine Fuge; die Fuge des letzten Teils
+    darf über das Stangenende hinausgehen, daher Kapazität = Rest + Fuge.
     """
     kap = int(rest + kerf + 1e-6)
-    if kap <= 0:
-        return []
-    items: list[tuple[object, int, float]] = []
-    for key, laenge, maximal in kandidaten:
+    items = []
+    for k in kandidaten:
+        key, laenge, maximal = k[0], k[1], k[2]
+        bevorzugt = bool(k[3]) if len(k) > 3 else False
         w = int(math.ceil(laenge + kerf - 1e-6))
         if w <= 0 or w > kap or maximal <= 0:
             continue
-        items.extend([(key, w, laenge)] * min(maximal, kap // w))
-    if not items:
+        items.append((key, w, laenge, min(maximal, kap // w), bevorzugt))
+    return kap, items
+
+
+def _fuell_guete(belegt: float, bevorzugt: int, stueck: int) -> tuple:
+    """Rangfolge einer Füllung: viel belegt (wenig Abfall), dann viele bevorzugte
+    Teile (mit Mengenangabe), dann wenige Stück (weniger Schnitte). Größer = besser."""
+    return (round(belegt, 3), bevorzugt, -stueck)
+
+
+def fuelle_rest_1d(rest: float, kerf: float, kandidaten: list[tuple]) -> list[object]:
+    """Einen Stangenrest möglichst gut mit Füllteilen belegen (beschränkter Rucksack).
+
+    rest: freie Länge ab der Schnittfuge nach dem letzten Teil.
+    kandidaten: (Schlüssel, Länge, maximale Anzahl[, bevorzugt]). Bevorzugt sind
+    Teile, für die eine Menge angegeben ist.
+    Ziel siehe _fuell_guete. Liefert die Schlüssel der gewählten Teile (Länge
+    absteigend). Rechnet in ganzen Millimetern.
+    """
+    kap, items = _fuell_items(rest, kerf, kandidaten)
+    if kap <= 0 or not items:
         return []
-    # best[c] = max. belegte Länge bei Kapazität c, wahl[c] = (Item-Index, vorige Kap.)
-    best = [0.0] * (kap + 1)
+    einzel = [(key, w, laenge, bev) for key, w, laenge, n, bev in items for _ in range(n)]
+    # best[c] = beste Güte bei Kapazität c, wahl[c] = gewählte Einzelteile
+    leer = _fuell_guete(0, 0, 0)
+    best = [leer] * (kap + 1)
     wahl: list[list[int]] = [[] for _ in range(kap + 1)]
-    for i, (_, w, laenge) in enumerate(items):
+    for i, (_, w, laenge, bev) in enumerate(einzel):
         for c in range(kap, w - 1, -1):
-            if best[c - w] + laenge > best[c] + 1e-9:
-                best[c] = best[c - w] + laenge
+            b, n_bev, n_neg = best[c - w]
+            kand = _fuell_guete(b + laenge, n_bev + bev, -n_neg + 1)
+            if kand > best[c]:
+                best[c] = kand
                 wahl[c] = wahl[c - w] + [i]
     c_best = max(range(kap + 1), key=lambda c: best[c])
-    gewaehlt = [items[i] for i in wahl[c_best]]
-    gewaehlt.sort(key=lambda it: it[2], reverse=True)
-    return [it[0] for it in gewaehlt]
+    gewaehlt = sorted((einzel[i] for i in wahl[c_best]), key=lambda e: e[2], reverse=True)
+    return [e[0] for e in gewaehlt]
+
+
+def fuell_vorschlaege_1d(rest: float, kerf: float, kandidaten: list[tuple],
+                         anzahl: int = 5, knoten: int = 50_000
+                         ) -> list[tuple[dict, float]]:
+    """Die besten Füllungen eines Stangenrests zur Auswahl.
+
+    Durchsucht alle Kombinationen der Kandidaten (wie fuelle_rest_1d), behält nur
+    vollständige – in die kein weiteres Teil mehr passt – und sortiert sie nach
+    _fuell_guete. Liefert bis zu `anzahl` Paare ({Schlüssel: Stück}, Rest danach in mm).
+    Die Suche bricht nach `knoten` Schritten ab (dann sind es die besten bis dahin).
+    """
+    kap, items = _fuell_items(rest, kerf, kandidaten)
+    if kap <= 0 or not items:
+        return []
+    items.sort(key=lambda it: it[1], reverse=True)
+    # kleinstes Gewicht ab Position p: passt ab hier überhaupt noch etwas?
+    min_ab = [math.inf] * (len(items) + 1)
+    for p in range(len(items) - 1, -1, -1):
+        min_ab[p] = min(items[p][1], min_ab[p + 1])
+    gefunden: dict[tuple, tuple] = {}
+    menge: dict[int, int] = {}
+    schritte = [0]
+
+    def vollstaendig(frei: int) -> bool:
+        return not any(menge.get(p, 0) < it[3] and it[1] <= frei
+                       for p, it in enumerate(items))
+
+    def suche(p: int, frei: int):
+        schritte[0] += 1
+        if schritte[0] > knoten:
+            return
+        if p == len(items) or frei < min_ab[p]:
+            if menge and vollstaendig(frei):
+                belegt = sum(items[q][2] * n for q, n in menge.items())
+                bev = sum(n for q, n in menge.items() if items[q][4])
+                stueck = sum(menge.values())
+                gefunden[tuple(sorted(menge.items()))] = _fuell_guete(belegt, bev, stueck)
+            return
+        w = items[p][1]
+        for n in range(min(items[p][3], frei // w), -1, -1):
+            if n:
+                menge[p] = n
+            else:
+                menge.pop(p, None)
+            suche(p + 1, frei - n * w)
+        menge.pop(p, None)
+
+    suche(0, kap)
+    beste = sorted(gefunden.items(), key=lambda e: e[1], reverse=True)[:anzahl]
+    ergebnis = []
+    for kombi, _ in beste:
+        auswahl = {items[q][0]: n for q, n in kombi}
+        belegt = sum((items[q][2] + kerf) * n for q, n in kombi)
+        ergebnis.append((auswahl, max(0.0, rest - belegt)))
+    return ergebnis
 
 
 def freie_rechtecke_2d(teile: list[tuple[float, float, float, float]],

@@ -796,6 +796,70 @@ class TestFuellteile:
         assert len(self._fuell(plan)) == 5
         assert plan["fehlende_teile"] == []
 
+    def _zweites_fuellteil(self, client, mid):
+        pid = client.post("/api/projects", json={"name": "Drittes"}).json()["id"]
+        return client.post(f"/api/projects/{pid}/parts", json={
+            "label": "K100", "typ": "Stange", "material_id": mid, "laenge": 100,
+            "stueckzahl": 1}).json()["id"]
+
+    def test_max_teile_je_stange(self, client):
+        mid, bid, haupt, _, fid = self._setup(client)
+        plan = self._opt(client, haupt, mid, bid, max_pro_stange=4)
+        assert len(plan["schnittplaene"]) == 7                    # 28 Teile / 4
+        assert {len(sp["platzierungen"]) for sp in plan["schnittplaene"]} == {4}
+        assert plan["max_pro_stange"] == 4
+        # bleibt beim Neuberechnen erhalten, auch mit dem genetischen Algorithmus
+        plan = self._opt(client, haupt, mid, bid, algorithm="ga")
+        assert len(plan["schnittplaene"]) == 7
+        plan = self._opt(client, haupt, mid, bid, max_pro_stange=0)
+        assert len(plan["schnittplaene"]) == 4
+
+    def test_vorschlaege_und_wahl(self, client):
+        mid, bid, haupt, _, fid = self._setup(client)
+        f100 = self._zweites_fuellteil(client, mid)
+        # 208 mm frei hinter der Fuge: K200 allein ist am besten, K100 nur als Alternative
+        plan = self._opt(client, haupt, mid, bid, fuellteile=[
+            {"teil_id": fid, "modus": "auffuellen", "menge": 0},
+            {"teil_id": f100, "modus": "auffuellen", "menge": 0}])
+        [g] = plan["fuell_vorschlaege"]
+        assert (g["gruppe"], g["stangen"], g["gewaehlt"], g["manuell"]) == ("208.0", 4, 0, False)
+        assert [[(t["teil_id"], t["anzahl"]) for t in v["teile"]] for v in g["vorschlaege"]] == [
+            [(fid, 1)], [(f100, 2)]]
+        assert g["vorschlaege"][0]["rest"] == 5
+        # K100 wählen: Hauptteile bleiben, alle vier Stangen bekommen 2 × K100
+        alt = [[p["laenge"] for p in sp["platzierungen"] if not p["ist_fuellteil"]]
+               for sp in plan["schnittplaene"]]
+        plan = client.post(f"/api/plans/{plan['plan_id']}/fill-choice", json={
+            "gruppe": "208.0", "wahl": [{"teil_id": f100, "anzahl": 2}]}).json()
+        assert [[p["laenge"] for p in sp["platzierungen"] if not p["ist_fuellteil"]]
+                for sp in plan["schnittplaene"]] == alt
+        assert [p["teil_label"] for p in self._fuell(plan)] == ["K100 → Drittes"] * 8
+        g = plan["fuell_vorschlaege"][0]
+        assert (g["gewaehlt"], g["manuell"], g["automatisch"]) == (1, True, 0)
+        # Wahl bleibt beim Neuberechnen, "nichts" und zurück zur Automatik
+        plan = self._opt(client, haupt, mid, bid)
+        assert len(self._fuell(plan)) == 8
+        plan = client.post(f"/api/plans/{plan['plan_id']}/fill-choice",
+                           json={"gruppe": "208.0", "wahl": []}).json()
+        assert self._fuell(plan) == [] and plan["fuell_vorschlaege"][0]["gewaehlt"] == -1
+        plan = client.post(f"/api/plans/{plan['plan_id']}/fill-choice",
+                           json={"gruppe": "208.0", "wahl": None}).json()
+        assert [p["teil_label"] for p in self._fuell(plan)] == ["K200 → Anderes"] * 4
+
+    def test_wahl_mit_menge_faellt_auf_automatik_zurueck(self, client):
+        mid, bid, haupt, _, fid = self._setup(client)
+        f100 = self._zweites_fuellteil(client, mid)
+        plan = self._opt(client, haupt, mid, bid, fuellteile=[
+            {"teil_id": fid, "modus": "auffuellen", "menge": 0},
+            {"teil_id": f100, "modus": "auffuellen", "menge": 3}])
+        plan = client.post(f"/api/plans/{plan['plan_id']}/fill-choice", json={
+            "gruppe": "208.0", "wahl": [{"teil_id": f100, "anzahl": 2}]}).json()
+        # nur 3 × K100: eine Stange mit 2, eine mit dem bevorzugten Rest-K100, dann K200
+        labels = [[p["teil_label"].split(" ")[0] for p in sp["platzierungen"] if p["ist_fuellteil"]]
+                  for sp in plan["schnittplaene"]]
+        assert labels == [["K100", "K100"], ["K200"], ["K200"], ["K200"]]
+        assert plan["fuell_vorschlaege"][0]["automatisch"] == 3
+
 
 # =====================================================================
 # Sammelplan: ein Material, mehrere Projekte gemeinsam
