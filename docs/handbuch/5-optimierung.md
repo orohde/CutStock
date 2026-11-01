@@ -23,11 +23,12 @@ Jede Zeile zeigt ihren Stand:
 | in Arbeit · 5/12 | Es wird gerade gesägt |
 | Plan veraltet | Teile oder Material wurden geändert, oder Teile wurden inzwischen anderswo gesägt |
 | im Sammelplan | Dieses Material wird im Sammelplan gesägt – ein Klick öffnet ihn |
-| anderswo verplant | Alle offenen Teile stecken schon in einem Sägeauftrag oder einem anderen Plan |
+| im Sägeauftrag … | Alle offenen Teile stecken schon in diesem Sägeauftrag – ein Klick öffnet ihn (bei mehreren: „in 3 Sägeaufträgen“, die Namen stehen im Tooltip) |
+| anderswo verplant | Alle offenen Teile stecken schon in einem anderen Plan (z. B. als Füllteile) |
 | fertig | Alles gesägt (nur mit „auch fertige zeigen“) |
 
-Oben lässt sich nach Namen oder Material suchen. Die Auswahl bleibt erhalten, auch beim Wechsel
-der Reiter. Sprünge aus anderen Reitern („Jetzt sägen →“, „Weitersägen“, „Optimieren“ beim
+Oben lässt sich nach Namen oder Material suchen. Die Breite der Liste lässt sich am Griff zwischen
+Liste und Plan ziehen und wird gemerkt. Die Auswahl bleibt erhalten, auch beim Wechsel der Reiter. Sprünge aus anderen Reitern („Jetzt sägen →“, „Weitersägen“, „Optimieren“ beim
 Sammelplan) wählen den passenden Eintrag hier aus.
 
 ## Rechts: Stand und eine Hauptaktion
@@ -55,8 +56,8 @@ keinen Sammelplan, erscheint der Hinweis „… wird auch in ‚X‘ gebraucht �
 
 ### Einstellungen
 
-Die Einstellungen sind eingeklappt und als eine Zeile zusammengefasst, z. B.
-„Alu-Kappsäge 2,8 mm · Standard · Reste zuerst aus“. Ein Klick klappt sie auf:
+Wählt man einen Eintrag, sind die Einstellungen aufgeklappt; zugeklappt fasst eine Zeile sie
+zusammen, z. B. „Alu-Kappsäge 2,8 mm · Standard · Reste zuerst aus“:
 
 - **Sägeblatt** – vorgewählt ist das Sägeblatt des Materials (siehe
   [Material](1-material.md)). Wer mit einem anderen rechnet, macht es damit zum neuen Standard

@@ -23,10 +23,12 @@ Every line shows its status:
 | in progress · 5/12 | Cutting is under way |
 | plan outdated | Parts or material changed, or parts were cut elsewhere meanwhile |
 | in combined plan | This material is cut in the combined plan – a click opens it |
-| planned elsewhere | All open parts are already in a cut job or another plan |
+| in cut job … | All open parts are already in this cut job – a click opens it (with several: "in 3 cut jobs", the names are in the tooltip) |
+| planned elsewhere | All open parts are already in another plan (e.g. as filler parts) |
 | finished | Everything cut (only with "show finished too") |
 
-Search by name or material at the top. The selection is kept, also when switching tabs. Jumps from
+Search by name or material at the top. Drag the handle between list and plan to change the list's
+width; it is remembered. The selection is kept, also when switching tabs. Jumps from
 other tabs ("Cut now →", "Continue cutting", "Optimize" on a combined plan) select the matching
 entry here.
 
@@ -55,8 +57,8 @@ creates it with these projects and selects it.
 
 ### Settings
 
-The settings are collapsed into one summary line, e.g. "Alu chop saw 2.8 mm · Standard ·
-remnants first off". Click it to expand:
+When you select an entry, the settings are expanded; collapsed, one line sums them up, e.g.
+"Alu chop saw 2.8 mm · Standard · remnants first off":
 
 - **Saw blade** – the material's saw blade is preselected (see [Material](1-material.md)).
   Calculating with a different one makes that the material's new default.

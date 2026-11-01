@@ -1323,8 +1323,10 @@ class TestArbeitsliste:
         eintrag = next(e for e in client.get("/api/worklist").json()
                        if e["projekt_id"] == auftrag["id"])
         assert eintrag["art"] == "liste"
-        # Alles Offene von A steckt im Sägeauftrag
-        assert self._zeile(client, pids["A"], mid)["status"] == "verplant"
+        # Alles Offene von A steckt im Sägeauftrag – die Zeile nennt ihn
+        z = self._zeile(client, pids["A"], mid)
+        assert z["status"] == "verplant"
+        assert z["auftraege"] == [{"projekt_id": auftrag["id"], "name": auftrag["name"]}]
 
     def test_saegeblatt_wird_am_material_gemerkt(self, client):
         mid, bid, pids = self._setup(client)

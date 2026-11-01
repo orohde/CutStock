@@ -1854,10 +1854,15 @@ function currentWork() {
 }
 
 function wlStatusHtml(z) {
-    const txt = t(`wl.st_${z.status}`, { done: z.gesaegt, total: z.gesamt });
+    const jobs = z.status === 'verplant' ? (z.auftraege || []) : [];
+    const txt = jobs.length === 1 ? t('wl.st_job', { name: jobs[0].name })
+        : jobs.length ? t('wl.st_jobs', { n: jobs.length })
+        : t(`wl.st_${z.status}`, { done: z.gesaegt, total: z.gesamt });
     const title = z.status === 'sammel' ? z.sammelplan
-        : z.status === 'veraltet' ? t(`wl.reason_${z.veraltet_grund || 'teile'}`) : '';
-    return `<span class="wl-status wl-status--${z.status}" title="${escAttr(title)}">${escHtml(txt)}</span>`;
+        : z.status === 'veraltet' ? t(`wl.reason_${z.veraltet_grund || 'teile'}`)
+        : jobs.map(j => j.name).join(', ');
+    const link = z.status === 'sammel' || jobs.length ? ' wl-status--link' : '';
+    return `<span class="wl-status wl-status--${z.status}${link}" title="${escAttr(title)}">${escHtml(txt)}</span>`;
 }
 
 function renderWorklist() {
@@ -1873,7 +1878,8 @@ function renderWorklist() {
     }
     const cur = currentWork();
     const zeile = (e, z, nurMaterial) => `<div class="wl-row${cur.entry === e && cur.line === z ? ' selected' : ''}"
-        data-pid="${e.projekt_id}" data-mid="${z.material_id}" data-art="${e.art}" data-status="${z.status}" role="button" tabindex="0">
+        data-pid="${e.projekt_id}" data-mid="${z.material_id}" data-art="${e.art}" data-status="${z.status}"
+        data-job="${z.auftraege?.[0]?.projekt_id || ''}" role="button" tabindex="0">
         <span class="wl-name">${escHtml(nurMaterial ? z.material : e.name)}${nurMaterial || e.art === 'sammel' ? ''
             : `<span class="wl-sub">${escHtml(z.material)}</span>`}</span>${wlStatusHtml(z)}</div>`;
     const eintrag = e => {
@@ -1905,8 +1911,9 @@ function renderWorklist() {
                 return;
             }
             const mid = parseInt(row.dataset.mid);
-            // Im Sammelplan: die Zeile führt zum Sammelplan
+            // Im Sammelplan bzw. Sägeauftrag: die Zeile führt dorthin
             if (row.dataset.art === 'sammel' || row.dataset.status === 'sammel') setOptMode('material', mid);
+            else if (row.dataset.status === 'verplant' && row.dataset.job) selectWork(parseInt(row.dataset.job), mid);
             else selectWork(parseInt(row.dataset.pid), mid);
         };
         row.addEventListener('click', go);
@@ -1915,8 +1922,14 @@ function renderWorklist() {
 }
 
 // Projekt/Sägeauftrag + Material aus der Arbeitsliste wählen
-function selectWork(projId, matId) {
-    document.getElementById('opt-project').value = String(projId);
+async function selectWork(projId, matId) {
+    const projSel = document.getElementById('opt-project');
+    // Eintrag, den die Oberfläche noch nicht kennt (z.B. per API angelegt): Projekte nachladen
+    if (!projSel.querySelector(`option[value="${projId}"]`)) {
+        try { State.projects = await Api.getProjects(); } catch { /* ignore */ }
+        renderOptDropdowns();
+    }
+    projSel.value = String(projId);
     setOptMode('project', matId);
 }
 
@@ -1967,7 +1980,13 @@ function renderOptHead() {
 
     // Hinweise: anderswo verplant, fertig, „zusammen sägen?“
     let hintHtml = '';
-    if (status === 'verplant') hintHtml = `<span>${escHtml(t('wl.verplant_hint'))}</span>`;
+    if (status === 'verplant') {
+        const jobs = line.auftraege || [];
+        hintHtml = jobs.length
+            ? `<span>${escHtml(t('wl.verplant_jobs', { names: jobs.map(j => `„${j.name}“`).join(', ') }))}</span>
+               ${jobs.map(j => `<button class="fd-button fd-button--compact wl-job-go" type="button" data-job="${j.projekt_id}">${escHtml(j.name)} →</button>`).join('')}`
+            : `<span>${escHtml(t('wl.verplant_hint'))}</span>`;
+    }
     else if (stage === 'done') hintHtml = `<span>&#9989; ${escHtml(t('wl.done_hint'))}</span>`;
     else if (!sammelMode && line?.auch_in?.length && (stage === 'calc' || stage === 'saw' && !stuecke.some(p => p._done))) {
         hintHtml = `<span>&#128279; ${escHtml(t('wl.together', { material: mat.name,
@@ -1977,8 +1996,13 @@ function renderOptHead() {
     hint.innerHTML = hintHtml;
     show(hint, !!hintHtml);
     document.getElementById('btn-wl-together')?.addEventListener('click', () => createSammelFromHint(projId, line));
+    hint.querySelectorAll('.wl-job-go').forEach(b =>
+        b.addEventListener('click', () => selectWork(parseInt(b.dataset.job), matId)));
 
     show(settings, stage === 'calc' || stage === 'recalc' || stage === 'saw');
+    // Neue Auswahl: Einstellungen offen zeigen (zuklappen bleibt bis zur nächsten Auswahl)
+    const selKey = `${State.optMode}:${projId}:${matId}`;
+    if (State.optHeadKey !== selKey) { State.optHeadKey = selKey; settings.open = true; }
     show(actions, stage !== 'blocked');
     mainBtn.dataset.stage = stage;
     mainBtn.textContent = t({ calc: 'opt.calc', recalc: 'opt.recalc', saw: 'opt.to_saw' }[stage] || 'opt.calc');
@@ -5164,8 +5188,43 @@ function setupSplitters() {
     });
 }
 
+// Arbeitsliste der Optimierung: Breite per Ziehgriff, in Pixeln gemerkt
+function setupWorklistSplitter() {
+    const layout = document.querySelector('#tab-optimization .opt-layout');
+    const splitter = layout?.querySelector(':scope > .panel-splitter');
+    if (!splitter) return;
+    const key = 'cutstock.split.worklist';
+    let breite = parseInt(storageGet('localStorage', key)) || 300;
+    const apply = () => layout.style.setProperty('--wl-width', `${breite}px`);
+    apply();
+    let dragging = false;
+    splitter.addEventListener('pointerdown', (e) => {
+        dragging = true;
+        splitter.classList.add('dragging');
+        splitter.setPointerCapture(e.pointerId);
+        document.body.style.userSelect = 'none';
+        e.preventDefault();
+    });
+    splitter.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        const rect = layout.getBoundingClientRect();
+        breite = Math.round(Math.max(200, Math.min(rect.width * 0.6, e.clientX - rect.left)));
+        apply();
+    });
+    const end = () => {
+        if (!dragging) return;
+        dragging = false;
+        splitter.classList.remove('dragging');
+        document.body.style.userSelect = '';
+        storageSet('localStorage', key, String(breite));
+    };
+    splitter.addEventListener('pointerup', end);
+    splitter.addEventListener('pointercancel', end);
+}
+
 function initEvents() {
     setupSplitters();
+    setupWorklistSplitter();
 
     // ----- Quit (Desktop only) -----
     document.getElementById('btn-quit')?.addEventListener('click', () => {

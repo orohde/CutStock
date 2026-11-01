@@ -1187,8 +1187,11 @@ td.expand-toggle:hover { background: rgba(255,255,255,0.05); }
 #jobs-table .jobs-actions .fd-button { margin-left: 0.35rem; }
 
 /* Reiter „Optimierung“: Arbeitsliste links, Plan rechts */
-.opt-layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 1rem; align-items: start; }
-.wl-panel { position: sticky; top: 0.5rem; max-height: calc(100vh - 7rem); display: flex; flex-direction: column; }
+.opt-layout { display: grid; grid-template-columns: var(--wl-width, 300px) 16px minmax(0, 1fr); align-items: stretch; }
+.opt-layout > .panel-splitter { align-self: stretch; align-items: flex-start; }
+.opt-layout > .panel-splitter::before { position: sticky; top: 30vh; margin-top: 12rem; }
+.opt-main { min-width: 0; }
+.wl-panel { position: sticky; top: 0.5rem; align-self: start; max-height: calc(100vh - 7rem); display: flex; flex-direction: column; }
 .wl-filters { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.5rem; }
 .wl-filters .fd-input { width: 100%; box-sizing: border-box; }
 .wl-filters .opt-check { align-self: flex-start; margin-bottom: 0; }
@@ -1211,7 +1214,7 @@ td.expand-toggle:hover { background: rgba(255,255,255,0.05); }
 .wl-status--bereit, .wl-status--in_arbeit { background: var(--sapInformationBackground, #e1f4ff); color: var(--sapInformativeTextColor, #0064d9); }
 .wl-status--veraltet { background: var(--sapWarningBackground, #fff8d6); color: var(--sapCriticalTextColor, #b44f00); }
 .wl-status--fertig { background: var(--sapSuccessBackground, #f5fae5); color: var(--sapPositiveTextColor, #256f3a); }
-.wl-status--sammel { text-decoration: underline; }
+.wl-status--link { text-decoration: underline; }
 .opt-head-title { display: flex; align-items: center; flex-wrap: wrap; gap: 0.25rem 0.5rem; }
 .opt-head-title h3 { margin: 0; }
 .opt-head-sub { margin-top: 0.15rem; color: var(--sapContent_LabelColor, #556b82); font-size: 0.875rem; }
@@ -1239,6 +1242,7 @@ td.expand-toggle:hover { background: rgba(255,255,255,0.05); }
 .opt-missing .fd-button { margin-left: 0.5rem; }
 
 @media (max-width: 1000px) {
-  .opt-layout { grid-template-columns: 1fr; }
+  .opt-layout { grid-template-columns: 1fr; gap: 1rem; }
+  .opt-layout > .panel-splitter { display: none; }
   .wl-panel { position: static; max-height: 40vh; }
 }

@@ -145,7 +145,7 @@ Das verwendete Sägeblatt wird zum Standard-Sägeblatt des Materials (`saegeblat
    "auch_in": [{"projekt_id": 8, "name": "CNC-Fräse"}]}]}
 ```
 
-`status`: `kein_plan`, `bereit`, `in_arbeit`, `veraltet`, `fertig`, `sammel` (Material wird im Sammelplan `sammelplan_id` gesägt) oder `verplant` (alles Offene steckt in Sägeaufträgen oder anderen Plänen). `auch_in` nennt andere Projekte mit offenen Teilen in diesem Material, solange es noch keinen Sammelplan gibt (Vorschlag „zusammen sägen?“ → `POST /api/sammel`). Fertige Zeilen und Einträge fehlen, außer mit `?fertige=true`.
+`status`: `kein_plan`, `bereit`, `in_arbeit`, `veraltet`, `fertig`, `sammel` (Material wird im Sammelplan `sammelplan_id` gesägt) oder `verplant` (alles Offene steckt in Sägeaufträgen oder anderen Plänen). Bei `verplant` nennt `auftraege` die Sägeaufträge (`projekt_id`, `name`), in denen die offenen Teile stecken. `auch_in` nennt andere Projekte mit offenen Teilen in diesem Material, solange es noch keinen Sammelplan gibt (Vorschlag „zusammen sägen?“ → `POST /api/sammel`). Fertige Zeilen und Einträge fehlen, außer mit `?fertige=true`.
 
 ## Lager-Befehle
 

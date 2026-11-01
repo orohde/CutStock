@@ -2934,6 +2934,8 @@ class WorklistLineOut(BaseModel):
     sammelplan: str = ""
     # Andere Projekte, die dieses Material auch brauchen (Vorschlag Sammelplan)
     auch_in: list[WorkProjectRef] = []
+    # Status „verplant“: die Sägeaufträge, in denen die offenen Teile stecken
+    auftraege: list[WorkProjectRef] = []
 
 
 class WorklistEntryOut(BaseModel):
@@ -2964,12 +2966,19 @@ def _arbeits_zeile(db: Database, projekt: Projekt, material: Material, teile: li
         anderswo = db.ungesaegt_in_plaenen(material.id, ausser_projekt=projekt.id)
         frei = sum(max(0, t.offen_anzahl - anderswo.get(t.id, 0)) for t in teile)
         status = "kein_plan" if frei or projekt.art == "sammel" else "verplant"
+    auftraege: dict[int, str] = {}
+    if status == "verplant":
+        beauftragt = db.beauftragt(material.id)
+        for t in teile:
+            for a in beauftragt.get(t.id, []):
+                auftraege[a["projekt_id"]] = a["name"]
     return WorklistLineOut(
         material_id=material.id, material=material.name, typ=material.typ.value,
         teile=sum(1 for t in teile if t.offen_anzahl > 0), offen=offen, status=status,
         veraltet_grund=grund, plan_id=plan.id if plan else 0, gesamt=len(stuecke),
         gesaegt=gesaegt, sammelplan_id=sammel[0] if sammel else 0,
-        sammelplan=sammel[1] if sammel else "")
+        sammelplan=sammel[1] if sammel else "",
+        auftraege=[WorkProjectRef(projekt_id=k, name=v) for k, v in auftraege.items()])
 
 
 @app.get("/api/worklist", response_model=list[WorklistEntryOut])
@@ -3906,6 +3915,9 @@ WEB_EXTRA_TRANSLATIONS = {
     "wl.st_veraltet": {"de": "Plan veraltet", "en": "plan outdated", "fr": "plan obsolète", "it": "piano superato"},
     "wl.st_fertig": {"de": "fertig", "en": "finished", "fr": "terminé", "it": "finito"},
     "wl.st_sammel": {"de": "im Sammelplan", "en": "in combined plan", "fr": "dans le plan groupé", "it": "nel piano combinato"},
+    "wl.resize": {"de": "Ziehen, um die Breite zu ändern", "en": "Drag to change the width", "fr": "Glisser pour changer la largeur", "it": "Trascina per cambiare la larghezza"},
+    "wl.st_job": {"de": "im {name}", "en": "in {name}", "fr": "dans {name}", "it": "in {name}"},
+    "wl.st_jobs": {"de": "in {n} Sägeaufträgen", "en": "in {n} cut jobs", "fr": "dans {n} ordres de coupe", "it": "in {n} ordini di taglio"},
     "wl.st_verplant": {"de": "anderswo verplant", "en": "planned elsewhere", "fr": "prévu ailleurs", "it": "pianificato altrove"},
     "wl.open_parts": {"de": "{teile} Teile · {n} Stück offen", "en": "{teile} parts · {n} pieces open", "fr": "{teile} pièces · {n} exemplaires à couper", "it": "{teile} pezzi · {n} da tagliare"},
     "wl.open_one": {"de": "1 Teil · {n} Stück offen", "en": "1 part · {n} pieces open", "fr": "1 pièce · {n} exemplaires à couper", "it": "1 pezzo · {n} da tagliare"},
@@ -3920,6 +3932,12 @@ WEB_EXTRA_TRANSLATIONS = {
         "it": "{material} serve anche in {names} – tagliare insieme?",
     },
     "wl.together_go": {"de": "Sammelplan anlegen", "en": "Create combined plan", "fr": "Créer un plan groupé", "it": "Crea piano combinato"},
+    "wl.verplant_jobs": {
+        "de": "Alle offenen Teile stecken schon in: {names}.",
+        "en": "All open parts are already in: {names}.",
+        "fr": "Toutes les pièces à couper sont déjà dans : {names}.",
+        "it": "Tutti i pezzi da tagliare sono già in: {names}.",
+    },
     "wl.verplant_hint": {
         "de": "Alle offenen Teile stecken schon in einem Sägeauftrag oder einem anderen Plan.",
         "en": "All open parts are already in a cut job or another plan.",

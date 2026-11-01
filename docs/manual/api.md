@@ -145,7 +145,7 @@ The saw blade used becomes the material's default saw blade (`saegeblatt_id` in 
    "auch_in": [{"projekt_id": 8, "name": "CNC router"}]}]}
 ```
 
-`status`: `kein_plan` (no plan yet), `bereit` (ready), `in_arbeit` (in progress), `veraltet` (outdated), `fertig` (finished), `sammel` (material is cut in combined plan `sammelplan_id`) or `verplant` (everything open is in cut jobs or other plans). `auch_in` lists other projects with open parts in this material as long as there is no combined plan (the "cut together?" suggestion → `POST /api/sammel`). Finished lines and entries are left out unless `?fertige=true`.
+`status`: `kein_plan` (no plan yet), `bereit` (ready), `in_arbeit` (in progress), `veraltet` (outdated), `fertig` (finished), `sammel` (material is cut in combined plan `sammelplan_id`) or `verplant` (everything open is in cut jobs or other plans). With `verplant`, `auftraege` names the cut jobs (`projekt_id`, `name`) holding the open parts. `auch_in` lists other projects with open parts in this material as long as there is no combined plan (the "cut together?" suggestion → `POST /api/sammel`). Finished lines and entries are left out unless `?fertige=true`.
 
 ## Stock commands
 
