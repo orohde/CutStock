@@ -652,8 +652,8 @@ TRANSLATIONS = {
         "de": "Version:", "en": "Version:", "fr": "Version :", "it": "Versione:",
     },
     "set.website": {
-        "de": "Projektseite (WorldGate)", "en": "Project page (WorldGate)",
-        "fr": "Page du projet (WorldGate)", "it": "Pagina del progetto (WorldGate)",
+        "de": "Projektseite (cutstock.app)", "en": "Project page (cutstock.app)",
+        "fr": "Page du projet (cutstock.app)", "it": "Pagina del progetto (cutstock.app)",
     },
     "set.github": {
         "de": "Quellcode auf GitHub", "en": "Source code on GitHub",
