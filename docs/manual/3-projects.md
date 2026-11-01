@@ -23,7 +23,7 @@ Every part has a label, type, material, dimensions, quantity (per copy) and grai
 In the "Edit part" dialog the **shelf stock** can be corrected by hand ("On the shelf"),
 e.g. after a stocktaking.
 
-Parts whose material is cut in a combined plan are **grey** and show "→ <combined plan>";
+Parts whose material is cut in a combined plan are **grey** and show "→" with the name of the combined plan;
 clicking it selects the combined plan. They can still be edited – a combined plan that has
 already been calculated is then marked as outdated.
 
@@ -37,7 +37,7 @@ saves whole bars or panels. There is at most one combined plan per material. The
 
 - **New**: choose the material, then tick the projects with open parts in this material. If the
   material already has a combined plan, that one is opened. It is named
-  "Sammelplan <material>".
+  "Sammelplan" plus the material name, e.g. "Sammelplan Beech batten 20x40".
 - **Edit**: rename.
 - **When selected**, the right box shows the members with checkboxes (change them there) and
   below their parts in this material, grouped by project and read-only. Project names link to

@@ -24,7 +24,7 @@ Im Dialog „Teil bearbeiten“ lässt sich der **Regal-Vorrat** von Hand korrig
 („Im Regal“), etwa nach einer Inventur.
 
 Teile, deren Material in einem Sammelplan gesägt wird, sind **grau** und tragen den Hinweis
-„→ <Sammelplan>“; ein Klick darauf wählt den Sammelplan aus. Bearbeiten lassen sie sich trotzdem –
+„→“ mit dem Namen des Sammelplans; ein Klick darauf wählt den Sammelplan aus. Bearbeiten lassen sie sich trotzdem –
 ein schon berechneter Sammelplan gilt danach als veraltet.
 
 ## Sammelpläne
@@ -37,7 +37,7 @@ Kasten „Sammelpläne“ tragen ein 🔗 und das Etikett „Sammelplan“.
 
 - **Neu**: Material wählen, dann die Projekte mit offenen Teilen in diesem Material ankreuzen.
   Hat das Material schon einen Sammelplan, wird dieser geöffnet. Der Name lautet
-  „Sammelplan <Material>“.
+  „Sammelplan“ plus Materialname, z. B. „Sammelplan Buchenleiste 20x40“.
 - **Bearbeiten**: umbenennen.
 - **Ausgewählt** zeigt der rechte Kasten die Mitglieder mit Häkchen (dort ändern) und darunter
   ihre Teile in diesem Material, nach Projekt gruppiert und nur zur Ansicht. Projektnamen sind
