@@ -47,6 +47,8 @@ checkbox. A checkbox on a material or size selects every piece below it.
 - **Start at field** (A4 sheets only): on a partly used sheet, printing starts at the given field
   (1 = top left, then row by row).
 - The button shows the count, e.g. **Print 5**. Printed pieces then count as labelled.
+- The format (A4 sheet, roll for label printers, also very small labels) is set under
+  [Settings → Labels & printer](6-settings.md#label-formats).
 
 A single label, e.g. to replace one that fell off, is printed with **Print label** in the piece's
 dialog, which also shows when a label was last printed. Pieces that were already in stock before

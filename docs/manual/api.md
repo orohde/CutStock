@@ -99,6 +99,8 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | **Export** | | |
 | POST | `/api/pdf` | Generate PDF cut plan |
 | POST | `/api/labels` | Generate label PDF from ready-made texts |
+| GET | `/api/labels/formats` | All label formats (group, size, product, labels per sheet) |
+| GET | `/api/labels/preview?format=` | Sample label: size and text positions as in the PDF |
 | POST | `/api/labels/pieces` | Labels for stock pieces (select by code, location, material, filters) |
 | **System** | | |
 | GET | `/api/version` | App version and links |

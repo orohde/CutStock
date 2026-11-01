@@ -95,6 +95,9 @@ const applyTranslations = () => {
         const key = el.getAttribute('data-i18n');
         el.textContent = t(key);
     });
+    document.querySelectorAll('[data-i18n-aria-label]').forEach(el => {
+        el.setAttribute('aria-label', t(el.getAttribute('data-i18n-aria-label')));
+    });
     document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
         el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
     });
@@ -257,6 +260,8 @@ const Api = {
     restartProject: (projectId) => fetchJSON(`/api/projects/${projectId}/restart`, 'POST'),
     discardPlan: (planId) => fetchJSON(`/api/plans/${planId}`, 'DELETE'),
     getSammel: (materialId) => fetchJSON(`/api/sammel/${materialId}`),
+    getLabelFormats: () => fetchJSON('/api/labels/formats'),
+    getLabelPreview: (fmt) => fetchJSON(`/api/labels/preview?format=${encodeURIComponent(fmt)}`),
     getWorklist: (fertige) => fetchJSON(`/api/worklist${fertige ? '?fertige=true' : ''}`),
     createSammel: (data) => fetchJSON('/api/sammel', 'POST', data),
     setSammelMembers: (material, projekte) =>
@@ -675,8 +680,6 @@ function openPieceDialog(piece, onChange = renderStock) {
 // Etiketten-Auswahl (Lager- und Material-Reiter): Material → Maß → Stücke
 // ---------------------------------------------------------------------------
 
-const LABEL_SHEET_FIELDS = { a4_3x8: 24, a4_3x7: 21 };
-
 // gruppen: [{name, kuerzel, zeilen: [{laenge, breite, ist_rest, stuecke: [piece]}]}]
 function openLabelDialog(gruppen, onDone, dateiname = '') {
     const alle = gruppen.flatMap(g => g.zeilen.flatMap(z => z.stuecke));
@@ -684,7 +687,8 @@ function openLabelDialog(gruppen, onDone, dateiname = '') {
     const ungedruckt = alle.filter(p => !p.etikett_gedruckt);
     // Sind neue (noch nie beschriftete) Stücke da, sind nur diese vorgewählt
     const auswahl = new Set((ungedruckt.length ? ungedruckt : alle).map(p => p.id));
-    const felder = LABEL_SHEET_FIELDS[State.settings.label_format || 'a4_3x8'] || 0;
+    const felder = (labelFormatsCache || []).find(
+        f => f.key === (State.settings.label_format || 'a4_3x8'))?.je_bogen || 0;
     let startfeld = 1;
 
     openModal(t('lbl.title'), [], {}, async () => {
@@ -2105,13 +2109,90 @@ async function runOptimize() {
 // ---------------------------------------------------------------------------
 
 // Verfügbare Etikettenformate (Auswahltexte kommen aus der i18n)
-const LABEL_FORMATS = [
-    { value: 'a4_3x8', key: 'labels.fmt_a4_3x8' },
-    { value: 'a4_3x7', key: 'labels.fmt_a4_3x7' },
-    { value: 'roll_89x36', key: 'labels.fmt_roll_89x36' },
-    { value: 'roll_62x29', key: 'labels.fmt_roll_62x29' },
-    { value: 'custom', key: 'labels.fmt_custom' },
-];
+// Etikettenformate kommen vom Server (GET /api/labels/formats), einmal geladen
+let labelFormatsCache = null;
+async function labelFormats() {
+    if (!labelFormatsCache) {
+        try { labelFormatsCache = await Api.getLabelFormats(); } catch { return []; }
+    }
+    return labelFormatsCache;
+}
+
+const LABEL_GROUPS = ['bogen', 'bogen_klein', 'rolle', 'rolle_klein', 'endlos'];
+
+function labelFormatText(f) {
+    const loc = State.settings.language || undefined;
+    const n = v => v.toLocaleString(loc, { maximumFractionDigits: 1 });
+    const mass = f.endlos ? t('labels.endless', { h: n(f.hoehe) }) : `${n(f.breite)} × ${n(f.hoehe)} mm`;
+    const bogen = f.je_bogen ? ` · ${t('labels.per_sheet', { n: f.je_bogen })}` : '';
+    return `${mass} – ${f.ware}${bogen}`;
+}
+
+async function renderLabelFormatSelect() {
+    const fmtSel = document.getElementById('settings-label-format');
+    if (!fmtSel) return;
+    const formate = await labelFormats();
+    fmtSel.innerHTML = LABEL_GROUPS.map(g => {
+        const fs = formate.filter(f => f.gruppe === g);
+        return fs.length ? `<optgroup label="${escAttr(t(`labels.g_${g}`))}">${fs.map(f =>
+            `<option value="${f.key}">${escHtml(labelFormatText(f))}</option>`).join('')}</optgroup>` : '';
+    }).join('') + `<option value="custom">${escHtml(t('labels.fmt_custom'))}</option>`;
+    fmtSel.value = State.settings.label_format || 'a4_3x8';
+    if (!fmtSel.value) fmtSel.value = 'a4_3x8';
+    updateLabelCustomVisibility();
+    renderLabelPreview();
+}
+
+// Musteretikett maßstäblich: Größe und Textpositionen wie im PDF (GET /api/labels/preview)
+async function renderLabelPreview() {
+    const box = document.getElementById('label-preview');
+    if (!box) return;
+    let p;
+    try { p = await Api.getLabelPreview(State.settings.label_format || 'a4_3x8'); } catch { return; }
+    // Höchstens 320 × 160 px, kleine Etiketten groß genug zum Erkennen
+    const pxMm = Math.min(320 / p.breite, 160 / p.hoehe, 8);
+    const ptMm = 25.4 / 72;
+    box.style.width = `${p.breite * pxMm}px`;
+    box.style.height = `${p.hoehe * pxMm}px`;
+    box.innerHTML = p.elemente.map(e => {
+        const size = e.groesse * ptMm * pxMm;
+        const top = (e.y - e.groesse * ptMm * 0.78) * pxMm;
+        const pos = e.rechts ? `right:${(p.breite - e.x) * pxMm}px` : `left:${e.x * pxMm}px`;
+        return `<span style="${pos};top:${top}px;font-size:${size}px;font-weight:${e.fett ? 700 : 400};color:${e.grau ? '#555' : '#000'}">${escHtml(e.text)}</span>`;
+    }).join('');
+    const loc = State.settings.language || undefined;
+    const n = v => v.toLocaleString(loc, { maximumFractionDigits: 1 });
+    const fmt = (await labelFormats()).find(f => f.key === p.format);
+    document.getElementById('label-preview-info').textContent = t('labels.preview_info', {
+        mass: `${n(p.breite)} × ${n(p.hoehe)} mm`,
+    }) + (fmt?.endlos ? ' ' + t('labels.endless_hint') : '');
+}
+
+// Gruppen der Einstellungen: immer nur eine sichtbar (gemerkt im Browser)
+function showSettingsGroup(name) {
+    const groups = [...document.querySelectorAll('#tab-settings .set-group')];
+    if (!groups.some(g => g.dataset.group === name)) name = 'allgemein';
+    groups.forEach(g => g.classList.toggle('active', g.dataset.group === name));
+    document.querySelectorAll('#tab-settings .set-nav-item').forEach(b => {
+        const on = b.dataset.group === name;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-current', on ? 'page' : 'false');
+    });
+    storageSet('localStorage', 'cutstock.settings.group', name);
+}
+
+function setupSettingsNav() {
+    document.querySelectorAll('#tab-settings .set-nav-item').forEach(b =>
+        b.addEventListener('click', () => showSettingsGroup(b.dataset.group)));
+    showSettingsGroup(storageGet('localStorage', 'cutstock.settings.group') || 'allgemein');
+}
+
+// Abhängige Einstellung ausgrauen statt ausblenden (nichts verschiebt sich)
+function setRowEnabled(row, on) {
+    if (!row) return;
+    row.classList.toggle('is-disabled', !on);
+    row.querySelectorAll('input, select, button').forEach(el => { el.disabled = !on; });
+}
 
 function renderSettings() {
     const langSel = document.getElementById('settings-lang');
@@ -2122,13 +2203,7 @@ function renderSettings() {
     if (unitSel) unitSel.value = State.settings.unit;
     if (themeSel) themeSel.value = State.settings.theme;
 
-    const fmtSel = document.getElementById('settings-label-format');
-    if (fmtSel) {
-        fmtSel.innerHTML = LABEL_FORMATS.map(f =>
-            `<option value="${f.value}">${escHtml(t(f.key))}</option>`).join('');
-        fmtSel.value = State.settings.label_format || 'a4_3x8';
-        if (!fmtSel.value) fmtSel.value = 'a4_3x8';
-    }
+    renderLabelFormatSelect();
     const lockInp = document.getElementById('settings-nr-lock');
     if (lockInp) lockInp.value = State.settings.nr_lock_days ?? 1;
     const resChk = document.getElementById('settings-reservation');
@@ -2260,23 +2335,18 @@ async function removeLicense() {
 
 // Breite/Höhe-Felder nur beim benutzerdefinierten Etikettenformat zeigen
 function updateWasteMinVisibility() {
-    const grp = document.getElementById('settings-waste-min-group');
-    if (grp) grp.style.display = State.settings.waste_keep ? '' : 'none';
+    setRowEnabled(document.getElementById('settings-waste-min-group'), !!State.settings.waste_keep);
 }
 
 function updateLabelCustomVisibility() {
     const isCustom = document.getElementById('settings-label-format')?.value === 'custom';
-    document.querySelectorAll('.label-custom-field').forEach(el => {
-        el.style.display = isCustom ? '' : 'none';
-    });
+    document.querySelectorAll('.label-custom-field').forEach(el => setRowEnabled(el, isCustom));
 }
 
-// Port/Key-Felder nur zeigen wenn API aktiviert
+// Port/Key nur bei eingeschalteter API bearbeitbar
 function updateApiDetailVisibility() {
-    const on = document.getElementById('settings-api-enabled')?.checked;
-    document.querySelectorAll('.api-detail-field, .api-hint').forEach(el => {
-        el.style.display = on ? '' : 'none';
-    });
+    const on = !!document.getElementById('settings-api-enabled')?.checked;
+    document.querySelectorAll('.api-detail-field').forEach(el => setRowEnabled(el, on));
 }
 
 // Versionsstrings JJJJ.MM.NN numerisch vergleichen (-1/0/1)
@@ -3156,6 +3226,7 @@ function printPartLabels() {
                 line2: [herkunft || (State.optMode === 'material' ? '' : projName), matName]
                     .filter(Boolean).join(' · '),
                 id_text: `P${i + 1}`,
+                kurz: titel,
             });
         });
     });
@@ -5224,6 +5295,7 @@ function setupWorklistSplitter() {
 
 function initEvents() {
     setupSplitters();
+    setupSettingsNav();
     setupWorklistSplitter();
 
     // ----- Quit (Desktop only) -----
@@ -5599,6 +5671,7 @@ function initEvents() {
         State.settings.label_format = e.target.value;
         updateLabelCustomVisibility();
         try { await Api.updateSettings({ label_format: e.target.value }); } catch { /* non-critical */ }
+        renderLabelPreview();
     });
     ['settings-label-w', 'settings-label-h'].forEach(id => {
         document.getElementById(id)?.addEventListener('change', async (e) => {
@@ -5606,6 +5679,7 @@ function initEvents() {
             const key = id.endsWith('-w') ? 'label_custom_w' : 'label_custom_h';
             State.settings[key] = v;
             try { await Api.updateSettings({ [key]: v }); } catch { /* non-critical */ }
+            renderLabelPreview();
         });
     });
 

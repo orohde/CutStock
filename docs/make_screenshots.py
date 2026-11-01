@@ -449,12 +449,16 @@ def shoot(ids: dict):
         page.mouse.move(1270, 850)
         page.screenshot(path=shot("teile"))
 
-        # 8) Einstellungen (ganze Seite inkl. Etiketten + Tastenkürzel)
+        # 8) Einstellungen: Gruppe „Etiketten & Drucker“ mit kleinem Rollenformat und Vorschau
+        page.set_viewport_size({"width": 1280, "height": 560})
         page.click('.tab-btn[data-tab="settings"]')
-        page.wait_for_selector("#settings-label-format")
+        page.click('.set-nav-item[data-group="etiketten"]')
+        page.wait_for_selector("#settings-label-format option[value='roll_54x17']", state="attached")
+        page.select_option("#settings-label-format", "roll_54x17")
+        page.wait_for_selector("#label-preview span")
         page.evaluate("document.activeElement && document.activeElement.blur()")
         page.wait_for_timeout(400)
-        page.screenshot(path=shot("einstellungen"), full_page=True)
+        page.screenshot(path=shot("einstellungen"))
 
         browser.close()
 

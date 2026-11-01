@@ -1538,3 +1538,49 @@ class TestEtikettenStartfeld:
         assert seiten(tmp_path / "a.pdf") == 2   # Felder 23, 24 | 1
         export_labels(lab, tmp_path / "b.pdf", start=1)
         assert seiten(tmp_path / "b.pdf") == 1
+
+
+class TestEtikettenFormate:
+    """Mehr Formate, kleine Etiketten mit eigenem Layout, Vorschau-API."""
+
+    LAB = {"title": "Alu Profil 40x40", "line1": "1200 mm", "line2": "Regal 3",
+           "id_text": "AP40-07"}
+
+    def test_jedes_format_erzeugt_ein_pdf(self, tmp_path):
+        from core.labels import export_labels, formats
+        for f in formats():
+            pfad = tmp_path / f"{f['key']}.pdf"
+            export_labels([self.LAB] * 3, pfad, fmt=f["key"])
+            assert pfad.read_bytes().startswith(b"%PDF"), f["key"]
+
+    def test_code_und_mass_werden_nie_abgeschnitten(self):
+        from reportlab.lib.units import mm
+        from core.labels import ROLL_FORMATS, SHEET_FORMATS, layout
+        groessen = list(ROLL_FORMATS.values()) + [
+            (s["label_w"], s["label_h"]) for s in SHEET_FORMATS.values()]
+        for w, h in groessen:
+            texte = " ".join(i["text"] for i in layout(self.LAB, w * mm, h * mm))
+            assert "AP40-07" in texte and "1200 mm" in texte, (w, h, texte)
+
+    def test_kleines_etikett_laesst_zeilen_weg_statt_zu_quetschen(self):
+        from reportlab.lib.units import mm
+        from core.labels import MIN_FONT, layout
+        items = layout(self.LAB, 25.4 * mm, 10 * mm)
+        assert len(items) <= 2
+        assert all(i["size"] >= MIN_FONT for i in items)
+
+    def test_endlos_laenge_nach_inhalt(self):
+        from core.labels import label_size
+        kurz, _ = label_size("endless_12", {"title": "A", "line1": "10 mm"})
+        lang, h = label_size("endless_12", {"title": "Sehr langer Teilename für die Leiste",
+                                            "line1": "1200 mm"})
+        assert h == 12 and lang > kurz
+
+    def test_api_formate_und_vorschau(self, client):
+        formate = client.get("/api/labels/formats").json()
+        keys = {f["key"] for f in formate}
+        assert {"a4_3x8", "roll_62x29", "roll_54x17", "a4_7x27", "endless_12"} <= keys
+        assert next(f for f in formate if f["key"] == "a4_5x13")["je_bogen"] == 65
+        v = client.get("/api/labels/preview", params={"format": "roll_23x23"}).json()
+        assert (v["breite"], v["hoehe"]) == (23, 23)
+        assert v["elemente"][0]["text"] == "AP40-07" and v["elemente"][0]["fett"]

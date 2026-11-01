@@ -99,6 +99,8 @@ Anfragen von der eigenen Web-Oberfläche (Same-Origin) und von localhost sind im
 | **Export** | | |
 | POST | `/api/pdf` | PDF-Schnittplan erzeugen |
 | POST | `/api/labels` | Etiketten-PDF aus fertigen Texten erzeugen |
+| GET | `/api/labels/formats` | Alle Etikettenformate (Gruppe, Maße, Ware, Etiketten je Bogen) |
+| GET | `/api/labels/preview?format=` | Musteretikett: Größe und Textpositionen wie im PDF |
 | POST | `/api/labels/pieces` | Etiketten für Lagerstücke (Auswahl per Code, Lagerort, Material, Filter) |
 | **System** | | |
 | GET | `/api/version` | App-Version und Links |

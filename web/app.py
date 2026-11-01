@@ -611,6 +611,7 @@ class LabelIn(BaseModel):
     line1: str = ""
     line2: str = ""
     id_text: str = ""
+    kurz: str = ""      # Kurzname für sehr kleine Etiketten (leer = id_text bzw. title)
 
 
 class LabelsRequest(BaseModel):
@@ -3440,6 +3441,60 @@ def _mass_text(laenge: float, breite: float, unit: str) -> str:
     return f"{zahl(laenge)} × {zahl(breite)} {einheit}" if breite > 0 else f"{zahl(laenge)} {einheit}"
 
 
+class LabelFormatOut(BaseModel):
+    key: str
+    gruppe: str          # bogen | bogen_klein | rolle | rolle_klein | endlos
+    breite: float        # mm (0 bei Endlos: Länge ergibt sich aus dem Inhalt)
+    hoehe: float         # mm
+    ware: str            # z. B. "Brother DK-11204", "Avery L7651"
+    je_bogen: int = 0    # Etiketten je A4-Bogen, 0 = Rolle
+
+
+class LabelPreviewItem(BaseModel):
+    text: str
+    fett: bool
+    groesse: float       # Schriftgröße in pt
+    x: float             # mm von links (bei rechts=True: rechte Kante)
+    y: float             # mm von oben bis zur Grundlinie
+    grau: bool
+    rechts: bool
+
+
+class LabelPreviewOut(BaseModel):
+    format: str
+    breite: float
+    hoehe: float
+    elemente: list[LabelPreviewItem]
+
+
+@app.get("/api/labels/formats", response_model=list[LabelFormatOut])
+def label_formats():
+    """Alle Etikettenformate (Bögen, Rollen, Endlos); dazu kommt "custom" (eigenes Maß)."""
+    from core.labels import formats
+    return [LabelFormatOut(**{k: f[k] for k in LabelFormatOut.model_fields}) for f in formats()]
+
+
+@app.get("/api/labels/preview", response_model=LabelPreviewOut)
+def label_preview(format: str = "", title: str = "Alu Profil 40x40", line1: str = "1200 mm",
+                  line2: str = "Regal 3", id_text: str = "AP40-07"):
+    """Musteretikett im eingestellten (oder angegebenen) Format: Größe und Textpositionen
+    genau wie im PDF – für die Vorschau in den Einstellungen."""
+    from reportlab.lib.units import mm as MM
+    from core.labels import ENDLESS_FORMATS, _endlos_gross, label_size, layout
+    cfg = _get_settings_dict()
+    fmt = format or str(cfg.get("label_format") or "a4_3x8")
+    lab = {"title": title, "line1": line1, "line2": line2, "id_text": id_text}
+    w, h = label_size(fmt, lab, float(cfg.get("label_custom_w") or 0),
+                      float(cfg.get("label_custom_h") or 0))
+    gross = _endlos_gross(h * MM) if fmt in ENDLESS_FORMATS else None
+    elemente = [LabelPreviewItem(text=i["text"], fett=i["font"].endswith("Bold"),
+                                 groesse=round(i["size"], 2), x=round(i["x"] / MM, 2),
+                                 y=round(h - i["y"] / MM, 2), grau=i["color"] != "#000000",
+                                 rechts=i["rechts"])
+                for i in layout(lab, w * MM, h * MM, gross)]
+    return LabelPreviewOut(format=fmt, breite=round(w, 2), hoehe=round(h, 2), elemente=elemente)
+
+
 @app.post("/api/labels/pieces")
 def piece_labels(req: PieceLabelsIn):
     """Etiketten für Lagerstücke: Material, Maß, Lagerort, Code. Druckt nur die
@@ -3885,6 +3940,108 @@ WEB_EXTRA_TRANSLATIONS = {
         "fr": "Supprimer l’ordre de coupe « {name} » ? Ce qui est déjà coupé reste compté dans les projets.",
         "it": "Eliminare l’ordine di taglio «{name}»? Quanto già tagliato resta contato nei progetti.",
     },
+    # Reiter Einstellungen: Gruppen und Erklärungen
+    "set.g_general": {"de": "Allgemein", "en": "General", "fr": "Général", "it": "Generale"},
+    "set.g_saw": {"de": "Sägen", "en": "Sawing", "fr": "Sciage", "it": "Taglio"},
+    "set.g_stock": {"de": "Lager", "en": "Stock", "fr": "Stock", "it": "Magazzino"},
+    "set.g_labels": {"de": "Etiketten & Drucker", "en": "Labels & printer", "fr": "Étiquettes et imprimante", "it": "Etichette e stampante"},
+    "set.g_data": {"de": "Daten", "en": "Data", "fr": "Données", "it": "Dati"},
+    "set.g_connect": {"de": "Verbindungen", "en": "Connections", "fr": "Connexions", "it": "Connessioni"},
+    "set.g_keys": {"de": "Tastenkürzel", "en": "Keyboard shortcuts", "fr": "Raccourcis clavier", "it": "Scorciatoie"},
+    "set.g_about": {"de": "Über & Lizenz", "en": "About & license", "fr": "À propos et licence", "it": "Info e licenza"},
+    "set.h_language": {
+        "de": "Sprache der Oberfläche, der PDFs und Etiketten.",
+        "en": "Language of the interface, PDFs and labels.",
+        "fr": "Langue de l’interface, des PDF et des étiquettes.",
+        "it": "Lingua dell’interfaccia, dei PDF e delle etichette.",
+    },
+    "set.h_unit": {
+        "de": "Wie Längen angezeigt und eingegeben werden. Gespeichert wird immer in Millimetern.",
+        "en": "How lengths are shown and entered. Everything is stored in millimetres.",
+        "fr": "Comment les longueurs sont affichées et saisies. Tout est enregistré en millimètres.",
+        "it": "Come vengono mostrate e inserite le lunghezze. Tutto viene salvato in millimetri.",
+    },
+    "set.h_theme": {
+        "de": "Hell, dunkel oder wie im Betriebssystem eingestellt.",
+        "en": "Light, dark or as set in the operating system.",
+        "fr": "Clair, sombre ou selon le système d’exploitation.",
+        "it": "Chiaro, scuro o come impostato nel sistema operativo.",
+    },
+    "set.h_blades": {
+        "de": "Die Schnittbreite (Fuge) wird bei jedem Schnitt eingerechnet. Welches Sägeblatt ein Material standardmäßig nimmt, steht am Material; die Optimierung merkt sich das zuletzt verwendete.",
+        "en": "The kerf is added for every cut. Which saw blade a material uses by default is set on the material; the optimization remembers the last one used.",
+        "fr": "La largeur de coupe est comptée à chaque coupe. La lame par défaut d’un matériau se règle sur le matériau ; l’optimisation retient la dernière utilisée.",
+        "it": "La larghezza di taglio viene considerata a ogni taglio. La lama predefinita di un materiale si imposta sul materiale; l’ottimizzazione ricorda l’ultima usata.",
+    },
+    "set.h_reservation": {
+        "de": "Stücke in einem gespeicherten Plan werden für andere Projekte nicht verplant, bis sie gesägt sind oder der Plan verworfen wird.",
+        "en": "Pieces in a saved plan are not planned for other projects until they are cut or the plan is discarded.",
+        "fr": "Les pièces d’un plan enregistré ne sont pas utilisées pour d’autres projets tant qu’elles ne sont pas coupées ou que le plan n’est pas abandonné.",
+        "it": "I pezzi di un piano salvato non vengono pianificati per altri progetti finché non sono tagliati o il piano viene scartato.",
+    },
+    "set.h_waste_min": {
+        "de": "Noch kleinere Abschnitte werden weggeworfen. Nur wirksam, wenn die Abfallkiste eingeschaltet ist.",
+        "en": "Even smaller offcuts are thrown away. Only applies when the offcut bin is switched on.",
+        "fr": "Les chutes encore plus petites sont jetées. Uniquement si le bac à chutes est activé.",
+        "it": "I ritagli ancora più piccoli vengono buttati. Vale solo se la cassa dei ritagli è attiva.",
+    },
+    "set.h_label_format": {
+        "de": "A4-Bögen druckt jeder Drucker; angebrochene Bögen nutzt das „Startfeld“ im Etiketten-Dialog. Rollen und Endlos-Band sind für Etikettendrucker (z. B. Brother QL, Dymo): ein Etikett je Seite, gedruckt über den Druckdialog des Treibers. Kleine Etiketten zeigen nur, was lesbar passt – zuerst Code bzw. Teil, dann das Maß.",
+        "en": "Any printer prints A4 sheets; part-used sheets use the “start field” in the label dialog. Rolls and continuous tape are for label printers (e.g. Brother QL, Dymo): one label per page, printed via the driver’s print dialog. Small labels show only what fits legibly – code or part first, then the size.",
+        "fr": "Toute imprimante imprime les planches A4 ; les planches entamées utilisent le « champ de départ » du dialogue d’étiquettes. Rouleaux et ruban continu sont pour les imprimantes d’étiquettes (p. ex. Brother QL, Dymo) : une étiquette par page, via la boîte d’impression du pilote. Les petites étiquettes n’affichent que ce qui reste lisible – d’abord le code ou la pièce, puis la cote.",
+        "it": "Qualsiasi stampante stampa fogli A4; per i fogli iniziati c’è il «campo iniziale» nel dialogo etichette. Rotoli e nastro continuo sono per stampanti di etichette (es. Brother QL, Dymo): un’etichetta per pagina, stampata dal dialogo del driver. Le etichette piccole mostrano solo ciò che resta leggibile – prima il codice o il pezzo, poi la misura.",
+    },
+    "set.h_label_custom": {
+        "de": "Nur bei „Benutzerdefiniert“: Breite × Höhe eines Etiketts, mindestens 15 × 10 mm.",
+        "en": "Only with “Custom”: width × height of one label, at least 15 × 10 mm.",
+        "fr": "Seulement avec « Personnalisé » : largeur × hauteur d’une étiquette, au moins 15 × 10 mm.",
+        "it": "Solo con «Personalizzato»: larghezza × altezza di un’etichetta, almeno 15 × 10 mm.",
+    },
+    "set.h_backup": {
+        "de": "Ein Backup ist eine ZIP-Datei mit allen Daten (Material, Lager, Projekte, Pläne, Einstellungen). Wiederherstellen ersetzt alle aktuellen Daten durch die aus dem Backup.",
+        "en": "A backup is a ZIP file with all data (material, stock, projects, plans, settings). Restoring replaces all current data with the backup.",
+        "fr": "Une sauvegarde est un fichier ZIP avec toutes les données (matériaux, stock, projets, plans, réglages). La restauration remplace toutes les données actuelles.",
+        "it": "Un backup è un file ZIP con tutti i dati (materiali, magazzino, progetti, piani, impostazioni). Il ripristino sostituisce tutti i dati attuali.",
+    },
+    "set.h_api_enabled": {
+        "de": "Erlaubt anderen Programmen (z. B. Skripten oder Home Assistant), CutStock über das Netzwerk zu steuern.",
+        "en": "Lets other programs (e.g. scripts or Home Assistant) control CutStock over the network.",
+        "fr": "Permet à d’autres programmes (scripts, Home Assistant…) de piloter CutStock via le réseau.",
+        "it": "Permette ad altri programmi (script, Home Assistant…) di controllare CutStock via rete.",
+    },
+    "set.h_api_port": {
+        "de": "Port der Desktop-App für die API. Wird nach einem Neustart wirksam.",
+        "en": "Port of the desktop app for the API. Takes effect after a restart.",
+        "fr": "Port de l’application de bureau pour l’API. Effectif après redémarrage.",
+        "it": "Porta dell’app desktop per l’API. Attiva dopo un riavvio.",
+    },
+    "set.h_api_key": {
+        "de": "Mit Key müssen andere Programme „Authorization: Bearer“ und den Key mitsenden. Ohne Key ist die API für jeden erreichbar, der CutStock im Netzwerk erreicht.",
+        "en": "With a key, other programs must send “Authorization: Bearer” plus the key. Without a key, anyone who can reach CutStock on the network can use the API.",
+        "fr": "Avec une clé, les autres programmes doivent envoyer « Authorization: Bearer » et la clé. Sans clé, l’API est accessible à quiconque atteint CutStock sur le réseau.",
+        "it": "Con una chiave, gli altri programmi devono inviare «Authorization: Bearer» e la chiave. Senza chiave, l’API è raggiungibile da chiunque raggiunga CutStock in rete.",
+    },
+    "labels.custom_size": {"de": "Eigenes Maß (mm):", "en": "Custom size (mm):", "fr": "Taille personnalisée (mm) :", "it": "Misura personalizzata (mm):"},
+    "labels.preview": {"de": "Vorschau:", "en": "Preview:", "fr": "Aperçu :", "it": "Anteprima:"},
+    "labels.preview_info": {
+        "de": "Musteretikett {mass}, so wie es gedruckt wird.",
+        "en": "Sample label {mass}, as it will be printed.",
+        "fr": "Étiquette exemple {mass}, telle qu’imprimée.",
+        "it": "Etichetta di esempio {mass}, come verrà stampata.",
+    },
+    "labels.endless_hint": {
+        "de": "Bei Endlos-Band richtet sich die Länge nach dem Inhalt.",
+        "en": "With continuous tape the length follows the content.",
+        "fr": "Avec le ruban continu, la longueur suit le contenu.",
+        "it": "Con il nastro continuo la lunghezza segue il contenuto.",
+    },
+    "labels.endless": {"de": "{h} mm endlos", "en": "{h} mm continuous", "fr": "{h} mm continu", "it": "{h} mm continuo"},
+    "labels.per_sheet": {"de": "{n} je Bogen", "en": "{n} per sheet", "fr": "{n} par planche", "it": "{n} per foglio"},
+    "labels.g_bogen": {"de": "A4-Bögen", "en": "A4 sheets", "fr": "Planches A4", "it": "Fogli A4"},
+    "labels.g_bogen_klein": {"de": "A4-Bögen, kleine Etiketten", "en": "A4 sheets, small labels", "fr": "Planches A4, petites étiquettes", "it": "Fogli A4, etichette piccole"},
+    "labels.g_rolle": {"de": "Rollen (Etikettendrucker)", "en": "Rolls (label printer)", "fr": "Rouleaux (imprimante d’étiquettes)", "it": "Rotoli (stampante di etichette)"},
+    "labels.g_rolle_klein": {"de": "Rollen, kleine Etiketten", "en": "Rolls, small labels", "fr": "Rouleaux, petites étiquettes", "it": "Rotoli, etichette piccole"},
+    "labels.g_endlos": {"de": "Endlos-Band", "en": "Continuous tape", "fr": "Ruban continu", "it": "Nastro continuo"},
     # Reiter Optimierung: Arbeitsliste, Hauptaktion je Stand
     "mat.blade": {"de": "Sägeblatt", "en": "Saw blade", "fr": "Lame de scie", "it": "Lama"},
     "mat.blade_first": {"de": "– erstes Sägeblatt –", "en": "– first saw blade –", "fr": "– première lame –", "it": "– prima lama –"},

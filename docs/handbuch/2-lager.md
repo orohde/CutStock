@@ -48,6 +48,8 @@ Häkchen. Ein Häkchen am Material oder am Maß wählt alle Stücke darunter.
 - **Beginnen bei Feld** (nur bei A4-Bögen): Auf einem angebrochenen Bogen beginnt der Druck beim
   angegebenen Feld (1 = oben links, dann zeilenweise).
 - Der Knopf zeigt die Anzahl, z. B. **5 drucken**. Gedruckte Stücke gelten danach als beschriftet.
+- Das Format (A4-Bogen, Rolle für Etikettendrucker, auch sehr kleine Etiketten) stellt man unter
+  [Einstellungen → Etiketten & Drucker](6-einstellungen.md#etiketten-formate) ein.
 
 Ein einzelnes Etikett, z. B. als Ersatz für ein abgefallenes, druckt **Etikett drucken** im Dialog
 des Stücks; dort steht auch, wann zuletzt eines gedruckt wurde. Stücke, die vor dieser Funktion

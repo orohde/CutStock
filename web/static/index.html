@@ -350,102 +350,190 @@
     </section>
 
     <section id="tab-settings" class="tab-content">
-      <div class="panel settings-section">
-        <h3 class="fd-title fd-title--h5" data-i18n="set.appearance">Aussehen</h3>
-        <div class="form-group">
-          <label class="fd-form-label" for="settings-lang" data-i18n="set.language">Sprache:</label>
-          <select id="settings-lang" class="cs-select">
-            <option value="de">Deutsch</option>
-            <option value="en">English</option>
-            <option value="fr">Français</option>
-            <option value="it">Italiano</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="fd-form-label" for="settings-unit" data-i18n="set.unit">Masseinheit:</label>
-          <select id="settings-unit" class="cs-select">
-            <option value="mm" data-i18n="set.unit_mm">Millimeter (mm)</option>
-            <option value="cm" data-i18n="set.unit_cm">Zentimeter (cm)</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="fd-form-label" for="settings-theme" data-i18n="set.theme">Farbschema:</label>
-          <select id="settings-theme" class="cs-select">
-            <option value="system" data-i18n="set.theme_system">Auto (System)</option>
-            <option value="light" data-i18n="set.theme_light">Hell</option>
-            <option value="dark" data-i18n="set.theme_dark">Dunkel</option>
-          </select>
-        </div>
-      </div>
+      <div class="set-layout">
+        <nav class="panel set-nav" aria-label="Einstellungen" data-i18n-aria-label="tab.settings">
+          <button type="button" class="set-nav-item" data-group="allgemein" data-i18n="set.g_general">Allgemein</button>
+          <button type="button" class="set-nav-item" data-group="saegen" data-i18n="set.g_saw">Sägen</button>
+          <button type="button" class="set-nav-item" data-group="lager" data-i18n="set.g_stock">Lager</button>
+          <button type="button" class="set-nav-item" data-group="etiketten" data-i18n="set.g_labels">Etiketten &amp; Drucker</button>
+          <button type="button" class="set-nav-item" data-group="daten" data-i18n="set.g_data">Daten</button>
+          <button type="button" class="set-nav-item" data-group="verbindungen" data-i18n="set.g_connect">Verbindungen</button>
+          <button type="button" class="set-nav-item" data-group="tasten" data-i18n="set.g_keys">Tastenkürzel</button>
+          <button type="button" class="set-nav-item" data-group="ueber" data-i18n="set.g_about">Über &amp; Lizenz</button>
+        </nav>
+        <div class="set-main">
 
-      <div class="panel settings-section">
-        <h3 class="fd-title fd-title--h5" data-i18n="labels.button">Etiketten</h3>
-        <div class="form-group">
-          <label class="fd-form-label" for="settings-label-format" data-i18n="labels.format">Papierformat:</label>
-          <select id="settings-label-format" class="cs-select"></select>
-        </div>
-        <div class="form-group label-custom-field">
-          <label class="fd-form-label" for="settings-label-w" data-i18n="labels.custom_w">Etikett Breite (mm):</label>
-          <input type="number" id="settings-label-w" min="15" step="1">
-        </div>
-        <div class="form-group label-custom-field">
-          <label class="fd-form-label" for="settings-label-h" data-i18n="labels.custom_h">Etikett Höhe (mm):</label>
-          <input type="number" id="settings-label-h" min="10" step="1">
-        </div>
-      </div>
-
-      <div class="panel settings-section">
-        <h3 class="fd-title fd-title--h5" data-i18n="set.stock">Lager</h3>
-        <div class="form-group">
-          <label class="fd-form-label" for="settings-reservation" data-i18n="set.reservation">Gespeicherte Pläne reservieren ihr Material:</label>
-          <input type="checkbox" id="settings-reservation" class="cs-checkbox">
-        </div>
-        <div class="form-group">
-          <label class="fd-form-label" for="settings-nr-lock" data-i18n="set.nr_lock" title="" data-i18n-title="set.nr_lock_hint">Nummern-Sperrfrist (Tage, 0 = aus):</label>
-          <input type="number" id="settings-nr-lock" min="0" step="1" class="cs-input" style="width:100px">
-        </div>
-        <div class="form-group">
-          <label class="fd-form-label" for="settings-waste-keep" data-i18n="set.waste_keep" title="" data-i18n-title="set.waste_keep_hint">Abfallstücke in der Abfallkiste aufheben:</label>
-          <input type="checkbox" id="settings-waste-keep" class="cs-checkbox">
-        </div>
-        <div class="form-group" id="settings-waste-min-group">
-          <label class="fd-form-label" for="settings-waste-min" id="settings-waste-min-label">Abfall erst ab:</label>
-          <input type="number" id="settings-waste-min" min="0" step="any" class="cs-input" style="width:100px">
-        </div>
-      </div>
-
-      <div class="panel settings-section">
-        <h3 class="fd-title fd-title--h5" data-i18n="set.api">REST-API</h3>
-        <div class="form-group">
-          <label class="fd-form-label" for="settings-api-enabled" data-i18n="set.api_enabled">API aktivieren:</label>
-          <input type="checkbox" id="settings-api-enabled" class="cs-checkbox">
-        </div>
-        <div class="form-group api-detail-field">
-          <label class="fd-form-label" for="settings-api-port" data-i18n="set.api_port">Port:</label>
-          <input type="number" id="settings-api-port" min="1024" max="65535" step="1" value="8421" class="cs-input" style="width:100px">
-        </div>
-        <div class="form-group api-detail-field">
-          <label class="fd-form-label" for="settings-api-key" data-i18n="set.api_key">API-Key:</label>
-          <div style="display:flex;gap:8px;align-items:center">
-            <input type="text" id="settings-api-key" class="cs-input" style="flex:1;font-family:monospace" readonly>
-            <button id="btn-api-key-gen" class="fd-button" type="button" data-i18n="set.api_key_generate">Generieren</button>
-            <button id="btn-api-key-copy" class="fd-button" type="button" data-i18n="set.api_key_copy">Kopieren</button>
+        <div class="panel set-group" data-group="allgemein">
+          <h3 class="fd-title fd-title--h5" data-i18n="set.g_general">Allgemein</h3>
+          <div class="set-row">
+            <label class="fd-form-label" for="settings-lang" data-i18n="set.language">Sprache:</label>
+            <div class="set-field"><select id="settings-lang" class="cs-select">
+              <option value="de">Deutsch</option>
+              <option value="en">English</option>
+              <option value="fr">Français</option>
+              <option value="it">Italiano</option>
+            </select></div>
+            <p class="set-hint" data-i18n="set.h_language"></p>
+          </div>
+          <div class="set-row">
+            <label class="fd-form-label" for="settings-unit" data-i18n="set.unit">Masseinheit:</label>
+            <div class="set-field"><select id="settings-unit" class="cs-select">
+              <option value="mm" data-i18n="set.unit_mm">Millimeter (mm)</option>
+              <option value="cm" data-i18n="set.unit_cm">Zentimeter (cm)</option>
+            </select></div>
+            <p class="set-hint" data-i18n="set.h_unit"></p>
+          </div>
+          <div class="set-row">
+            <label class="fd-form-label" for="settings-theme" data-i18n="set.theme">Farbschema:</label>
+            <div class="set-field"><select id="settings-theme" class="cs-select">
+              <option value="system" data-i18n="set.theme_system">Auto (System)</option>
+              <option value="light" data-i18n="set.theme_light">Hell</option>
+              <option value="dark" data-i18n="set.theme_dark">Dunkel</option>
+            </select></div>
+            <p class="set-hint" data-i18n="set.h_theme"></p>
           </div>
         </div>
-        <p class="api-hint" data-i18n="set.api_hint">Änderungen am Port werden nach einem Neustart wirksam. Ohne API-Key ist die API für jeden erreichbar, der den Server erreicht. Mit Key müssen externe Programme „Authorization: Bearer &lt;Key&gt;“ mitsenden; die eigene Weboberfläche und Zugriffe vom selben Rechner brauchen ihn nicht.</p>
-      </div>
 
-      <div class="panel settings-section">
-        <h3 class="fd-title fd-title--h5" data-i18n="set.backup">Backup</h3>
-        <div class="toolbar">
-          <button id="btn-backup-create" class="fd-button fd-button--emphasized" type="button" data-i18n="set.backup_create">Backup erstellen</button>
-          <button id="btn-backup-restore" class="fd-button" type="button" data-i18n="set.backup_restore">Backup wiederherstellen</button>
-          <input id="backup-restore-file" type="file" accept="application/zip,.zip" style="display:none">
+        <div class="panel set-group" data-group="saegen">
+          <h3 class="fd-title fd-title--h5" data-i18n="blade.title">Sägeblätter</h3>
+          <p class="set-intro" data-i18n="set.h_blades"></p>
+        <div class="toolbar" style="margin-bottom: 8px;">
+          <button id="btn-blade-new" class="fd-button fd-button--emphasized" type="button" data-i18n="btn.new">Neu</button>
+          <button id="btn-blade-edit" class="fd-button" type="button" data-i18n="btn.edit">Bearbeiten</button>
+          <button id="btn-blade-del" class="fd-button fd-button--negative" type="button" data-i18n="btn.delete">Entfernen</button>
         </div>
-      </div>
+        <table id="blade-table" class="fd-table">
+          <thead class="fd-table__header">
+            <tr class="fd-table__row">
+              <th class="fd-table__cell" data-i18n="blade.name">Name</th>
+              <th class="fd-table__cell" data-i18n="blade.kerf">Schnittbreite</th>
+            </tr>
+          </thead>
+          <tbody class="fd-table__body"></tbody>
+        </table>
+        </div>
 
-      <div class="panel settings-section license-section">
-        <h3 class="fd-title fd-title--h5" data-i18n="lic.title">Lizenz</h3>
+        <div class="panel set-group" data-group="lager">
+          <h3 class="fd-title fd-title--h5" data-i18n="set.stock">Lager</h3>
+          <div class="set-row set-row--check">
+            <label class="fd-form-label" for="settings-reservation" data-i18n="set.reservation">Gespeicherte Pläne reservieren ihr Material:</label>
+            <div class="set-field"><input type="checkbox" id="settings-reservation" class="cs-checkbox"></div>
+            <p class="set-hint" data-i18n="set.h_reservation"></p>
+          </div>
+          <div class="set-row">
+            <label class="fd-form-label" for="settings-nr-lock" data-i18n="set.nr_lock">Nummern-Sperrfrist (Tage, 0 = aus):</label>
+            <div class="set-field"><input type="number" id="settings-nr-lock" min="0" step="1" class="cs-input set-num"></div>
+            <p class="set-hint" data-i18n="set.nr_lock_hint"></p>
+          </div>
+          <div class="set-row set-row--check">
+            <label class="fd-form-label" for="settings-waste-keep" data-i18n="set.waste_keep">Abfallstücke in der Abfallkiste aufheben:</label>
+            <div class="set-field"><input type="checkbox" id="settings-waste-keep" class="cs-checkbox"></div>
+            <p class="set-hint" data-i18n="set.waste_keep_hint"></p>
+          </div>
+          <div class="set-row set-dep" id="settings-waste-min-group">
+            <label class="fd-form-label" for="settings-waste-min" id="settings-waste-min-label">Abfall erst ab:</label>
+            <div class="set-field"><input type="number" id="settings-waste-min" min="0" step="any" class="cs-input set-num"></div>
+            <p class="set-hint" data-i18n="set.h_waste_min"></p>
+          </div>
+        </div>
+
+        <div class="panel set-group" data-group="etiketten">
+          <h3 class="fd-title fd-title--h5" data-i18n="set.g_labels">Etiketten &amp; Drucker</h3>
+          <div class="set-row">
+            <label class="fd-form-label" for="settings-label-format" data-i18n="labels.format">Papierformat:</label>
+            <div class="set-field"><select id="settings-label-format" class="cs-select set-wide"></select></div>
+            <p class="set-hint" data-i18n="set.h_label_format"></p>
+          </div>
+          <div class="set-row set-dep label-custom-field">
+            <span class="fd-form-label" data-i18n="labels.custom_size">Eigenes Maß (mm):</span>
+            <div class="set-field set-pair">
+              <input type="number" id="settings-label-w" min="15" step="1" class="cs-input set-num" aria-label="Breite" data-i18n-aria-label="labels.custom_w">
+              <span>×</span>
+              <input type="number" id="settings-label-h" min="10" step="1" class="cs-input set-num" aria-label="Höhe" data-i18n-aria-label="labels.custom_h">
+            </div>
+            <p class="set-hint" data-i18n="set.h_label_custom"></p>
+          </div>
+          <div class="set-row">
+            <span class="fd-form-label" data-i18n="labels.preview">Vorschau:</span>
+            <div class="set-field"><div id="label-preview" class="label-preview"></div></div>
+            <p class="set-hint" id="label-preview-info"></p>
+          </div>
+        </div>
+
+        <div class="panel set-group" data-group="daten">
+          <h3 class="fd-title fd-title--h5" data-i18n="set.backup">Backup</h3>
+          <p class="set-intro" data-i18n="set.h_backup"></p>
+          <div class="toolbar">
+            <button id="btn-backup-create" class="fd-button fd-button--emphasized" type="button" data-i18n="set.backup_create">Backup erstellen</button>
+            <button id="btn-backup-restore" class="fd-button" type="button" data-i18n="set.backup_restore">Backup wiederherstellen</button>
+            <input id="backup-restore-file" type="file" accept="application/zip,.zip" style="display:none">
+          </div>
+        </div>
+
+        <div class="panel set-group" data-group="verbindungen">
+          <h3 class="fd-title fd-title--h5" data-i18n="set.api">REST-API</h3>
+          <div class="set-row set-row--check">
+            <label class="fd-form-label" for="settings-api-enabled" data-i18n="set.api_enabled">API aktivieren:</label>
+            <div class="set-field"><input type="checkbox" id="settings-api-enabled" class="cs-checkbox"></div>
+            <p class="set-hint" data-i18n="set.h_api_enabled"></p>
+          </div>
+          <div class="set-row set-dep api-detail-field">
+            <label class="fd-form-label" for="settings-api-port" data-i18n="set.api_port">Port:</label>
+            <div class="set-field"><input type="number" id="settings-api-port" min="1024" max="65535" step="1" value="8421" class="cs-input set-num"></div>
+            <p class="set-hint" data-i18n="set.h_api_port"></p>
+          </div>
+          <div class="set-row set-dep api-detail-field">
+            <label class="fd-form-label" for="settings-api-key" data-i18n="set.api_key">API-Key:</label>
+            <div class="set-field"><div class="set-pair">
+              <input type="text" id="settings-api-key" class="cs-input set-key" readonly>
+              <button id="btn-api-key-gen" class="fd-button" type="button" data-i18n="set.api_key_generate">Generieren</button>
+              <button id="btn-api-key-copy" class="fd-button" type="button" data-i18n="set.api_key_copy">Kopieren</button>
+            </div></div>
+            <p class="set-hint" data-i18n="set.h_api_key"></p>
+          </div>
+        </div>
+
+        <div class="panel set-group" data-group="tasten">
+          <h3 class="fd-title fd-title--h5" data-i18n="hotkey.title">Tastenkürzel</h3>
+        <p class="hotkey-hint" data-i18n="hotkey.hint">Auf eine Taste klicken, um sie zu aendern.</p>
+        <table class="fd-table hotkey-table">
+          <thead class="fd-table__header">
+            <tr class="fd-table__row">
+              <th class="fd-table__cell" data-i18n="hotkey.key">Taste</th>
+              <th class="fd-table__cell" data-i18n="hotkey.action">Aktion</th>
+            </tr>
+          </thead>
+          <tbody class="fd-table__body">
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd>1</kbd> &ndash; <kbd>5</kbd></td><td class="fd-table__cell" data-i18n="hotkey.tabs">Tab wechseln</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd class="hotkey-edit" data-action="new">N</kbd></td><td class="fd-table__cell" data-i18n="hotkey.new">Neues Element (Material / Projekt / Bauteil / Saegeblatt)</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd class="hotkey-edit" data-action="edit">E</kbd></td><td class="fd-table__cell" data-i18n="hotkey.edit">Ausgewaehltes Element bearbeiten</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd class="hotkey-edit" data-action="delete">Entf</kbd></td><td class="fd-table__cell" data-i18n="hotkey.delete">Ausgewaehltes Element loeschen</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd class="hotkey-edit" data-action="stock">S</kbd></td><td class="fd-table__cell" data-i18n="hotkey.stock">Neuer Lagerbestand (Material-Tab)</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd class="hotkey-edit" data-action="optimize">R</kbd></td><td class="fd-table__cell" data-i18n="hotkey.optimize">Optimierung starten</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd>Enter</kbd></td><td class="fd-table__cell" data-i18n="hotkey.save">Dialog speichern</td></tr>
+            <tr class="fd-table__row"><td class="fd-table__cell"><kbd>Esc</kbd></td><td class="fd-table__cell" data-i18n="hotkey.close">Dialog schliessen</td></tr>
+          </tbody>
+        </table>
+        </div>
+
+        <div class="panel set-group" data-group="ueber">
+          <h3 class="fd-title fd-title--h5" data-i18n="set.g_about">Über &amp; Lizenz</h3>
+        <div class="form-group">
+          <label class="fd-form-label" data-i18n="set.version">Version:</label>
+          <span id="app-version" class="read-only">--</span>
+        </div>
+        <p class="license-note" data-i18n="set.license_note">PolyForm Noncommercial 1.0.0 — kostenlos für den privaten, nicht-kommerziellen Einsatz. Für den Einsatz im Betrieb ist eine kommerzielle Lizenz auf Anfrage erhältlich (Kontakt über die Projektseite).</p>
+        <div class="toolbar about-actions">
+          <a class="fd-button" href="https://cutstock.app/" target="_blank" rel="noopener">
+            <span data-i18n="set.website">Projektseite (WorldGate)</span><span class="ext-arrow" aria-hidden="true"> ↗</span>
+          </a>
+          <a class="fd-button" href="https://github.com/orohde/CutStock" target="_blank" rel="noopener">
+            <span data-i18n="set.github">Quellcode auf GitHub</span><span class="ext-arrow" aria-hidden="true"> ↗</span>
+          </a>
+          <button id="btn-check-update" class="fd-button fd-button--emphasized" type="button" data-i18n="set.check_update">Nach Updates suchen</button>
+        </div>
+      <div class="license-section set-sub">
+        <h4 class="fd-title fd-title--h6" data-i18n="lic.title">Lizenz</h4>
         <div id="license-info">
           <div class="form-group">
             <label class="fd-form-label" data-i18n="lic.type">Lizenztyp:</label>
@@ -474,64 +562,9 @@
           </div>
         </div>
       </div>
-
-      <div class="panel settings-section">
-        <h3 class="fd-title fd-title--h5" data-i18n="set.about">Über / Links</h3>
-        <div class="form-group">
-          <label class="fd-form-label" data-i18n="set.version">Version:</label>
-          <span id="app-version" class="read-only">--</span>
         </div>
-        <p class="license-note" data-i18n="set.license_note">PolyForm Noncommercial 1.0.0 — kostenlos für den privaten, nicht-kommerziellen Einsatz. Für den Einsatz im Betrieb ist eine kommerzielle Lizenz auf Anfrage erhältlich (Kontakt über die Projektseite).</p>
-        <div class="toolbar about-actions">
-          <a class="fd-button" href="https://cutstock.app/" target="_blank" rel="noopener">
-            <span data-i18n="set.website">Projektseite (WorldGate)</span><span class="ext-arrow" aria-hidden="true"> ↗</span>
-          </a>
-          <a class="fd-button" href="https://github.com/orohde/CutStock" target="_blank" rel="noopener">
-            <span data-i18n="set.github">Quellcode auf GitHub</span><span class="ext-arrow" aria-hidden="true"> ↗</span>
-          </a>
-          <button id="btn-check-update" class="fd-button fd-button--emphasized" type="button" data-i18n="set.check_update">Nach Updates suchen</button>
-        </div>
-      </div>
 
-      <div class="panel settings-section">
-        <h3 class="fd-title fd-title--h5" data-i18n="blade.title">Saegeblaetter</h3>
-        <div class="toolbar" style="margin-bottom: 8px;">
-          <button id="btn-blade-new" class="fd-button fd-button--emphasized" type="button" data-i18n="btn.new">Neu</button>
-          <button id="btn-blade-edit" class="fd-button" type="button" data-i18n="btn.edit">Bearbeiten</button>
-          <button id="btn-blade-del" class="fd-button fd-button--negative" type="button" data-i18n="btn.delete">Entfernen</button>
         </div>
-        <table id="blade-table" class="fd-table">
-          <thead class="fd-table__header">
-            <tr class="fd-table__row">
-              <th class="fd-table__cell" data-i18n="blade.name">Name</th>
-              <th class="fd-table__cell" data-i18n="blade.kerf">Schnittbreite</th>
-            </tr>
-          </thead>
-          <tbody class="fd-table__body"></tbody>
-        </table>
-      </div>
-
-      <div class="panel settings-section">
-        <h3 class="fd-title fd-title--h5" data-i18n="hotkey.title">Tastenkuerzel</h3>
-        <p class="hotkey-hint" data-i18n="hotkey.hint">Auf eine Taste klicken, um sie zu aendern.</p>
-        <table class="fd-table hotkey-table">
-          <thead class="fd-table__header">
-            <tr class="fd-table__row">
-              <th class="fd-table__cell" data-i18n="hotkey.key">Taste</th>
-              <th class="fd-table__cell" data-i18n="hotkey.action">Aktion</th>
-            </tr>
-          </thead>
-          <tbody class="fd-table__body">
-            <tr class="fd-table__row"><td class="fd-table__cell"><kbd>1</kbd> &ndash; <kbd>5</kbd></td><td class="fd-table__cell" data-i18n="hotkey.tabs">Tab wechseln</td></tr>
-            <tr class="fd-table__row"><td class="fd-table__cell"><kbd class="hotkey-edit" data-action="new">N</kbd></td><td class="fd-table__cell" data-i18n="hotkey.new">Neues Element (Material / Projekt / Bauteil / Saegeblatt)</td></tr>
-            <tr class="fd-table__row"><td class="fd-table__cell"><kbd class="hotkey-edit" data-action="edit">E</kbd></td><td class="fd-table__cell" data-i18n="hotkey.edit">Ausgewaehltes Element bearbeiten</td></tr>
-            <tr class="fd-table__row"><td class="fd-table__cell"><kbd class="hotkey-edit" data-action="delete">Entf</kbd></td><td class="fd-table__cell" data-i18n="hotkey.delete">Ausgewaehltes Element loeschen</td></tr>
-            <tr class="fd-table__row"><td class="fd-table__cell"><kbd class="hotkey-edit" data-action="stock">S</kbd></td><td class="fd-table__cell" data-i18n="hotkey.stock">Neuer Lagerbestand (Material-Tab)</td></tr>
-            <tr class="fd-table__row"><td class="fd-table__cell"><kbd class="hotkey-edit" data-action="optimize">R</kbd></td><td class="fd-table__cell" data-i18n="hotkey.optimize">Optimierung starten</td></tr>
-            <tr class="fd-table__row"><td class="fd-table__cell"><kbd>Enter</kbd></td><td class="fd-table__cell" data-i18n="hotkey.save">Dialog speichern</td></tr>
-            <tr class="fd-table__row"><td class="fd-table__cell"><kbd>Esc</kbd></td><td class="fd-table__cell" data-i18n="hotkey.close">Dialog schliessen</td></tr>
-          </tbody>
-        </table>
       </div>
     </section>
 
