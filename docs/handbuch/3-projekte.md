@@ -12,16 +12,16 @@ Links oben die Projekte, darunter die Sammelpläne, rechts die Teile des gewähl
 - **Anzahl Exemplare**: Wird ein Projekt mehrfach gebaut, genügt die Anzahl am Projekt –
   alle Exemplare werden gemeinsam optimiert.
 - Import/Export als JSON, Teilelisten-Import aus CSV.
-- Ein kleines 🔗 markiert Projekte, die in einem Sammelplan stecken (der Tooltip nennt ihn);
-  „Schnittliste“ markiert Listen aus dem Reiter [Teile](4-teile.md).
+- Ein kleines 🔗 markiert Projekte, die in einem Sammelplan stecken (der Tooltip nennt ihn).
+  Sägeaufträge stehen nicht hier, sondern im Reiter [Teile](4-teile.md).
 
 ## Teile
 
 Jedes Teil hat Label, Typ, Material, Maße, Stückzahl (je Exemplar) und Maserungsrichtung
 (egal, längs, quer). Der Fortschritt zeigt, wie viele schon gesägt sind.
 
-Im Dialog „Teil bearbeiten“ lässt sich der **Regal-Vorrat** von Hand korrigieren
-(„Im Regal“), etwa nach einer Inventur.
+Im Dialog „Teil bearbeiten“ lassen sich die **Fertigteile** (Stück auf Vorrat) von Hand
+korrigieren, etwa nach einer Inventur.
 
 Teile, deren Material in einem Sammelplan gesägt wird, sind **grau** und tragen den Hinweis
 „→“ mit dem Namen des Sammelplans; ein Klick darauf wählt den Sammelplan aus. Bearbeiten lassen sie sich trotzdem –

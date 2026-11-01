@@ -8,7 +8,7 @@ what you see there, what you do there and the terms that go with it.
 | 1 | [Material](1-material.md) | Create materials, stock per material, defects, labels |
 | 2 | [Stock](2-stock.md) | Manage storage locations, see what is where, take pieces out, offcut bin |
 | 3 | [Projects](3-projects.md) | Projects and their parts |
-| 4 | [Parts](4-parts.md) | Parts of all projects, cut lists, shelf stock |
+| 4 | [Parts](4-parts.md) | Open parts of all projects, cut jobs, finished parts |
 | 5 | [Optimization](5-optimization.md) | Calculate cut plans, saw, tick off, PDF, workshop mode |
 | 6 | [Settings](6-settings.md) | Language, units, labels, stock, REST API, backup, saw blades |
 

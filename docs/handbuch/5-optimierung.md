@@ -51,7 +51,7 @@ ist eingerechnet.
 
 Bleibt am Ende einer Stange oder auf einer Platte Abfall, füllt CutStock ihn mit Teilen aus
 anderen Projekten auf (**Füllteile …**). Es wird nie mehr Material verbraucht. Füllteile sind
-schraffiert, tragen ihr Herkunftsprojekt und kommen gesägt in den Regal-Vorrat ihres Projekts.
+schraffiert, tragen ihr Herkunftsprojekt und zählen gesägt direkt bei ihrem Projekt (Überzähliges kommt zu den Fertigteilen).
 
 ![Füllteile](../screenshot_fuellteile.png)
 

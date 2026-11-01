@@ -8,7 +8,7 @@ was man dort sieht, was man dort tut und welche Begriffe dazugehören.
 | 1 | [Material](1-material.md) | Materialien anlegen, Lagerbestand je Material, Defekte, Etiketten |
 | 2 | [Lager](2-lager.md) | Lagerorte verwalten, sehen was wo liegt, Stücke entnehmen, Abfallkiste |
 | 3 | [Projekte](3-projekte.md) | Projekte und ihre Teile |
-| 4 | [Teile](4-teile.md) | Teile aller Projekte, Schnittlisten, Regal-Vorrat |
+| 4 | [Teile](4-teile.md) | Offene Teile aller Projekte, Sägeaufträge, Fertigteile |
 | 5 | [Optimierung](5-optimierung.md) | Schnittpläne berechnen, sägen, abhaken, PDF, Werkstatt-Modus |
 | 6 | [Einstellungen](6-einstellungen.md) | Sprache, Einheiten, Etiketten, Lager, REST-API, Backup, Sägeblätter |
 

@@ -64,7 +64,7 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | PUT | `/api/blades/{id}` | Update a blade |
 | DELETE | `/api/blades/{id}` | Delete a blade |
 | **Projects** | | |
-| GET | `/api/projects?art=` | List projects; `art=sammel` combined plans only, `art=alle` both (without: projects only) |
+| GET | `/api/projects?art=` | List projects; without `art` projects and cut jobs, `art=projekt` projects only, `art=liste` cut jobs only, `art=sammel` combined plans only, `art=alle` everything |
 | GET | `/api/projects/{id}` | Get a project |
 | POST | `/api/projects` | Create a project |
 | PUT | `/api/projects/{id}` | Update a project (name, number of copies) |
@@ -75,7 +75,7 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | **Parts** | | |
 | GET | `/api/projects/{id}/parts` | List parts of a project |
 | POST | `/api/projects/{id}/parts` | Add a part |
-| PUT | `/api/parts/{id}` | Update a part (optional `vorrat`: set shelf stock) |
+| PUT | `/api/parts/{id}` | Update a part (optional `vorrat`: set finished parts) |
 | DELETE | `/api/parts/{id}` | Delete a part |
 | **Optimization and Plans** | | |
 | POST | `/api/optimize` | Optimize and save as the project's plan for the material |
@@ -89,10 +89,12 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | POST | `/api/sammel` | Create a combined plan (material and projects, no cutting plan yet) |
 | PUT | `/api/sammel/{id or code}/members` | Replace the members of a material's combined plan |
 | POST | `/api/sammel/optimize` | Create/replace and compute the combined plan |
-| GET | `/api/parts` | Parts of all projects ("Parts" tab) |
-| POST | `/api/cut-lists` | Create a cut list from individual parts |
+| GET | `/api/parts` | Parts of all projects with planning state: `beauftragt` (in cut jobs), `auftraege`, `verplant`, `sammelplan`, `verfuegbar` ("Parts" tab) |
+| GET | `/api/parts/materials` | Available parts per material with a rough stock estimate (`bedarf`, `lager`, `reicht`, `fehlt_stueck`) |
+| POST | `/api/parts/{id}/take-stock` | Count a part's finished parts as cut `{"anzahl": 0}` (0 = as many as possible) |
+| POST | `/api/cut-lists` | Create a cut job from individual parts (`name` optional) |
 | POST | `/api/sammel/compare` | Compare separate vs. combined (not saved) |
-| POST | `/api/projects/{id}/take-stock/{material_id}` | Take part stock ("shelf") over as cut |
+| POST | `/api/projects/{id}/take-stock/{material_id}` | Count a project's finished parts (one material) as cut |
 | **Export** | | |
 | POST | `/api/pdf` | Generate PDF cut plan |
 | POST | `/api/labels` | Generate label PDF from ready-made texts |
@@ -185,6 +187,20 @@ DELETE /api/waste?material=AP40
 ```
 
 Stock journal: `GET /api/journal?material=AP40&seit=1767225600&limit=100` -- each entry has `zeit` (Unix time), `art` (`zugang`, `korrektur_ab`, `entnahme`, `plan_verbrauch`, `plan_zurueck`, `rest_ein`, `rest_zurueck`, `abfall_ein`, `abfall_zurueck`, `abfall_ab`, `abfall_leer`, `material_lagerort`, `lagerort_neu`, `lagerort_umbenannt`, `lagerort_geloescht`), `code`, sizes, `anzahl`, `quelle` (`ui`/`api`), `notiz`.
+
+## Cut jobs
+
+A cut job is a project with `art: "liste"` whose parts are copies with `herkunft_teil_id`. Each
+cut piece counts for the original part (`gesaegt_anzahl`) as long as it has open pieces; only the
+surplus goes to its finished parts (`vorrat`). Undoing reverses exactly that. Filler parts follow
+the same rule. Quantities in a cut job are blocked as soon as it is created: the original
+project's plan won't plan them again, and `GET /api/parts` subtracts them from `verfuegbar`.
+
+```json
+POST /api/cut-lists
+{"eintraege": [{"teil_id": 12, "menge": 4}]}      → 201, project "Cut job 2026-11-01"
+POST /api/parts/12/take-stock {"anzahl": 0}       → part with vorrat −n, gesaegt_anzahl +n
+```
 
 ## Combined plans
 

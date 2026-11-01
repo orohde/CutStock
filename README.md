@@ -28,8 +28,8 @@ CutStock comes in two flavors that share the same optimization core:
 - **Stock Reservation** -- saved plans reserve their pieces that haven't been started yet, so other projects don't plan them (can be switched off); "Discard plan" releases them
 - **Remnants First** -- optionally plan remnants first, then full bars/panels
 - **Combined Plan** -- optimize one material for several projects at once ("Optimize by: Material"), with a separate/combined comparison; cut parts count directly in their project
-- **Filler Parts** -- cut parts from other projects to fill up the waste of bars and panels (no extra material); cut filler parts go into the part stock ("shelf") and are taken over by the other project later
-- **Parts and Cut Lists** -- "Parts" tab with the parts of all projects; cut selected parts as their own cut list or take them along as filler parts; shelf stock per part, correctable by hand
+- **Filler Parts** -- cut parts from other projects to fill up the waste of bars and panels (no extra material); once cut they count directly for their own project, any extra go to the finished parts
+- **Open Parts and Cut Jobs** -- "Parts" tab with everything still to be cut, grouped by material with a stock estimate; cut selected parts with "Cut now" as a cut job or take them into another project's remnants; finished parts per part
 - **Project Management** -- organize parts by project, build a project several times (number of copies), import/export as JSON, import part lists from CSV
 - **Visual Cut Plans** -- color-coded cutting diagrams with labels and dimensions
 - **Cutting Sequence** -- numbered, kerf-accurate step-by-step sawing order per cut plan (on screen and in the PDF)
@@ -119,7 +119,7 @@ The manual is split by the tabs of the user interface: **[docs/manual](docs/manu
 | [Material](docs/manual/1-material.md) | Materials, stock per material, defects, labels |
 | [Stock](docs/manual/2-stock.md) | Storage locations, what is where, taking pieces out, offcut bin, stock journal |
 | [Projects](docs/manual/3-projects.md) | Projects and their parts |
-| [Parts](docs/manual/4-parts.md) | Parts of all projects, cut lists, shelf stock |
+| [Parts](docs/manual/4-parts.md) | Open parts of all projects, cut jobs, finished parts |
 | [Optimization](docs/manual/5-optimization.md) | Cut plans, filler parts, combined plan, workshop mode, PDF |
 | [Settings](docs/manual/6-settings.md) | Language, labels, stock, REST API, backup, saw blades |
 | [REST API](docs/manual/api.md) | all endpoints, stock commands for scanners and machines |

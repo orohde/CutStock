@@ -2,26 +2,53 @@
 
 [← Manual](README.md)
 
-This tab shows the parts of **all** projects, filterable by material and project, with open
-quantity and shelf stock.
+This tab shows everything your projects **still need to have cut** – sorted by material, because
+you always cut one material at a time. Here you pick parts from different projects and cut them
+together.
 
 ![Parts](../screenshot_teile_en.png)
 
-## Create a cut list
+## Open parts
 
-Tick parts, enter a quantity and **Create cut list**: this creates a cut list that appears in the
-[Projects](3-projects.md) tab and is optimized, cut and printed like a project. Ticked-off parts go
-onto the **shelf** (stock) of the project they come from, which takes them over later with one
-click. Once everything is cut, CutStock offers to delete the list. Duplicating a cut list keeps it
-a cut list.
+- The top line shows how many pieces in how many projects are still open.
+- One group per material (expand/collapse) with the number of parts and pieces and a rough stock
+  estimate: **Enough stock** or **About n bars/panels short**. The estimate only adds up length or
+  area; the optimization gives the exact answer.
+- Filter by material and project. Finished parts are hidden ("show finished too").
+- The project name links to the project.
 
-## As filler parts
+Below the project name you see what is already happening with the part:
 
-**As filler parts …** takes the ticked parts along as filler parts in another project's plan
-(see [Optimization → Filler parts](5-optimization.md#filler-parts)).
+- **in combined plan …** – this project's material is cut in a combined plan; the part can't be
+  selected here. A click selects the combined plan.
+- **n in cut job "…"** – that many pieces are already in a cut job. The "open" column then shows
+  how many are still free.
+- **n planned as filler parts** – lies uncut in another project's plan.
+- **n finished parts · use** – see below.
 
-## Shelf stock
+## Cut now
 
-Finished parts kept in stock. They come from filler parts and cut lists and are taken over as cut
-with one click in the Optimization tab of the project. The stock can be corrected in the
-"Edit part" dialog.
+Tick parts – the quantity ("cut") is preset to everything still free and can be changed. A bar
+with the selection appears at the bottom:
+
+- **Cut now →** creates a **cut job** and jumps straight to the
+  [Optimization](5-optimization.md), which calculates it right away.
+- **Cut into remnants of …** takes the parts along as filler parts in another project's plan
+  (see [Optimization → Filler parts](5-optimization.md#filler-parts)). This only works with parts
+  of one material.
+
+Cut parts count **directly for their own project**. Only what is cut beyond the open quantity
+goes to the **finished parts**.
+
+## Cut jobs
+
+Running cut jobs are listed at the top of the tab with their progress ("3 of 5 cut"),
+**Continue cutting** (opens the optimization) and **Delete**. Anything already cut stays booked to
+the projects when a job is deleted. Once a job is fully cut, CutStock offers to delete it. In the
+optimization, cut jobs appear in the project selection, not in the Projects tab.
+
+## Finished parts
+
+Finished parts in stock that no project has counted yet – e.g. because more was cut than was
+open. Once the part has open pieces again, **use** counts them as cut (here or in the plan in the
+Optimization tab). They can be corrected by hand in the "Edit part" dialog (Projects tab).

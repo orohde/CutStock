@@ -2,26 +2,54 @@
 
 [← Handbuch](README.md)
 
-Der Reiter zeigt die Teile **aller** Projekte, filterbar nach Material und Projekt, mit offener
-Stückzahl und Regal-Vorrat.
+Der Reiter zeigt alles, was in deinen Projekten **noch gesägt werden muss** – sortiert nach
+Material, weil immer ein Material auf einmal gesägt wird. Hier wählst du Teile aus verschiedenen
+Projekten aus und sägst sie zusammen.
 
 ![Teile](../screenshot_teile.png)
 
-## Schnittliste erstellen
+## Offene Teile
 
-Teile anhaken, Menge eintragen und **Schnittliste erstellen**: Es entsteht eine Schnittliste, die
-im Reiter [Projekte](3-projekte.md) erscheint und wie ein Projekt optimiert, gesägt und gedruckt
-wird. Abgehakte Teile kommen ins **Regal** (Vorrat) ihres Herkunftsprojekts, das sie später per
-Klick übernimmt. Ist alles gesägt, bietet CutStock an, die Liste zu löschen. Beim Duplizieren
-bleibt eine Schnittliste eine Schnittliste.
+- Oben steht, wie viele Stück in wie vielen Projekten noch offen sind.
+- Je Material eine Gruppe (zum Auf- und Zuklappen) mit der Zahl der Teile und Stück und einer
+  groben Lager-Schätzung: **Lager reicht** oder **Lager fehlt ca. n Stangen/Platten**. Die
+  Schätzung rechnet nur über Länge bzw. Fläche; genau rechnet erst die Optimierung.
+- Filter nach Material und Projekt. Fertige Teile sind ausgeblendet („auch fertige zeigen“).
+- Der Projektname ist ein Link ins Projekt.
 
-## Als Füllteile
+Unter dem Projektnamen steht, was mit dem Teil schon läuft:
 
-**Als Füllteile …** nimmt die angehakten Teile als Füllteile in den Plan eines anderen Projekts
-mit (siehe [Optimierung → Füllteile](5-optimierung.md#füllteile)).
+- **im Sammelplan …** – das Material dieses Projekts wird im Sammelplan gesägt; das Teil lässt
+  sich hier nicht auswählen. Ein Klick wählt den Sammelplan aus.
+- **n im Sägeauftrag „…“** – so viele Stück sind schon beauftragt. In der Spalte „offen“ steht
+  dann, wie viele noch frei sind.
+- **n als Füllteil verplant** – liegt ungesägt im Plan eines anderen Projekts.
+- **n Fertigteile · übernehmen** – siehe unten.
 
-## Regal-Vorrat
+## Jetzt sägen
 
-Fertig gesägte Teile auf Vorrat. Sie entstehen über Füllteile und Schnittlisten und werden im
-Reiter Optimierung beim Projekt mit einem Klick als gesägt übernommen. Korrigieren lässt sich der
-Vorrat im Dialog „Teil bearbeiten“.
+Teile anhaken – die Menge („sägen“) ist mit allem vorbelegt, was noch frei ist, und lässt sich
+ändern. Unten erscheint eine Leiste mit der Auswahl:
+
+- **Jetzt sägen →** legt einen **Sägeauftrag** an und springt direkt in die
+  [Optimierung](5-optimierung.md), die ihn gleich berechnet.
+- **In Reste von … mitsägen** nimmt die Teile als Füllteile in den Plan eines anderen Projekts
+  mit (siehe [Optimierung → Füllteile](5-optimierung.md#füllteile)). Das geht nur mit Teilen
+  aus einem Material.
+
+Gesägte Teile zählen **direkt bei ihrem Projekt** als gesägt. Nur was über die offene Menge
+hinaus gesägt wird, kommt zu den **Fertigteilen**.
+
+## Sägeaufträge
+
+Laufende Sägeaufträge stehen oben im Reiter, mit Fortschritt („3 von 5 gesägt“),
+**Weitersägen** (öffnet die Optimierung) und **Löschen**. Bereits Gesägtes bleibt beim Löschen
+bei den Projekten verbucht. Ist ein Auftrag komplett gesägt, bietet CutStock an, ihn zu löschen.
+In der Optimierung erscheinen Sägeaufträge in der Projektauswahl, im Reiter Projekte nicht.
+
+## Fertigteile
+
+Fertig gesägte Teile auf Vorrat, die noch keinem Projekt angerechnet sind – etwa weil mehr
+gesägt wurde, als offen war. Ist beim Teil wieder etwas offen, übernimmt **übernehmen** sie als
+gesägt (hier oder im Plan in der Optimierung). Von Hand korrigieren lassen sie sich im Dialog
+„Teil bearbeiten“ (Reiter Projekte).

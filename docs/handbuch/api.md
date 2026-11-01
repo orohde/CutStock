@@ -64,7 +64,7 @@ Anfragen von der eigenen Web-Oberfläche (Same-Origin) und von localhost sind im
 | PUT | `/api/blades/{id}` | Sägeblatt aktualisieren |
 | DELETE | `/api/blades/{id}` | Sägeblatt löschen |
 | **Projekte** | | |
-| GET | `/api/projects?art=` | Projekte auflisten; `art=sammel` nur Sammelpläne, `art=alle` beides (ohne: nur Projekte) |
+| GET | `/api/projects?art=` | Projekte auflisten; ohne `art` Projekte und Sägeaufträge, `art=projekt` nur Projekte, `art=liste` nur Sägeaufträge, `art=sammel` nur Sammelpläne, `art=alle` alles |
 | GET | `/api/projects/{id}` | Projekt abrufen |
 | POST | `/api/projects` | Projekt anlegen |
 | PUT | `/api/projects/{id}` | Projekt aktualisieren (Name, Anzahl Exemplare) |
@@ -75,7 +75,7 @@ Anfragen von der eigenen Web-Oberfläche (Same-Origin) und von localhost sind im
 | **Teile** | | |
 | GET | `/api/projects/{id}/parts` | Teile eines Projekts auflisten |
 | POST | `/api/projects/{id}/parts` | Teil hinzufügen |
-| PUT | `/api/parts/{id}` | Teil aktualisieren (optional `vorrat`: Regal-Bestand setzen) |
+| PUT | `/api/parts/{id}` | Teil aktualisieren (optional `vorrat`: Fertigteile setzen) |
 | DELETE | `/api/parts/{id}` | Teil löschen |
 | **Optimierung und Pläne** | | |
 | POST | `/api/optimize` | Optimieren und als Plan des Projekts für das Material speichern |
@@ -89,10 +89,12 @@ Anfragen von der eigenen Web-Oberfläche (Same-Origin) und von localhost sind im
 | POST | `/api/sammel` | Sammelplan anlegen (Material und Projekte, noch ohne Schnittplan) |
 | PUT | `/api/sammel/{id oder Kuerzel}/members` | Mitglieder des Sammelplans eines Materials ersetzen |
 | POST | `/api/sammel/optimize` | Sammelplan anlegen/ersetzen und berechnen |
-| GET | `/api/parts` | Teile aller Projekte (Reiter "Teile") |
-| POST | `/api/cut-lists` | Schnittliste aus einzelnen Teilen anlegen |
+| GET | `/api/parts` | Teile aller Projekte mit Verplanung: `beauftragt`, `auftraege`, `verplant`, `sammelplan`, `verfuegbar` (Reiter "Teile") |
+| GET | `/api/parts/materials` | Verfügbare Teile je Material mit grober Lager-Schätzung (`bedarf`, `lager`, `reicht`, `fehlt_stueck`) |
+| POST | `/api/parts/{id}/take-stock` | Fertigteile eines Teils als gesägt übernehmen `{"anzahl": 0}` (0 = so viele wie möglich) |
+| POST | `/api/cut-lists` | Sägeauftrag aus einzelnen Teilen anlegen (`name` optional) |
 | POST | `/api/sammel/compare` | Vergleich getrennt/gemeinsam (ohne Speichern) |
-| POST | `/api/projects/{id}/take-stock/{material_id}` | Teile-Vorrat ("Regal") als gesägt übernehmen |
+| POST | `/api/projects/{id}/take-stock/{material_id}` | Fertigteile eines Projekts (eines Materials) als gesägt übernehmen |
 | **Export** | | |
 | POST | `/api/pdf` | PDF-Schnittplan erzeugen |
 | POST | `/api/labels` | Etiketten-PDF aus fertigen Texten erzeugen |
@@ -185,6 +187,21 @@ DELETE /api/waste?material=AP40
 ```
 
 Lagerjournal: `GET /api/journal?material=AP40&seit=1767225600&limit=100` -- je Eintrag `zeit` (Unix-Zeit), `art` (`zugang`, `korrektur_ab`, `entnahme`, `plan_verbrauch`, `plan_zurueck`, `rest_ein`, `rest_zurueck`, `abfall_ein`, `abfall_zurueck`, `abfall_ab`, `abfall_leer`, `material_lagerort`, `lagerort_neu`, `lagerort_umbenannt`, `lagerort_geloescht`), `code`, Masse, `anzahl`, `quelle` (`ui`/`api`), `notiz`.
+
+## Sägeaufträge
+
+Ein Sägeauftrag ist ein Projekt mit `art: "liste"`, dessen Teile Kopien mit
+`herkunft_teil_id` sind. Gesägt zählt jedes Stück beim Herkunftsteil (`gesaegt_anzahl`), solange
+dort etwas offen ist; erst der Überschuss geht zu dessen Fertigteilen (`vorrat`). Zurücknehmen
+bucht genau das zurück. Dieselbe Regel gilt für Füllteile. Beauftragte Mengen sind ab dem Anlegen
+gesperrt: Der Plan des Herkunftsprojekts verplant sie nicht noch einmal, und `GET /api/parts`
+zieht sie von `verfuegbar` ab.
+
+```json
+POST /api/cut-lists
+{"eintraege": [{"teil_id": 12, "menge": 4}]}      → 201, Projekt "Sägeauftrag 01.11.2026"
+POST /api/parts/12/take-stock {"anzahl": 0}       → Teil mit vorrat −n, gesaegt_anzahl +n
+```
 
 ## Sammelpläne
 

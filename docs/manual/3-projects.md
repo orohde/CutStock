@@ -12,15 +12,15 @@ Top left the projects, below them the combined plans, on the right the parts of 
 - **Number of copies**: if a project is built several times, set the number on the project –
   all copies are optimized together.
 - Import/export as JSON, import part lists from CSV.
-- A small 🔗 marks projects that are part of a combined plan (the tooltip names it);
-  "Cut list" marks lists created in the [Parts](4-parts.md) tab.
+- A small 🔗 marks projects that are part of a combined plan (the tooltip names it).
+  Cut jobs are not listed here but in the [Parts](4-parts.md) tab.
 
 ## Parts
 
 Every part has a label, type, material, dimensions, quantity (per copy) and grain direction
 (any, lengthwise, crosswise). The progress shows how many have already been cut.
 
-In the "Edit part" dialog the **shelf stock** can be corrected by hand ("On the shelf"),
+In the "Edit part" dialog the **finished parts** (pieces in stock) can be corrected by hand,
 e.g. after a stocktaking.
 
 Parts whose material is cut in a combined plan are **grey** and show "→" with the name of the combined plan;

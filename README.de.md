@@ -28,8 +28,8 @@ CutStock gibt es in zwei Varianten, die denselben Optimierungskern teilen:
 - **Lager-Reservierung** -- gespeicherte Plaene reservieren ihre noch nicht angefangenen Stuecke, andere Projekte verplanen sie nicht (abschaltbar); "Plan verwerfen" gibt sie frei
 - **Reste zuerst** -- auf Wunsch erst nur Reste verplanen, dann ganze Stangen/Platten
 - **Sammelplan** -- ein Material fuer mehrere Projekte gemeinsam optimieren ("Optimieren nach: Material"), mit Vergleich getrennt/gemeinsam; gesaegte Teile zaehlen direkt im jeweiligen Projekt
-- **Fuellteile** -- Teile anderer Projekte mitsaegen, um den Abfall von Stangen und Platten aufzufuellen (ohne zusaetzliches Material); gesaegte Fuellteile kommen in den Teile-Vorrat ("Regal") und werden spaeter vom anderen Projekt uebernommen
-- **Teile und Schnittlisten** -- Reiter "Teile" mit den Teilen aller Projekte; ausgewaehlte Teile als eigene Schnittliste saegen oder als Fuellteile mitnehmen; Regal-Vorrat je Teil, von Hand korrigierbar
+- **Fuellteile** -- Teile anderer Projekte mitsaegen, um den Abfall von Stangen und Platten aufzufuellen (ohne zusaetzliches Material); gesaegt zaehlen sie direkt beim eigenen Projekt, Ueberzaehliges kommt zu den Fertigteilen
+- **Offene Teile und Saegeauftraege** -- Reiter "Teile" mit allem, was noch zu saegen ist, nach Material gruppiert mit Lager-Schaetzung; ausgewaehlte Teile mit "Jetzt saegen" als Saegeauftrag saegen oder in die Reste eines anderen Projekts mitnehmen; Fertigteile je Teil
 - **Projektverwaltung** -- Teile nach Projekten organisieren, Projekt mehrfach bauen (Anzahl Exemplare), Import/Export als JSON, Teilelisten-Import aus CSV
 - **Visuelle Schnittplaene** -- farbkodierte Zuschnittschemata mit Labels und Massen
 - **Schnittfolge** -- nummerierte, massgenaue Schrittliste pro Schnittplan (Kerf eingerechnet, auch im PDF)
@@ -120,7 +120,7 @@ Das Handbuch ist nach den Reitern der Oberflaeche aufgeteilt: **[docs/handbuch](
 | [Material](docs/handbuch/1-material.md) | Materialien, Lagerbestand je Material, Defekte, Etiketten |
 | [Lager](docs/handbuch/2-lager.md) | Lagerorte, was liegt wo, Stuecke entnehmen, Abfallkiste, Lagerjournal |
 | [Projekte](docs/handbuch/3-projekte.md) | Projekte und ihre Teile |
-| [Teile](docs/handbuch/4-teile.md) | Teile aller Projekte, Schnittlisten, Regal-Vorrat |
+| [Teile](docs/handbuch/4-teile.md) | Offene Teile aller Projekte, Saegeauftraege, Fertigteile |
 | [Optimierung](docs/handbuch/5-optimierung.md) | Schnittplaene, Fuellteile, Sammelplan, Werkstatt-Modus, PDF |
 | [Einstellungen](docs/handbuch/6-einstellungen.md) | Sprache, Etiketten, Lager, REST-API, Backup, Saegeblaetter |
 | [REST-API](docs/handbuch/api.md) | alle Endpoints, Lager-Befehle fuer Scanner und Maschinen |

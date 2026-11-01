@@ -49,7 +49,7 @@ already included.
 
 If there is waste at the end of a bar or on a panel, CutStock fills it with parts from other
 projects (**Filler parts …**). It never uses more material. Filler parts are hatched, carry their
-project and go onto their project's shelf once cut.
+project and count for their own project once cut (any extra go to the finished parts).
 
 ![Filler parts](../screenshot_fuellteile_en.png)
 

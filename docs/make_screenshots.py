@@ -423,15 +423,25 @@ def shoot(ids: dict):
         page.click('.tab-btn[data-tab="optimization"]')
         page.wait_for_timeout(400)
 
-        # 7c) Reiter Teile: Teile aller Projekte, zwei Hocker-Teile angehakt
-        # (Schnittliste / Als Füllteile), Spalte "Regal" mit Vorrat
+        # 7c) Reiter Teile: offene Teile nach Material, ein laufender Sägeauftrag
+        # (ein Kiefer-Teil), zwei Hocker-Teile angehakt → Auswahl-Leiste unten
         page.set_viewport_size({"width": 1280, "height": 860})
+        page.evaluate("""async (kiefer) => {
+            const teile = await (await fetch('/api/parts')).json();
+            const t = teile.find(x => x.material_id === kiefer && x.verfuegbar > 1
+                && !/Hocker|Stool|Zarge|Apron/.test(x.label));
+            if (t) await fetch('/api/cut-lists', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({eintraege: [{teil_id: t.teil_id, menge: t.verfuegbar - 1}]})});
+        }""", ids["kiefer"])
         page.click('.tab-btn[data-tab="parts"]')
-        page.wait_for_selector("#all-parts-table tbody tr[data-teil]")
+        page.wait_for_selector("#parts-groups .parts-group")
         page.select_option("#parts-material", str(ids["kiefer"]))
-        page.wait_for_timeout(400)
+        page.wait_for_timeout(300)
+        if page.get_attribute("#parts-groups .parts-group-head", "aria-expanded") == "false":
+            page.click("#parts-groups .parts-group-head")
+        page.wait_for_selector("#parts-groups tr[data-teil]")
         for label in ("Hockerbein", "Zarge"):
-            page.check(f'#all-parts-table tbody tr:has-text("{tr(label)}") .parts-check')
+            page.check(f'#parts-groups tr[data-teil]:has-text("{tr(label)}") .parts-check')
         page.evaluate("window.scrollTo(0, 0)")
         page.wait_for_timeout(300)
         page.mouse.move(1270, 850)
