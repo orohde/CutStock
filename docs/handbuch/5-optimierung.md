@@ -39,6 +39,10 @@ Weitere Knöpfe: **Bestätigen (gesägt)** für alles, **PDF Export**, **Etikett
 **Werkstatt-Modus**, **Plan verwerfen** (gibt reservierte Stücke frei),
 **Projekt neu starten** (Fortschritt auf 0, Lager bleibt).
 
+Stangen sind im Plan **im gleichen Maßstab** gezeichnet: Die längste füllt die Breite, kürzere
+sind entsprechend kürzer. Sehr kurze Stangen werden etwas breiter gezeichnet und dann gestrichelt
+umrandet. Die Lupe und der Werkstatt-Modus zeigen jede Stange in voller Breite.
+
 ## Platten
 
 2D-Guillotine-Packing: Alle Schnitte gehen von Kante zu Kante, so dass Reste Rechtecke bleiben.

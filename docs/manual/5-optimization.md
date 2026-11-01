@@ -37,6 +37,10 @@ deducted from stock, offcuts are booked and scrap goes into the offcut bin. Unti
 More buttons: **Confirm (cut)** for everything, **PDF export**, **Labels**, **Workshop mode**,
 **Discard plan** (releases reserved pieces), **Restart project** (progress back to 0, stock stays).
 
+Bars are drawn **to the same scale** in the plan: the longest fills the width, shorter ones are
+correspondingly shorter. Very short bars are drawn a bit wider and then get a dashed outline. The
+magnifier and workshop mode show each bar at full width.
+
 ## Panels
 
 2D guillotine packing: every cut goes from edge to edge, so offcuts remain rectangles. The

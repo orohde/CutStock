@@ -2267,7 +2267,13 @@ function drawCutPlan(canvas, plan, material) {
     // Trefferflächen der einzelnen Stücke für Klick-zum-Abhaken sammeln
     const hits = [];
     if (is1D) {
-        draw1D(ctx, canvasW, canvasH, plan, colorMap, hits, material?.besaeumung || 0);
+        // In der Planübersicht teilen sich alle Stangen einen Maßstab (die längste füllt
+        // die Breite), damit kurze Stangen auch kurz aussehen. Lupe und Werkstatt-Modus
+        // zeichnen jede Stange formatfüllend.
+        const refLaenge = canvas.classList.contains('cut-plan-canvas')
+            ? Math.max(0, ...(State.optimizationResult?.schnittplaene || []).map(sp => sp.lager_laenge))
+            : 0;
+        draw1D(ctx, canvasW, canvasH, plan, colorMap, hits, material?.besaeumung || 0, refLaenge);
     } else {
         draw2D(ctx, canvasW, canvasH, plan, colorMap, hits, material?.besaeumung || 0);
     }
@@ -3530,21 +3536,31 @@ function draw2D(ctx, canvasW, canvasH, plan, colorMap, hits, besaeumung = 0) {
     ctx.restore();
 }
 
-function draw1D(ctx, canvasW, canvasH, plan, colorMap, hits, besaeumung = 0) {
+// refLaenge: gemeinsamer Maßstab (Länge, die die volle Breite füllt); 0 = formatfüllend.
+// Sehr kurze Stangen werden mindestens MIN_BAR_ANTEIL breit gezeichnet und dann
+// gestrichelt umrandet (nicht maßstäblich).
+const MIN_BAR_ANTEIL = 0.2;
+
+function draw1D(ctx, canvasW, canvasH, plan, colorMap, hits, besaeumung = 0, refLaenge = 0) {
     const padding = { left: 20, right: 20, top: 15, bottom: 30 };
     const barH = 50;
     const barY = padding.top;
     const drawW = canvasW - padding.left - padding.right;
-    const scale = drawW / plan.lager_laenge;
+    const ref = Math.max(refLaenge, plan.lager_laenge);
+    const gestreckt = plan.lager_laenge / ref < MIN_BAR_ANTEIL;
+    const barW = drawW * (gestreckt ? MIN_BAR_ANTEIL : plan.lager_laenge / ref);
+    const scale = barW / plan.lager_laenge;
 
     // Stock bar background
     ctx.fillStyle = getComputedStyle(document.documentElement)
         .getPropertyValue('--sapNeutralBackground').trim() || '#e9ecef';
-    ctx.fillRect(padding.left, barY, drawW, barH);
+    ctx.fillRect(padding.left, barY, barW, barH);
     ctx.strokeStyle = getComputedStyle(document.documentElement)
         .getPropertyValue('--sapList_BorderColor').trim() || '#d1d5db';
     ctx.lineWidth = 1;
-    ctx.strokeRect(padding.left, barY, drawW, barH);
+    if (gestreckt) ctx.setLineDash([4, 3]);
+    ctx.strokeRect(padding.left, barY, barW, barH);
+    ctx.setLineDash([]);
 
     // Defects (red hatched areas)
     if (plan.defekte?.length) {
