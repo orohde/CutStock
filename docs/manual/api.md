@@ -93,7 +93,8 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | POST | `/api/projects/{id}/take-stock/{material_id}` | Take part stock ("shelf") over as cut |
 | **Export** | | |
 | POST | `/api/pdf` | Generate PDF cut plan |
-| POST | `/api/labels` | Generate label PDF |
+| POST | `/api/labels` | Generate label PDF from ready-made texts |
+| POST | `/api/labels/pieces` | Labels for stock pieces (select by code, location, material, filters) |
 | **System** | | |
 | GET | `/api/version` | App version and links |
 | GET | `/api/license` | License status |
@@ -147,6 +148,15 @@ POST /api/pieces/AP40-07/take
 
 `grund` (reason): `verbraucht` (used), `verkauft` (sold), `defekt` (defective) or `abfall` (into the offcut bin, if switched on).
 If a saved plan reserves the piece, the answer is `409` with `code: "stueck_reserviert"` and the project; with `"trotzdem": true` it is taken out anyway. The plan then reports `lager_fehlt` and `fehlende_stuecke`.
+
+Labels for stock pieces -- e.g. all pieces on a rack that have no label yet:
+
+```json
+POST /api/labels/pieces
+{"lagerort": "Wandregal Alu", "nur_ungedruckt": true, "startfeld": 5}
+```
+
+Select with `codes` (list of codes or IDs) **or** `lagerort` (location) and/or `material`; narrow down with `nur_reste` (offcuts only), `nur_ganze` (whole pieces only), `nur_ungedruckt` (not printed yet). `startfeld` skips fields already used on an A4 sheet. The answer is the PDF (header `X-Label-Count` = number of labels); the pieces then count as printed (`etikett_gedruckt` on the piece = Unix time, `0` = never), unless `"markieren": false`. No selection gives `400 auswahl_fehlt`, nothing matching `404 keine_stuecke`.
 
 Assign a material to a location:
 

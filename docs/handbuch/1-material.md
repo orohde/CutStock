@@ -35,7 +35,8 @@ der Abfallkiste ist. Darunter je Maß eine Zeile mit Anzahl; Reste sind markiert
 - **▶ Anzahl** klappt die einzelnen Stücke auf: Code, Notiz, Defekte und – mit 🔒 – für welches
   Projekt das Stück reserviert ist. **Doppelklick** auf ein Stück: Notiz ändern oder entnehmen.
 - **Defekte** erfasst Astlöcher, Risse usw. je Stück; die Optimierung umgeht sie.
-- **Etiketten** druckt ein Etikett je Stück mit Material, Maß, Lagerort und Code.
+- **Etiketten …** öffnet die Auswahl, für welche Stücke ein Etikett gedruckt wird (Material, Maß,
+  Lagerort und Code) – siehe [Etiketten drucken](2-lager.md#etiketten-drucken).
 
 Frei gewordene Stücknummern werden erst nach einer Sperrfrist neu vergeben
 (Einstellungen → Lager), falls ein Stück versehentlich ausgetragen wurde und noch im Regal liegt.

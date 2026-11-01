@@ -103,12 +103,15 @@ def _draw_label(c: canvas.Canvas, lab: dict, x: float, y: float,
 def export_labels(labels: list[dict], path: str | Path,
                   title: str = "CutStock",
                   fmt: str = DEFAULT_FORMAT,
-                  custom_w: float = 0.0, custom_h: float = 0.0):
+                  custom_w: float = 0.0, custom_h: float = 0.0,
+                  start: int = 1):
     """labels: list of {title, line1, line2, id_text} – one entry per label.
 
     fmt: key from SHEET_FORMATS/ROLL_FORMATS or "custom" (then
     custom_w × custom_h in mm applies, one label per page). Unknown or
     implausible values fall back to the default A4 sheet.
+    start: first field on the sheet (1 = top left, row by row) so a partly
+    used sheet can be reused. Ignored for rolls.
     """
     if fmt == "custom" and custom_w >= 15 and custom_h >= 10:
         _export_roll(labels, path, title, custom_w, custom_h)
@@ -116,7 +119,7 @@ def export_labels(labels: list[dict], path: str | Path,
         _export_roll(labels, path, title, *ROLL_FORMATS[fmt])
     else:
         _export_sheet(labels, path, title,
-                      SHEET_FORMATS.get(fmt, SHEET_FORMATS[DEFAULT_FORMAT]))
+                      SHEET_FORMATS.get(fmt, SHEET_FORMATS[DEFAULT_FORMAT]), start)
 
 
 def _export_roll(labels: list[dict], path: str | Path, title: str,
@@ -133,8 +136,17 @@ def _export_roll(labels: list[dict], path: str | Path, title: str,
     c.save()
 
 
-def _export_sheet(labels: list[dict], path: str | Path, title: str, spec: dict):
-    """A4 sheet with a label grid."""
+def sheet_fields(fmt: str) -> int:
+    """Labels per A4 sheet, 0 for roll formats."""
+    if fmt == "custom" or fmt in ROLL_FORMATS:
+        return 0
+    spec = SHEET_FORMATS.get(fmt, SHEET_FORMATS[DEFAULT_FORMAT])
+    return spec["cols"] * spec["rows"]
+
+
+def _export_sheet(labels: list[dict], path: str | Path, title: str, spec: dict,
+                  start: int = 1):
+    """A4 sheet with a label grid, starting at field `start` on the first sheet."""
     page_w, page_h = A4
     cols, rows = spec["cols"], spec["rows"]
     lw, lh = spec["label_w"] * mm, spec["label_h"] * mm
@@ -149,9 +161,10 @@ def _export_sheet(labels: list[dict], path: str | Path, title: str, spec: dict):
     c.setTitle(f"CutStock – {title}")
 
     per_page = cols * rows
-    for i, lab in enumerate(labels):
+    skip = min(max(int(start or 1), 1), per_page) - 1
+    for i, lab in enumerate(labels, start=skip):
         slot = i % per_page
-        if i > 0 and slot == 0:
+        if i > skip and slot == 0:
             c.showPage()
 
         col = slot % cols

@@ -1227,3 +1227,81 @@ class TestLager:
                            json={"material": "LGB", "laenge": 120}).json()[0]["anzahl"] == 1
         assert client.delete("/api/waste?material=LGB").status_code == 204
         assert client.get("/api/waste?material=LGB").json() == []
+
+
+class TestStueckEtiketten:
+
+    def _lager(self, client, kuerzel, ort):
+        r = client.post("/api/materials", json={"name": f"Mat {kuerzel}", "typ": "Stange",
+                                                "kuerzel": kuerzel, "lagerort": ort})
+        assert r.status_code == 201, r.text
+        client.post("/api/stock/receive", json={"material": kuerzel, "laenge": 3000, "anzahl": 2})
+        client.post("/api/stock/receive", json={"material": kuerzel, "laenge": 640,
+                                                "ist_rest": True})
+
+    def _drucken(self, client, **body):
+        r = client.post("/api/labels/pieces", json=body)
+        return r.status_code, int(r.headers.get("X-Label-Count", 0))
+
+    def test_filter_und_gedruckt_vermerk(self, client):
+        self._lager(client, "ET1", "Etiketten-Regal")
+        self._lager(client, "ET2", "Etiketten-Regal")
+        assert client.get("/api/pieces/ET1-01").json()["etikett_gedruckt"] == 0
+        assert self._drucken(client, lagerort="Etiketten-Regal", nur_reste=True,
+                             markieren=False) == (200, 2)
+        assert self._drucken(client, lagerort="Etiketten-Regal", material="ET1",
+                             nur_ganze=True) == (200, 2)
+        assert client.get("/api/pieces/ET1-01").json()["etikett_gedruckt"] > 0
+        assert client.get("/api/pieces/ET1-03").json()["etikett_gedruckt"] == 0
+        # Nur noch nicht gedruckte: ET1-03 (Rest) und die drei von ET2
+        assert self._drucken(client, lagerort="Etiketten-Regal", nur_ungedruckt=True) == (200, 4)
+        assert self._drucken(client, lagerort="Etiketten-Regal", nur_ungedruckt=True)[0] == 404
+
+    def test_einzelne_codes_und_fehler(self, client):
+        self._lager(client, "ET3", "Etiketten-Ecke")
+        r = client.post("/api/labels/pieces", json={"codes": ["et3-02"], "startfeld": 5})
+        assert r.status_code == 200 and r.content.startswith(b"%PDF")
+        assert "ET3-02" in r.headers["content-disposition"]
+        assert client.post("/api/labels/pieces", json={}).json()["detail"]["code"] == "auswahl_fehlt"
+        r = client.post("/api/labels/pieces", json={"codes": ["ET3-99"]})
+        assert r.status_code == 404 and r.json()["detail"]["code"] == "stueck_unbekannt"
+
+    def test_entnahme_rueckgaengig_behaelt_vermerk(self, tmp_path):
+        from core.db import Database
+        from core.models import Lagerstueck, Material, MaterialTyp
+        db = Database(tmp_path / "cutstock.db")
+        mid = db.save_material(Material(name="Rück 20x20", typ=MaterialTyp.STANGE)).id
+        ls = db.save_lagerstueck(Lagerstueck(material_id=mid, laenge=1000, stueckzahl=1))
+        db.etiketten_gedruckt([db.list_einzelstuecke(ls.id)[0].id])
+        snap = db.lager_verbrauchen(ls.id, stueck_nr=1)
+        ls2, nr = db.stueck_hinzufuegen(Lagerstueck(material_id=mid, laenge=1000, stueckzahl=0))
+        db.einzelstueck_wiederherstellen(ls2.id, nr, snap)
+        assert db.list_einzelstuecke(ls2.id)[0].etikett_gedruckt > 0
+        db.close()
+
+    def test_migration_bestand_gilt_als_gedruckt(self, tmp_path):
+        from core.db import Database
+        from core.models import Lagerstueck, Material, MaterialTyp
+        db = Database(tmp_path / "cutstock.db")
+        mid = db.save_material(Material(name="Alt 30x30", typ=MaterialTyp.STANGE)).id
+        ls = db.save_lagerstueck(Lagerstueck(material_id=mid, laenge=2000, stueckzahl=1))
+        db.conn.execute("ALTER TABLE einzelstueck DROP COLUMN etikett_gedruckt")
+        db.conn.commit()
+        db.close()
+        db = Database(tmp_path / "cutstock.db")
+        assert db.list_einzelstuecke(ls.id)[0].etikett_gedruckt == 1
+        db.close()
+
+
+class TestEtikettenStartfeld:
+
+    def test_startfeld_verschiebt_auf_dem_bogen(self, tmp_path):
+        import re
+        from core.labels import export_labels, sheet_fields
+        seiten = lambda f: len(re.findall(rb"/Type /Page\b(?!s)", f.read_bytes()))
+        assert sheet_fields("a4_3x8") == 24 and sheet_fields("roll_89x36") == 0
+        lab = [{"title": "T", "line1": "1", "line2": "", "id_text": str(i)} for i in range(3)]
+        export_labels(lab, tmp_path / "a.pdf", start=23)
+        assert seiten(tmp_path / "a.pdf") == 2   # Felder 23, 24 | 1
+        export_labels(lab, tmp_path / "b.pdf", start=1)
+        assert seiten(tmp_path / "b.pdf") == 1

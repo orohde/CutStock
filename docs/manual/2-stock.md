@@ -32,9 +32,25 @@ On the right are the materials at the selected location, per size with quantity 
 "offcuts only" means only the offcuts of that material are stored here (its offcut location).
 Pieces marked 🔒 are reserved by a saved plan.
 
-- **Click a code** to open the piece: change its note or **Take out …**
+- **Click a code** to open the piece: change its note, **Print label** or **Take out …**
 - **Go to material** jumps to that material in the Material tab.
-- **Labels** prints one label per piece at this location – handy for relabelling a rack.
+- **Labels …** prints labels for pieces at this location (see below).
+
+## Printing labels
+
+**Labels …** (here and in the Material tab) lists all pieces by material and size, each with a
+checkbox. A checkbox on a material or size selects every piece below it.
+
+- Preselected are the pieces that have **never had a label printed** (marked "new") – typically
+  after a delivery or after cutting. If there are none, everything is preselected.
+- Quick selection: **All**, **None**, **Not printed yet**, **Offcuts only**, **Whole pieces only**.
+- **Start at field** (A4 sheets only): on a partly used sheet, printing starts at the given field
+  (1 = top left, then row by row).
+- The button shows the count, e.g. **Print 5**. Printed pieces then count as labelled.
+
+A single label, e.g. to replace one that fell off, is printed with **Print label** in the piece's
+dialog, which also shows when a label was last printed. Pieces that were already in stock before
+this feature count as labelled.
 
 ## Taking a piece out
 

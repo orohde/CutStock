@@ -182,6 +182,7 @@ CREATE TABLE IF NOT EXISTS einzelstueck (
     nr              INTEGER NOT NULL,
     notiz           TEXT    NOT NULL DEFAULT '',
     lagerort        TEXT    NOT NULL DEFAULT '',
+    etikett_gedruckt REAL   NOT NULL DEFAULT 0,   -- Zeitpunkt des letzten Etiketts, 0 = nie
     UNIQUE(lagerstueck_id, nr)
 );
 
@@ -472,6 +473,12 @@ class Database:
         if "lagerort" not in es_cols:
             self.conn.execute(
                 "ALTER TABLE einzelstueck ADD COLUMN lagerort TEXT NOT NULL DEFAULT ''")
+        if "etikett_gedruckt" not in es_cols:
+            # Bestehende Stücke gelten als beschriftet (1 = vor der Erfassung),
+            # sonst stünde nach dem Update der ganze Bestand als „noch nicht gedruckt“ da
+            self.conn.execute(
+                "ALTER TABLE einzelstueck ADD COLUMN etikett_gedruckt REAL NOT NULL DEFAULT 0")
+            self.conn.execute("UPDATE einzelstueck SET etikett_gedruckt = 1")
         self._migrate_kuerzel()
         self._migrate_stueck_nummern()
 
@@ -858,9 +865,13 @@ class Database:
             "SELECT * FROM einzelstueck WHERE lagerstueck_id=? ORDER BY nr",
             (lagerstueck_id,),
         ).fetchall()
-        return [Einzelstueck(id=r["id"], lagerstueck_id=r["lagerstueck_id"],
-                             nr=r["nr"], notiz=r["notiz"], lagerort=r["lagerort"])
-                for r in rows]
+        return [self._einzelstueck(r) for r in rows]
+
+    @staticmethod
+    def _einzelstueck(r) -> Einzelstueck:
+        return Einzelstueck(id=r["id"], lagerstueck_id=r["lagerstueck_id"],
+                            nr=r["nr"], notiz=r["notiz"], lagerort=r["lagerort"],
+                            etikett_gedruckt=r["etikett_gedruckt"])
 
     def get_einzelstueck(self, eid: int) -> Einzelstueck | None:
         row = self.conn.execute(
@@ -868,8 +879,15 @@ class Database:
         ).fetchone()
         if not row:
             return None
-        return Einzelstueck(id=row["id"], lagerstueck_id=row["lagerstueck_id"],
-                            nr=row["nr"], notiz=row["notiz"], lagerort=row["lagerort"])
+        return self._einzelstueck(row)
+
+    def etiketten_gedruckt(self, ids: list[int]):
+        """Vermerken, dass für diese Einzelstücke gerade ein Etikett gedruckt wurde."""
+        import time
+        jetzt = time.time()
+        self.conn.executemany("UPDATE einzelstueck SET etikett_gedruckt=? WHERE id=?",
+                              [(jetzt, i) for i in ids])
+        self.conn.commit()
 
     def save_einzelstueck(self, e: Einzelstueck) -> Einzelstueck:
         self.conn.execute(
@@ -1496,7 +1514,7 @@ class Database:
             if row:
                 snapshot = {
                     "nr": row["nr"], "notiz": row["notiz"], "lagerort": row["lagerort"],
-                    "ist_rest": ls.ist_rest,
+                    "etikett_gedruckt": row["etikett_gedruckt"], "ist_rest": ls.ist_rest,
                     "defekte": [
                         {"position": d.position, "position_y": d.position_y,
                          "laenge": d.laenge, "breite": d.breite}
@@ -1546,9 +1564,10 @@ class Database:
             self.conn.execute(
                 """DELETE FROM stueck_nr_sperre WHERE nr=? AND material_id =
                    (SELECT material_id FROM lagerstueck WHERE id=?)""", (nr, lagerstueck_id))
-        self.conn.execute("UPDATE einzelstueck SET notiz=?, lagerort=? WHERE id=?",
-                          (snapshot.get("notiz", ""), snapshot.get("lagerort", ""),
-                           neu["id"]))
+        self.conn.execute(
+            "UPDATE einzelstueck SET notiz=?, lagerort=?, etikett_gedruckt=? WHERE id=?",
+            (snapshot.get("notiz", ""), snapshot.get("lagerort", ""),
+             snapshot.get("etikett_gedruckt", 0), neu["id"]))
         for d in snapshot.get("defekte", []):
             self.conn.execute(
                 """INSERT INTO defekt (einzelstueck_id, position, position_y,

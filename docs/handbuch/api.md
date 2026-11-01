@@ -93,7 +93,8 @@ Anfragen von der eigenen Web-Oberfläche (Same-Origin) und von localhost sind im
 | POST | `/api/projects/{id}/take-stock/{material_id}` | Teile-Vorrat ("Regal") als gesägt übernehmen |
 | **Export** | | |
 | POST | `/api/pdf` | PDF-Schnittplan erzeugen |
-| POST | `/api/labels` | Etiketten-PDF erzeugen |
+| POST | `/api/labels` | Etiketten-PDF aus fertigen Texten erzeugen |
+| POST | `/api/labels/pieces` | Etiketten für Lagerstücke (Auswahl per Code, Lagerort, Material, Filter) |
 | **System** | | |
 | GET | `/api/version` | App-Version und Links |
 | GET | `/api/license` | Lizenzstatus |
@@ -147,6 +148,15 @@ POST /api/pieces/AP40-07/take
 
 `grund`: `verbraucht`, `verkauft`, `defekt` oder `abfall` (= in die Abfallkiste, wenn eingeschaltet).
 Ist das Stück von einem gespeicherten Plan reserviert, kommt `409` mit `code: "stueck_reserviert"` und dem Projekt; mit `"trotzdem": true` wird es dennoch entnommen. Der Plan zeigt danach `lager_fehlt` und `fehlende_stuecke`.
+
+Etiketten für Lagerstücke -- z. B. alle noch nicht beschrifteten Stücke eines Regals:
+
+```json
+POST /api/labels/pieces
+{"lagerort": "Wandregal Alu", "nur_ungedruckt": true, "startfeld": 5}
+```
+
+Auswahl über `codes` (Liste von Codes oder IDs) **oder** `lagerort` und/oder `material`; eingrenzen mit `nur_reste`, `nur_ganze`, `nur_ungedruckt`. `startfeld` überspringt auf A4-Bögen die schon benutzten Felder. Antwort ist das PDF (Kopfzeile `X-Label-Count` = Anzahl); die Stücke gelten danach als gedruckt (`etikett_gedruckt` am Stück = Unix-Zeit, `0` = nie), außer mit `"markieren": false`. Ohne Auswahl `400 auswahl_fehlt`, passt nichts `404 keine_stuecke`.
 
 Material einem Lagerort zuweisen:
 

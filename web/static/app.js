@@ -306,6 +306,29 @@ const Api = {
         URL.revokeObjectURL(url);
     },
 
+    // Etiketten für Lagerstücke (vermerkt sie als gedruckt); false, wenn nichts kam
+    async downloadPieceLabels(data) {
+        const resp = await fetch(API_BASE + '/api/labels/pieces', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) {
+            showToast(t('error.pdf_failed'), 'error');
+            return false;
+        }
+        const name = /filename="([^"]+)"/.exec(resp.headers.get('Content-Disposition') || '')?.[1];
+        const url = URL.createObjectURL(await resp.blob());
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name || 'CutStock-Etiketten.pdf';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        return true;
+    },
+
     getSettings: () => fetchJSON('/api/settings'),
     updateSettings: (data) => fetchJSON('/api/settings', 'PUT', data),
     getTranslations: (lang) => fetchJSON(`/api/i18n/${lang}`),
@@ -627,6 +650,105 @@ function openPieceDialog(piece, onChange = renderStock) {
         closeModal();
         openTakeDialog(piece, onChange);
     });
+    const gedruckt = piece.etikett_gedruckt > 1
+        ? t('lbl.printed_at', { datum: new Date(piece.etikett_gedruckt * 1000).toLocaleDateString(State.settings.language || undefined) })
+        : piece.etikett_gedruckt ? '' : t('lbl.never');
+    body.querySelector('.piece-take').insertAdjacentHTML('beforebegin', `<div class="form-group piece-take">
+        <button type="button" class="fd-button" id="piece-label-btn">${escHtml(t('lbl.piece'))}</button>
+        ${gedruckt ? `<small class="form-hint">${escHtml(gedruckt)}</small>` : ''}</div>`);
+    document.getElementById('piece-label-btn').addEventListener('click', async () => {
+        closeModal();
+        if (await Api.downloadPieceLabels({ codes: [String(piece.id)] })) await onChange();
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Etiketten-Auswahl (Lager- und Material-Reiter): Material → Maß → Stücke
+// ---------------------------------------------------------------------------
+
+const LABEL_SHEET_FIELDS = { a4_3x8: 24, a4_3x7: 21 };
+
+// gruppen: [{name, kuerzel, zeilen: [{laenge, breite, ist_rest, stuecke: [piece]}]}]
+function openLabelDialog(gruppen, onDone, dateiname = '') {
+    const alle = gruppen.flatMap(g => g.zeilen.flatMap(z => z.stuecke));
+    if (!alle.length) { showToast(t('loc.empty'), 'error'); return; }
+    const ungedruckt = alle.filter(p => !p.etikett_gedruckt);
+    // Sind neue (noch nie beschriftete) Stücke da, sind nur diese vorgewählt
+    const auswahl = new Set((ungedruckt.length ? ungedruckt : alle).map(p => p.id));
+    const felder = LABEL_SHEET_FIELDS[State.settings.label_format || 'a4_3x8'] || 0;
+    let startfeld = 1;
+
+    openModal(t('lbl.title'), [], {}, async () => {
+        const ids = alle.filter(p => auswahl.has(p.id)).map(p => String(p.id));
+        const filename = dateiname && `${t('labels.button')}-${dateiname}`;
+        if (await Api.downloadPieceLabels({ codes: ids, startfeld, filename })) await onDone?.();
+    });
+    const saveBtn = document.getElementById('modal-save');
+    const body = document.getElementById('modal-body');
+
+    const schnell = [
+        ['all', () => true], ['none', () => false],
+        ['unprinted', p => !p.etikett_gedruckt], ['rests', (p, z) => z.ist_rest],
+        ['whole', (p, z) => !z.ist_rest],
+    ];
+    const codeHtml = p => `<label class="lbl-code"><input type="checkbox" class="cs-checkbox" data-id="${p.id}">
+        ${escHtml(p.code || '#' + p.nr)}${p.etikett_gedruckt ? '' : ` <span class="lbl-new">${escHtml(t('lbl.new_badge'))}</span>`}</label>`;
+    body.innerHTML = `<div class="lbl-quick">${schnell.map(([k]) =>
+            `<button type="button" class="fd-button fd-button--compact" data-quick="${k}">${escHtml(t('lbl.' + k))}</button>`).join('')}</div>
+        <div class="lbl-tree">${gruppen.map((g, gi) => `<div class="lbl-mat">
+            <label class="lbl-mat-head"><input type="checkbox" class="cs-checkbox" data-g="${gi}">
+                <span>${escHtml(g.name)}</span>${g.kuerzel ? `<span class="mat-code">${escHtml(g.kuerzel)}</span>` : ''}</label>
+            ${g.zeilen.filter(z => z.stuecke.length).map((z, zi) => `<div class="lbl-line">
+                <label class="lbl-dim"><input type="checkbox" class="cs-checkbox" data-z="${gi}:${zi}">
+                    ${z.ist_rest ? `<span class="rest-badge">${escHtml(t('labels.rest'))}</span> ` : ''}${escHtml(dimText(z.laenge, z.breite))} × ${z.stuecke.length}</label>
+                <span class="lbl-codes">${z.stuecke.map(codeHtml).join('')}</span></div>`).join('')}
+        </div>`).join('')}</div>
+        <div class="lbl-foot form-group">${felder ? `<label class="lbl-start">${escHtml(t('lbl.start'))}
+            <input type="number" min="1" max="${felder}" value="1" id="lbl-start"></label>
+            <small class="form-hint">${escHtml(t('lbl.start_hint', { n: felder }))}</small>` : ''}</div>`;
+
+    const zeilenVon = gi => gruppen[gi].zeilen.filter(z => z.stuecke.length);
+    const setze = (stuecke, an) => stuecke.forEach(p => an ? auswahl.add(p.id) : auswahl.delete(p.id));
+    const zustand = (box, stuecke) => {
+        const n = stuecke.filter(p => auswahl.has(p.id)).length;
+        box.checked = n > 0 && n === stuecke.length;
+        box.indeterminate = n > 0 && n < stuecke.length;
+    };
+    const aktualisieren = () => {
+        body.querySelectorAll('[data-id]').forEach(b => { b.checked = auswahl.has(Number(b.dataset.id)); });
+        body.querySelectorAll('[data-z]').forEach(b => {
+            const [gi, zi] = b.dataset.z.split(':').map(Number);
+            zustand(b, zeilenVon(gi)[zi].stuecke);
+        });
+        body.querySelectorAll('[data-g]').forEach(b =>
+            zustand(b, zeilenVon(Number(b.dataset.g)).flatMap(z => z.stuecke)));
+        saveBtn.textContent = t('lbl.print_n', { n: auswahl.size });
+        saveBtn.disabled = !auswahl.size;
+    };
+
+    body.querySelectorAll('[data-id]').forEach(b => b.addEventListener('change', () => {
+        setze([alle.find(p => p.id === Number(b.dataset.id))], b.checked);
+        aktualisieren();
+    }));
+    body.querySelectorAll('[data-z]').forEach(b => b.addEventListener('change', () => {
+        const [gi, zi] = b.dataset.z.split(':').map(Number);
+        setze(zeilenVon(gi)[zi].stuecke, b.checked);
+        aktualisieren();
+    }));
+    body.querySelectorAll('[data-g]').forEach(b => b.addEventListener('change', () => {
+        setze(zeilenVon(Number(b.dataset.g)).flatMap(z => z.stuecke), b.checked);
+        aktualisieren();
+    }));
+    body.querySelectorAll('[data-quick]').forEach(btn => btn.addEventListener('click', () => {
+        const passt = schnell.find(([k]) => k === btn.dataset.quick)[1];
+        auswahl.clear();
+        gruppen.forEach(g => g.zeilen.forEach(z => z.stuecke.forEach(p => { if (passt(p, z)) auswahl.add(p.id); })));
+        aktualisieren();
+    }));
+    document.getElementById('lbl-start')?.addEventListener('input', (e) => {
+        startfeld = Math.min(Math.max(parseInt(e.target.value) || 1, 1), felder);
+    });
+    aktualisieren();
 }
 
 // Stück entnehmen (mit Grund). Reserviert es ein Plan: Hinweis, der Mensch entscheidet.
@@ -869,16 +991,14 @@ async function deleteLocation() {
     openModal(t('loc.delete_title', { name: ort.name }), fields, {}, (formData) => loeschen(formData.ziel));
 }
 
-// Ein Etikett je Stück an diesem Lagerort (z. B. ein Regal neu beschriften)
+// Etiketten für Stücke an diesem Lagerort – Auswahl im Dialog
 function printLocationLabels() {
     const ort = selectedLocationObj();
-    const inhalt = State.locationContents || [];
-    const labels = inhalt.flatMap(m => m.bestand.flatMap(b => b.stuecke.map(p => ({
-        title: m.name, line1: dimText(b.laenge, b.breite), line2: ort?.name || '',
-        id_text: p.code || `#${p.nr}`,
-    }))));
-    if (!ort || !labels.length) { showToast(t('loc.empty'), 'error'); return; }
-    Api.downloadLabels({ labels: labels.slice(0, 1000), filename: `${t('labels.button')}-${ort.name}` });
+    if (!ort) { showToast(t('loc.select'), 'error'); return; }
+    openLabelDialog((State.locationContents || []).map(m => ({
+        name: m.name, kuerzel: m.kuerzel,
+        zeilen: m.bestand.map(b => ({ laenge: b.laenge, breite: b.breite, ist_rest: b.ist_rest, stuecke: b.stuecke })),
+    })), renderLocations, ort.name);
 }
 
 // ---------------------------------------------------------------------------
@@ -2578,39 +2698,23 @@ function printPartLabels() {
     Api.downloadLabels({ labels, filename: `${t('labels.button')}-${projName || 'Teile'}` });
 }
 
-// One label per physical stock piece (quantity > 1 → several labels);
-// the #ID is written onto the wood and uniquely identifies the remnant.
+// Etiketten für die Stücke des gewählten Materials – Auswahl im Dialog.
+// Der Code steht danach auf dem Material und identifiziert das Stück eindeutig.
 async function printStockLabels() {
     const mat = getSelectedMaterial();
     if (!mat) { showToast(t('dlg.select_material'), 'error'); return; }
     if (!State.stock.length) { showToast(t('stock.empty'), 'error'); return; }
-
-    // Ein Etikett je Einzelstück, mit seinem Code (das schreibt man aufs Material)
-    const labels = [];
-    for (const s of State.stock) {
-        let pieces = [];
-        try { pieces = await Api.getPieces(s.id); } catch { /* ignore */ }
-        pieces.slice(0, 200).forEach(p => labels.push({
-            title: mat.name,
-            line1: dimText(s.laenge, s.breite),
-            line2: p.lagerort || t('labels.stock'),
-            id_text: p.code || `#${p.nr}`,
-        }));
-    }
-    Api.downloadLabels({ labels, filename: `${t('labels.button')}-${mat.name}` });
+    const zeilen = await Promise.all(State.stock.map(async s => ({
+        laenge: s.laenge, breite: s.breite, ist_rest: s.ist_rest,
+        stuecke: await Api.getPieces(s.id).catch(() => []),
+    })));
+    openLabelDialog([{ name: mat.name, kuerzel: mat.kuerzel, zeilen }], renderStock, mat.name);
 }
 
 // Etiketten für die beim Sägen entstandenen Reste eines Bretts
 function printRestLabels(plan) {
-    const mat = State.materials.find(m => m.id === State.optimizationResult?.material_id);
-    const labels = (plan.reste_stuecke || []).map(r => ({
-        title: mat?.name || '',
-        line1: dimText(r.laenge, r.breite),
-        line2: r.lagerort || t('labels.rest'),
-        id_text: r.code,
-    }));
-    if (!labels.length) return;
-    Api.downloadLabels({ labels, filename: `${t('labels.button')}-${t('labels.rest')}` });
+    const codes = (plan.reste_stuecke || []).map(r => r.code).filter(Boolean);
+    if (codes.length) Api.downloadPieceLabels({ codes });
 }
 
 // "Nimm AP4040-07 · 640 mm · Regal 2" bzw. nach dem Anfangen "Reste beschriften: …"
@@ -3355,6 +3459,7 @@ function openModal(title, fields, data, onSave) {
     titleEl.textContent = title;
     saveBtn.textContent = t('btn.save');
     saveBtn.style.display = '';
+    saveBtn.disabled = false;
 
     body.innerHTML = fields.map(f => {
         if (f.hidden) return `<div class="form-group" data-field="${f.key}" style="display:none">${fieldHtml(f, data)}</div>`;

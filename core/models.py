@@ -134,6 +134,7 @@ class Einzelstueck:
     nr: int = 1           # eindeutig je Material, frei gewordene Nummern werden wieder vergeben
     notiz: str = ""
     lagerort: str = ""    # nicht mehr genutzt: Stücke liegen am Lagerort ihres Materials
+    etikett_gedruckt: float = 0.0   # Zeitpunkt des letzten Etiketts (Unix-Zeit), 0 = nie
 
 
 @dataclass

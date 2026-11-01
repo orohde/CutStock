@@ -35,7 +35,8 @@ of it is in the offcut bin. Below that, one row per size with quantity; offcuts 
 - **▶ quantity** expands the individual pieces: code, note, defects and – with 🔒 – which project
   the piece is reserved for. **Double-click** a piece to change its note or take it out.
 - **Defects** records knots, cracks etc. per piece; optimization routes around them.
-- **Labels** prints one label per piece with material, size, location and code.
+- **Labels …** lets you choose which pieces get a label (material, size, location and code) –
+  see [Printing labels](2-stock.md#printing-labels).
 
 Freed piece numbers are only reused after a lock period (Settings → Stock), in case a piece was
 deducted by mistake and is still on the rack.

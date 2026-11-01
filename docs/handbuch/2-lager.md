@@ -33,10 +33,25 @@ Rechts stehen die Materialien am gewählten Ort, je Maß mit Anzahl und den Stü
 „nur Reste“ heißt: An diesem Ort liegen nur die Reste des Materials (sein Reste-Ort).
 Mit 🔒 markierte Stücke sind von einem gespeicherten Plan reserviert.
 
-- **Code anklicken** öffnet das Stück: Notiz ändern oder **Entnehmen …**
+- **Code anklicken** öffnet das Stück: Notiz ändern, **Etikett drucken** oder **Entnehmen …**
 - **Zum Material** springt in den Reiter Material zu diesem Material.
-- **Etiketten** druckt für jedes Stück an diesem Ort ein Etikett – praktisch, um ein Regal neu
-  zu beschriften.
+- **Etiketten …** druckt Etiketten für Stücke an diesem Ort (siehe unten).
+
+## Etiketten drucken
+
+**Etiketten …** (hier und im Reiter Material) zeigt alle Stücke nach Material und Maß, jedes mit
+Häkchen. Ein Häkchen am Material oder am Maß wählt alle Stücke darunter.
+
+- Vorgewählt sind die Stücke, für die **noch nie ein Etikett gedruckt** wurde (Markierung „neu“) –
+  typisch nach einer Lieferung oder nach dem Sägen. Gibt es keine, ist alles vorgewählt.
+- Schnellauswahl: **Alle**, **Keine**, **Noch nicht gedruckt**, **Nur Reste**, **Nur ganze Stücke**.
+- **Beginnen bei Feld** (nur bei A4-Bögen): Auf einem angebrochenen Bogen beginnt der Druck beim
+  angegebenen Feld (1 = oben links, dann zeilenweise).
+- Der Knopf zeigt die Anzahl, z. B. **5 drucken**. Gedruckte Stücke gelten danach als beschriftet.
+
+Ein einzelnes Etikett, z. B. als Ersatz für ein abgefallenes, druckt **Etikett drucken** im Dialog
+des Stücks; dort steht auch, wann zuletzt eines gedruckt wurde. Stücke, die vor dieser Funktion
+schon im Lager lagen, gelten als beschriftet.
 
 ## Stück entnehmen
 

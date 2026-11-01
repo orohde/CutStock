@@ -355,6 +355,7 @@ class EinzelstueckOut(BaseModel):
     laenge: float = 0.0
     breite: float = 0.0
     ist_rest: bool = False
+    etikett_gedruckt: float = 0.0  # Zeitpunkt des letzten Etiketts (Unix-Zeit), 0 = nie
 
 
 class EinzelstueckIn(BaseModel):
@@ -609,6 +610,21 @@ class LabelIn(BaseModel):
 class LabelsRequest(BaseModel):
     labels: list[LabelIn]
     filename: str = "Etiketten"
+    startfeld: int = 1   # erstes Feld auf dem A4-Bogen (angebrochener Bogen), Rolle: egal
+
+
+class PieceLabelsIn(BaseModel):
+    """Etiketten für Lagerstücke. Auswahl über codes und/oder lagerort/material,
+    eingegrenzt durch die nur_*-Filter."""
+    codes: list[str] = []            # bestimmte Stücke (Code oder ID)
+    lagerort: Optional[str] = None   # alle Stücke an diesem Ort (ID oder Name)
+    material: Optional[str] = None   # alle Stücke dieses Materials (ID oder Kürzel)
+    nur_reste: bool = False
+    nur_ganze: bool = False
+    nur_ungedruckt: bool = False     # nur Stücke, für die noch nie ein Etikett gedruckt wurde
+    startfeld: int = 1
+    markieren: bool = True           # Stücke als gedruckt vermerken
+    filename: str = ""
 
 
 class SettingsIn(BaseModel):
@@ -1073,7 +1089,7 @@ def _piece_out(db: Database, e: Einzelstueck, material: Material | None,
         material_id=material.id if material else 0,
         material=material.name if material else "",
         laenge=ls.laenge if ls else 0.0, breite=ls.breite if ls else 0.0,
-        ist_rest=bool(ls and ls.ist_rest))
+        ist_rest=bool(ls and ls.ist_rest), etikett_gedruckt=e.etikett_gedruckt)
 
 
 def _stueck_ref(db: Database, ref: str) -> Einzelstueck:
@@ -3017,33 +3033,92 @@ def generate_pdf(req: PdfRequest):
 # ---------------------------------------------------------------------------
 
 
-@app.post("/api/labels")
-def generate_labels(req: LabelsRequest):
+def _labels_pdf(labels: list[dict], filename: str, startfeld: int = 1) -> FileResponse:
     from core.labels import export_labels
-
-    if not req.labels:
-        raise HTTPException(400, "No labels")
 
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp_path = tmp.name
 
     try:
         cfg = _get_settings_dict()
-        export_labels([l.model_dump() for l in req.labels], tmp_path,
-                      title=req.filename,
+        export_labels(labels, tmp_path,
+                      title=filename,
                       fmt=str(cfg.get("label_format") or "a4_3x8"),
                       custom_w=float(cfg.get("label_custom_w") or 0),
-                      custom_h=float(cfg.get("label_custom_h") or 0))
-        fname = f"CutStock-{req.filename}.pdf"
+                      custom_h=float(cfg.get("label_custom_h") or 0),
+                      start=startfeld)
+        fname = f"CutStock-{filename}.pdf"
         return FileResponse(
             tmp_path,
             media_type="application/pdf",
             filename=fname,
-            headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+            headers={"Content-Disposition": f'attachment; filename="{fname}"',
+                     "X-Label-Count": str(len(labels))},
         )
     except Exception as e:
         Path(tmp_path).unlink(missing_ok=True)
         raise HTTPException(500, f"Label generation failed: {e}")
+
+
+@app.post("/api/labels")
+def generate_labels(req: LabelsRequest):
+    if not req.labels:
+        raise HTTPException(400, "No labels")
+    return _labels_pdf([l.model_dump() for l in req.labels], req.filename, req.startfeld)
+
+
+def _mass_text(laenge: float, breite: float, unit: str) -> str:
+    """Maß wie in der Oberfläche: "640 mm" bzw. "800 × 600 mm" in der eingestellten Einheit."""
+    teiler, stellen = {"cm": (10, 2), "in": (25.4, 3)}.get(unit, (1, 1))
+    zahl = lambda v: f"{v / teiler:.{stellen}f}".rstrip("0").rstrip(".")
+    einheit = unit if unit in ("cm", "in") else "mm"
+    return f"{zahl(laenge)} × {zahl(breite)} {einheit}" if breite > 0 else f"{zahl(laenge)} {einheit}"
+
+
+@app.post("/api/labels/pieces")
+def piece_labels(req: PieceLabelsIn):
+    """Etiketten für Lagerstücke: Material, Maß, Lagerort, Code. Druckt nur die
+    ausgewählten (codes, lagerort, material, nur_*-Filter) und vermerkt sie als
+    gedruckt – darauf baut nur_ungedruckt auf."""
+    db = get_db()
+    stuecke: list[tuple[Material, Lagerstueck, Einzelstueck]] = []
+    if req.codes:
+        for ref in req.codes:
+            e = _stueck_ref(db, str(ref))
+            ls = db.get_lagerstueck(e.lagerstueck_id)
+            stuecke.append((db.get_material(ls.material_id), ls, e))
+    elif req.lagerort or req.material:
+        nur_mat = _material_ref(db, req.material) if req.material else None
+        if req.lagerort:
+            ort = _lagerort_ref(db, req.lagerort)
+            zeilen = [(m, ls) for m, rolle in db.lagerort_inhalt(ort["name"])
+                      if not nur_mat or m.id == nur_mat.id
+                      for ls in db.lagerort_stuecke(m, rolle)]
+        else:
+            zeilen = [(nur_mat, ls) for ls in db.list_lagerstuecke(nur_mat.id)]
+        stuecke = [(m, ls, e) for m, ls in zeilen for e in db.list_einzelstuecke(ls.id)]
+    else:
+        raise _fehler(400, "auswahl_fehlt", "Give codes, lagerort or material")
+
+    stuecke = [(m, ls, e) for m, ls, e in stuecke
+               if not (req.nur_reste and not ls.ist_rest)
+               and not (req.nur_ganze and ls.ist_rest)
+               and not (req.nur_ungedruckt and e.etikett_gedruckt)]
+    if not stuecke:
+        raise _fehler(404, "keine_stuecke", "No pieces match the selection")
+    stuecke = stuecke[:1000]
+
+    unit = str(_get_settings_dict().get("unit") or "mm")
+    labels = [{"title": m.name, "line1": _mass_text(ls.laenge, ls.breite, unit),
+               "line2": db.stueck_lagerort(m, ls), "id_text": stueck_code(m.kuerzel, e.nr)}
+              for m, ls, e in stuecke]
+    namen = {m.name for m, _, _ in stuecke}
+    name = req.filename or (labels[0]["id_text"] if len(labels) == 1
+                            else namen.pop() if len(namen) == 1 else "Etiketten")
+    antwort = _labels_pdf(labels, name, req.startfeld)
+    if req.markieren:
+        db.etiketten_gedruckt([e.id for _, _, e in stuecke])
+    return antwort
 
 
 # ---------------------------------------------------------------------------
@@ -3441,6 +3516,20 @@ WEB_EXTRA_TRANSLATIONS = {
     "stock.rests_at": {"de": "Reste: {ort}", "en": "Offcuts: {ort}", "fr": "Chutes : {ort}", "it": "Ritagli: {ort}"},
     "stock.waste_hint": {"de": "+ {n} in der Abfallkiste", "en": "+ {n} in the offcut bin", "fr": "+ {n} dans le bac à chutes", "it": "+ {n} nella cassa sfridi"},
     "mat.location_rest_same": {"de": "(gleicher Ort)", "en": "(same location)", "fr": "(même emplacement)", "it": "(stessa ubicazione)"},
+    "lbl.title": {"de": "Etiketten drucken", "en": "Print labels", "fr": "Imprimer des étiquettes", "it": "Stampa etichette"},
+    "lbl.all": {"de": "Alle", "en": "All", "fr": "Toutes", "it": "Tutte"},
+    "lbl.none": {"de": "Keine", "en": "None", "fr": "Aucune", "it": "Nessuna"},
+    "lbl.unprinted": {"de": "Noch nicht gedruckt", "en": "Not printed yet", "fr": "Pas encore imprimées", "it": "Non ancora stampate"},
+    "lbl.rests": {"de": "Nur Reste", "en": "Offcuts only", "fr": "Chutes seulement", "it": "Solo ritagli"},
+    "lbl.whole": {"de": "Nur ganze Stücke", "en": "Whole pieces only", "fr": "Pièces entières seulement", "it": "Solo pezzi interi"},
+    "lbl.new_badge": {"de": "neu", "en": "new", "fr": "nouveau", "it": "nuovo"},
+    "lbl.start": {"de": "Beginnen bei Feld", "en": "Start at field", "fr": "Commencer au champ", "it": "Inizia dal campo"},
+    "lbl.start_hint": {"de": "Für angebrochene Bögen: 1 = oben links, dann zeilenweise bis {n}.", "en": "For partly used sheets: 1 = top left, then row by row up to {n}.", "fr": "Pour les planches entamées : 1 = en haut à gauche, puis ligne par ligne jusqu’à {n}.", "it": "Per fogli già usati: 1 = in alto a sinistra, poi riga per riga fino a {n}."},
+    "lbl.print_n": {"de": "{n} drucken", "en": "Print {n}", "fr": "Imprimer {n}", "it": "Stampa {n}"},
+    "lbl.piece": {"de": "Etikett drucken", "en": "Print label", "fr": "Imprimer l’étiquette", "it": "Stampa etichetta"},
+    "lbl.printed_at": {"de": "Etikett zuletzt gedruckt am {datum}", "en": "Label last printed on {datum}", "fr": "Étiquette imprimée le {datum}", "it": "Etichetta stampata il {datum}"},
+    "lbl.never": {"de": "Für dieses Stück wurde noch kein Etikett gedruckt.", "en": "No label has been printed for this piece yet.", "fr": "Aucune étiquette n’a encore été imprimée pour cette pièce.", "it": "Per questo pezzo non è ancora stata stampata un’etichetta."},
+    "labels.button_dlg": {"de": "Etiketten …", "en": "Labels …", "fr": "Étiquettes …", "it": "Etichette …"},
     "piece.take": {"de": "Entnehmen …", "en": "Take out …", "fr": "Retirer …", "it": "Preleva …"},
     "piece.take_btn": {"de": "Entnehmen", "en": "Take out", "fr": "Retirer", "it": "Preleva"},
     "piece.take_hint": {"de": "Nimmt das Stück aus dem Lager (wird im Lagerjournal vermerkt).", "en": "Removes the piece from stock (recorded in the stock journal).", "fr": "Retire la pièce du stock (noté dans le journal).", "it": "Toglie il pezzo dal magazzino (registrato nel giornale)."},
