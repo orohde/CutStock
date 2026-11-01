@@ -9,6 +9,8 @@ Links oben die Projekte, darunter die Sammelpläne, rechts die Teile des gewähl
 ## Projekte
 
 - **Neu**, **Bearbeiten**, **Löschen**, **Duplizieren** wie gewohnt.
+- **Projekt neu starten**: um ein Projekt noch einmal zu sägen – der Fortschritt aller Teile geht
+  auf 0, die gespeicherten Pläne werden gelöscht, das Lager bleibt unverändert (mit Rückfrage).
 - **Anzahl Exemplare**: Wird ein Projekt mehrfach gebaut, genügt die Anzahl am Projekt –
   alle Exemplare werden gemeinsam optimiert.
 - Import/Export als JSON, Teilelisten-Import aus CSV.
@@ -42,8 +44,8 @@ Kasten „Sammelpläne“ tragen ein 🔗 und das Etikett „Sammelplan“.
 - **Ausgewählt** zeigt der rechte Kasten die Mitglieder mit Häkchen (dort ändern) und darunter
   ihre Teile in diesem Material, nach Projekt gruppiert und nur zur Ansicht. Projektnamen sind
   Links ins jeweilige Projekt; bearbeitet wird dort.
-- **Optimieren** springt in die [Optimierung](5-optimierung.md#sammelplan) (Material-Modus) mit
-  diesem Sammelplan.
+- **Optimieren** springt in die [Optimierung](5-optimierung.md#sammelplan) und wählt dort diesen
+  Sammelplan aus.
 - **Löschen** wie ein Projekt, mit Warnung, wenn schon gesägt wurde. Nichts geht verloren:
   Gesägte Teile bleiben in ihren Projekten als gesägt, der Rest wird wieder offen, reservierte
   Lagerstücke werden frei. Danach lassen sich die Projekte einzeln optimieren oder neu

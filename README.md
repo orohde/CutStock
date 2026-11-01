@@ -27,7 +27,7 @@ CutStock comes in two flavors that share the same optimization core:
 - **Saved Cut Plans** -- every calculation is saved; switching between projects keeps your progress (what has already been cut). Re-optimizing keeps started boards, warns when parts or stock have changed, "Restart project" to cut it again
 - **Stock Reservation** -- saved plans reserve their pieces that haven't been started yet, so other projects don't plan them (can be switched off); "Discard plan" releases them
 - **Remnants First** -- optionally plan remnants first, then full bars/panels
-- **Combined Plan** -- optimize one material for several projects at once ("Optimize by: Material"), with a separate/combined comparison; cut parts count directly in their project
+- **Combined Plan** -- optimize one material for several projects at once (its own entry in the optimization work list), with a separate/combined comparison; cut parts count directly in their project
 - **Filler Parts** -- cut parts from other projects to fill up the waste of bars and panels (no extra material); once cut they count directly for their own project, any extra go to the finished parts
 - **Open Parts and Cut Jobs** -- "Parts" tab with everything still to be cut, grouped by material with a stock estimate; cut selected parts with "Cut now" as a cut job or take them into another project's remnants; finished parts per part
 - **Project Management** -- organize parts by project, build a project several times (number of copies), import/export as JSON, import part lists from CSV

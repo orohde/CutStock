@@ -6,19 +6,77 @@ Hier entstehen die Schnittpläne – und hier wird beim Sägen abgehakt.
 
 ![Optimierung Stangen](../screenshot_optimierung.png)
 
-## Optimieren
+## Was sägen? – die Arbeitsliste
 
-Projekt, Material, Sägeblatt und Algorithmus wählen, dann **Optimieren**.
+Links steht alles, was gesägt werden kann, in drei Gruppen:
 
-- Algorithmen: **Schnell** (Greedy), **Nested Guillotine** (intelligente Schnittrichtung),
-  **Gründlich** (genetischer Algorithmus).
-- **Reste zuerst**: erst nur Reste verplanen, dann ganze Stangen/Platten.
-- **Max. je Stange**: höchstens so viele Teile auf eine Stange – lässt Platz für Füllteile.
+- **Sammelpläne** – je ein Eintrag (siehe [Sammelplan](#sammelplan)),
+- **Sägeaufträge** – aus dem Reiter [Teile](4-teile.md#sägeaufträge),
+- **Projekte** – mit mehreren Materialien aufklappbar, darunter eine Zeile je Material.
+
+Jede Zeile zeigt ihren Stand:
+
+| Stand | Bedeutung |
+|---|---|
+| noch kein Plan | Es gibt offene Teile, aber noch keinen Schnittplan |
+| Plan bereit · 0/12 | Plan berechnet, noch nichts gesägt (gesägt/Stücke im Plan) |
+| in Arbeit · 5/12 | Es wird gerade gesägt |
+| Plan veraltet | Teile oder Material wurden geändert, oder Teile wurden inzwischen anderswo gesägt |
+| im Sammelplan | Dieses Material wird im Sammelplan gesägt – ein Klick öffnet ihn |
+| anderswo verplant | Alle offenen Teile stecken schon in einem Sägeauftrag oder einem anderen Plan |
+| fertig | Alles gesägt (nur mit „auch fertige zeigen“) |
+
+Oben lässt sich nach Namen oder Material suchen. Die Auswahl bleibt erhalten, auch beim Wechsel
+der Reiter. Sprünge aus anderen Reitern („Jetzt sägen →“, „Weitersägen“, „Optimieren“ beim
+Sammelplan) wählen den passenden Eintrag hier aus.
+
+## Rechts: Stand und eine Hauptaktion
+
+Rechts oben stehen Name, Material, offene Teile und Stück. Darunter steht immer nur **eine** blaue
+Hauptaktion, passend zum Stand:
+
+| Stand | Hauptaktion |
+|---|---|
+| noch kein Plan | **Schnittplan berechnen** |
+| Plan bereit / in Arbeit | **An die Säge →** (öffnet den [Werkstatt-Modus](#werkstatt-modus)) |
+| Plan veraltet | **Neu berechnen** – der Grund steht über dem Plan |
+| fertig | keine – nur noch PDF und Etiketten |
+
+Daneben: **Reste auffüllen…** (siehe [Füllteile](#füllteile)), **PDF Export**, **Etiketten**
+und das Menü **Mehr** mit *Neu berechnen*, *Alles als gesägt markieren…* (mit Rückfrage) und
+*Plan verwerfen* (gibt reservierte Stücke frei).
+
+**Projekt neu starten** (Fortschritt auf 0, Pläne weg, Lager bleibt) steht im Reiter
+[Projekte](3-projekte.md).
+
+Wird das Material des gewählten Projekts auch in anderen Projekten gebraucht und gibt es noch
+keinen Sammelplan, erscheint der Hinweis „… wird auch in ‚X‘ gebraucht – zusammen sägen?“.
+**Sammelplan anlegen** legt ihn mit diesen Projekten an und wählt ihn aus.
+
+### Einstellungen
+
+Die Einstellungen sind eingeklappt und als eine Zeile zusammengefasst, z. B.
+„Alu-Kappsäge 2,8 mm · Standard · Reste zuerst aus“. Ein Klick klappt sie auf:
+
+- **Sägeblatt** – vorgewählt ist das Sägeblatt des Materials (siehe
+  [Material](1-material.md)). Wer mit einem anderen rechnet, macht es damit zum neuen Standard
+  dieses Materials.
+- **Rechenart** – bei Stangen **Standard** oder **Gründlich**, bei Platten **Schnell**,
+  **Standard** (Guillotine mit intelligenter Schnittrichtung) oder **Gründlich** (genetischer
+  Algorithmus, dauert länger).
+- **Reste zuerst** – erst nur Reste verplanen, dann ganze Stangen/Platten.
+- **Max. je Stange** – höchstens so viele Teile auf eine Stange, lässt Platz für Füllteile.
 
 Jede Berechnung wird als **Plan** gespeichert. Der Plan reserviert seine noch nicht angefangenen
 Stücke, andere Projekte verplanen sie nicht (abschaltbar unter Einstellungen → Lager).
 Hinweise erscheinen, wenn sich Teile oder Material seit der Berechnung geändert haben oder ein
 eingeplantes Stück nicht mehr im Lager ist (mit Code, z. B. „Nicht mehr im Lager: AP40-07“).
+
+### Kennzahlen
+
+Eine Zeile über dem Plan: „6 ganze Stangen + 2 Reste · 24 Teile · 95 % genutzt · Abfall 2 %“.
+Passen Teile nicht ins Lager, steht darunter ein roter Kasten mit den fehlenden Teilen und der
+Einkaufsliste (siehe [Materialbedarf](#materialbedarf)).
 
 ## Der Plan
 
@@ -35,10 +93,6 @@ Ein Klick auf ein Teil im Plan hakt es als gesägt ab. Beim ersten Teil eines Br
 Stück aus dem Lager ausgetragen, Reste werden eingebucht, Abfall kommt in die Abfallkiste.
 Zurücknehmen macht das wieder rückgängig.
 
-Weitere Knöpfe: **Bestätigen (gesägt)** für alles, **PDF Export**, **Etiketten**,
-**Werkstatt-Modus**, **Plan verwerfen** (gibt reservierte Stücke frei),
-**Projekt neu starten** (Fortschritt auf 0, Lager bleibt).
-
 Stangen sind im Plan **im gleichen Maßstab** gezeichnet: Die längste füllt die Breite, kürzere
 sind entsprechend kürzer. Sehr kurze Stangen werden etwas breiter gezeichnet und dann gestrichelt
 umrandet. Die Lupe und der Werkstatt-Modus zeigen jede Stange in voller Breite.
@@ -54,16 +108,17 @@ ist eingerechnet.
 ## Füllteile
 
 Bleibt am Ende einer Stange oder auf einer Platte Abfall, füllt CutStock ihn mit Teilen aus
-anderen Projekten auf (**Füllteile …**). Es wird nie mehr Material verbraucht. Füllteile sind
+anderen Projekten auf (**Reste auffüllen…**). Es wird nie mehr Material verbraucht. Füllteile sind
 schraffiert, tragen ihr Herkunftsprojekt und zählen gesägt direkt bei ihrem Projekt (Überzähliges kommt zu den Fertigteilen).
 
 ![Füllteile](../screenshot_fuellteile.png)
 
 ## Sammelplan
 
-Wird dasselbe Material in mehreren Projekten gebraucht: „Optimieren nach: **Material
-(Sammelplan)**“, Material wählen, Projekte anhaken. **Vergleichen** zeigt die Ersparnis gegenüber
-getrennten Plänen. Jedes Projekt bekommt eine eigene Farbe; abgehakte Teile zählen in ihrem
+Wird dasselbe Material in mehreren Projekten gebraucht, sägt ein Sammelplan sie gemeinsam. Er
+steht oben in der Arbeitsliste; gewählt zeigt er seine Projekte mit Häkchen. **Vergleichen** zeigt
+die Ersparnis gegenüber getrennten Plänen, **Schnittplan berechnen** rechnet die angehakten
+Projekte zusammen. Jedes Projekt bekommt eine eigene Farbe; abgehakte Teile zählen in ihrem
 Projekt. Anlegen, umbenennen, Mitglieder ändern und löschen geht auch im Reiter
 [Projekte](3-projekte.md#sammelpläne), Kasten „Sammelpläne“.
 
@@ -71,12 +126,12 @@ Projekt. Anlegen, umbenennen, Mitglieder ändern und löschen geht auch im Reite
 
 ## Materialbedarf
 
-Reicht der Bestand nicht, zeigt CutStock eine Einkaufsliste; per Klick lässt sie sich direkt
-ins Lager übernehmen.
+Reicht der Bestand nicht, zeigt CutStock im roten Kasten eine Einkaufsliste; **Ins Lager**
+übernimmt sie direkt.
 
 ## Werkstatt-Modus
 
-Vollbild fürs Tablet an der Säge: eine Stange/Platte pro Seite mit Stück-Code und Lagerort,
+**An die Säge →** öffnet das Vollbild fürs Tablet an der Säge: eine Stange/Platte pro Seite mit Stück-Code und Lagerort,
 große Touch-Ziele, Fortschritt, „Als Nächstes“-Markierung. Entstandene Reste werden mit ihrem
 Code angezeigt und können gleich als Etikett gedruckt werden.
 

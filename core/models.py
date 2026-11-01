@@ -60,6 +60,8 @@ class Material:
     # Lagerort (Name aus der Lagerort-Liste, Pflicht) und Ort der Reste (leer = gleicher Ort)
     lagerort: str = ""
     lagerort_reste: str = ""
+    # Standard-Sägeblatt für die Optimierung (0 = erstes Sägeblatt)
+    saegeblatt_id: int = 0
 
     def stueck_code(self, nr: int) -> str:
         return stueck_code(self.kuerzel, nr)

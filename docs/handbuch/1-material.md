@@ -20,6 +20,7 @@ Links stehen die Materialien, rechts der Lagerbestand des gewählten Materials.
 | Kürzel | für die Stück-Codes, z. B. `AP40` → `AP40-07`; leer = Vorschlag aus dem Namen |
 | Lagerort | wo das Material liegt (Pflicht); „+ Neuer Lagerort …“ legt direkt einen an |
 | Lagerort für Reste | wo die Reste liegen; „(gleicher Ort)“ = beim Material |
+| Sägeblatt | wird in der [Optimierung](5-optimierung.md#einstellungen) vorgewählt; leer = erstes Sägeblatt. Rechnet man dort mit einem anderen, wird dieses zum neuen Standard |
 | Bild | optional, erscheint als Miniatur und im PDF |
 
 Mehr zu Lagerorten im Reiter [Lager](2-lager.md).

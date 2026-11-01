@@ -20,6 +20,7 @@ On the left are the materials, on the right the stock of the selected material.
 | Short code | for piece codes, e.g. `AP40` → `AP40-07`; empty = suggestion from the name |
 | Storage location | where the material is stored (required); "+ New location …" creates one right away |
 | Storage location for remnants | where its offcuts are stored; "(same location)" = with the material |
+| Saw blade | preselected in [Optimization](5-optimization.md#settings); empty = first saw blade. Calculating there with a different one makes it the new default |
 | Image | optional, shown as thumbnail and in the PDF |
 
 More about locations in the [Stock](2-stock.md) tab.

@@ -45,7 +45,8 @@ hinaus gesägt wird, kommt zu den **Fertigteilen**.
 Laufende Sägeaufträge stehen oben im Reiter, mit Fortschritt („3 von 5 gesägt“),
 **Weitersägen** (öffnet die Optimierung) und **Löschen**. Bereits Gesägtes bleibt beim Löschen
 bei den Projekten verbucht. Ist ein Auftrag komplett gesägt, bietet CutStock an, ihn zu löschen.
-In der Optimierung erscheinen Sägeaufträge in der Projektauswahl, im Reiter Projekte nicht.
+In der Optimierung stehen Sägeaufträge in der Arbeitsliste in einer eigenen Gruppe, im Reiter
+Projekte nicht.
 
 ## Fertigteile
 

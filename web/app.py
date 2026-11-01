@@ -303,6 +303,8 @@ class MaterialIn(BaseModel):
     # None = unverändert lassen; lagerort_reste "" = gleicher Ort wie das Material.
     lagerort: Optional[str] = None
     lagerort_reste: Optional[str] = None
+    # Standard-Sägeblatt der Optimierung; None = unverändert, 0 = keins (erstes Sägeblatt)
+    saegeblatt_id: Optional[int] = None
 
 
 class MaterialOut(BaseModel):
@@ -321,6 +323,7 @@ class MaterialOut(BaseModel):
     kuerzel: str = ""
     lagerort: str = ""
     lagerort_reste: str = ""
+    saegeblatt_id: int = 0
 
 
 class StockIn(BaseModel):
@@ -531,6 +534,7 @@ class OptimizeResult(BaseModel):
     erstellt: float = 0.0
     version: int = 0
     veraltet: bool = False      # Teile/Material/Sägeblatt seit der Berechnung geändert
+    veraltet_grund: str = ""    # "teile" (Teile/Material geändert) | "anderswo" (anderswo gesägt)
     lager_fehlt: bool = False   # eingeplante, noch unbenutzte Lagerstücke fehlen
     fehlende_stuecke: list[str] = []   # deren Codes, z.B. ["AP4040-07"]
     fuellteile: list[dict] = []          # Auswahl [{teil_id, modus, menge}]
@@ -668,6 +672,7 @@ def _material_to_out(m: Material) -> MaterialOut:
         kuerzel=m.kuerzel,
         lagerort=m.lagerort,
         lagerort_reste=m.lagerort_reste,
+        saegeblatt_id=m.saegeblatt_id,
         hat_bild=bool(m.bild),
     )
 
@@ -687,6 +692,7 @@ def _material_from_in(data: MaterialIn, mid: int | None = None) -> Material:
         kuerzel=data.kuerzel,
         lagerort=data.lagerort or "",
         lagerort_reste=data.lagerort_reste or "",
+        saegeblatt_id=data.saegeblatt_id or 0,
     )
 
 
@@ -954,6 +960,8 @@ def update_material(mid: int, data: MaterialIn):
         m.lagerort = existing.lagerort
     if data.lagerort_reste is None:
         m.lagerort_reste = existing.lagerort_reste
+    if data.saegeblatt_id is None:
+        m.saegeblatt_id = existing.saegeblatt_id
     try:
         m = db.save_material(m)
     except ValueError as e:
@@ -2014,6 +2022,12 @@ def _berechnen(material: Material, kerf: float, algorithm: str, reste_zuerst: bo
     return ergebnis
 
 
+def _saegeblatt_merken(db: Database, material: Material, blade: Saegeblatt):
+    """Wer mit einem anderen Sägeblatt rechnet, macht es zum Standard des Materials."""
+    if material.saegeblatt_id != blade.id:
+        db.set_material_saegeblatt(material.id, blade.id)
+
+
 def _schon_geplant(behalten: list[PlanBrett]) -> dict[int, int]:
     """Ungesägte Stücke auf behaltenen (angefangenen) Brettern, je Teil."""
     n: dict[int, int] = {}
@@ -2049,6 +2063,7 @@ def run_optimization(req: OptimizeRequest):
         raise HTTPException(404, "Saw blade not found")
 
     db = get_db()
+    _saegeblatt_merken(db, material, blade)
     is_1d = material.typ == MaterialTyp.STANGE
     alt = db.get_plan(req.project_id, req.material_id)
     fuell_auswahl = ([f.model_dump() for f in req.fuellteile] if req.fuellteile is not None
@@ -2372,6 +2387,7 @@ def optimize_sammel(req: SammelRequest):
     if not projekt_ids:
         raise HTTPException(400, "No projects selected")
 
+    _saegeblatt_merken(db, material, blade)
     is_1d = material.typ == MaterialTyp.STANGE
     sammel = db.get_sammel(material.id) or db.sammel_anlegen(
         material.id, f"Sammelplan {material.name}")
@@ -2744,6 +2760,15 @@ def _plan_ueberplant(db: Database, plan: GespeicherterPlan) -> bool:
     return False
 
 
+def _veraltet_grund(db: Database, plan: GespeicherterPlan, projekt: Projekt | None,
+                    material: Material | None) -> str:
+    """Warum der Plan nicht mehr passt: "teile", "anderswo" oder "" (passt)."""
+    if (projekt is None or material is None
+            or _eingabe_hash(projekt, material, plan.kerf) != plan.eingabe_hash):
+        return "teile"
+    return "anderswo" if _plan_ueberplant(db, plan) else ""
+
+
 def _plan_to_out(plan: GespeicherterPlan) -> OptimizeResult:
     db = get_db()
     material = db.get_material(plan.material_id)
@@ -2830,9 +2855,8 @@ def _plan_to_out(plan: GespeicherterPlan) -> OptimizeResult:
         plan_id=plan.id, projekt_id=plan.projekt_id, material_id=plan.material_id,
         saegeblatt_id=plan.saegeblatt_id, algorithmus=plan.algorithmus,
         erstellt=plan.erstellt, version=plan.version,
-        veraltet=(projekt is None or material is None or
-                  _eingabe_hash(projekt, material, plan.kerf) != plan.eingabe_hash
-                  or _plan_ueberplant(db, plan)),
+        veraltet=bool(grund := _veraltet_grund(db, plan, projekt, material)),
+        veraltet_grund=grund,
         lager_fehlt=lager_fehlt,
         fehlende_stuecke=fehlende_stuecke,
         fuellteile=plan.fuellteile,
@@ -2878,6 +2902,125 @@ def _brett_abgleichen(db: Database, plan: GespeicherterPlan, brett: PlanBrett,
                WHERE lagerstueck_id=? AND verbraucht=0""",
             (brett.lagerstueck_id, alte_id))
         db.conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Arbeitsliste der Optimierung: was gibt es zu sägen, und wie weit ist es?
+# ---------------------------------------------------------------------------
+
+# Reihenfolge für den Gesamtstatus eines Eintrags (wichtigstes zuerst)
+_STATUS_RANG = ["veraltet", "in_arbeit", "bereit", "kein_plan", "verplant", "sammel", "fertig"]
+
+
+class WorkProjectRef(BaseModel):
+    projekt_id: int
+    name: str
+
+
+class WorklistLineOut(BaseModel):
+    material_id: int
+    material: str
+    typ: str
+    teile: int = 0        # Teile mit offener Menge
+    offen: int = 0        # Stück noch zu sägen
+    # kein_plan | bereit | in_arbeit | veraltet | fertig | sammel (im Sammelplan)
+    # | verplant (alles offene steckt in Sägeaufträgen/anderen Plänen)
+    status: str
+    veraltet_grund: str = ""
+    plan_id: int = 0
+    gesamt: int = 0       # Stücke im Plan
+    gesaegt: int = 0
+    sammelplan_id: int = 0
+    sammelplan: str = ""
+    # Andere Projekte, die dieses Material auch brauchen (Vorschlag Sammelplan)
+    auch_in: list[WorkProjectRef] = []
+
+
+class WorklistEntryOut(BaseModel):
+    art: str              # "sammel" | "liste" (Sägeauftrag) | "projekt"
+    projekt_id: int
+    name: str
+    status: str
+    materialien: list[WorklistLineOut]
+
+
+def _arbeits_zeile(db: Database, projekt: Projekt, material: Material, teile: list[Teil],
+                   sammel: tuple[int, str] | None) -> WorklistLineOut:
+    offen = sum(t.offen_anzahl for t in teile)
+    plan = db.get_plan(projekt.id, material.id)
+    stuecke = [st for b in plan.bretter for st in b.stuecke] if plan else []
+    gesaegt = sum(1 for st in stuecke if st.gesaegt)
+    grund = ""
+    if offen == 0 and gesaegt == len(stuecke):
+        status = "fertig"
+    elif sammel:
+        status = "sammel"
+    elif plan:
+        grund = _veraltet_grund(db, plan, projekt, material)
+        if not grund and gesaegt == len(stuecke):
+            grund = "teile"   # alles gesägt, aber noch Teile offen (z.B. Menge erhöht)
+        status = "veraltet" if grund else ("in_arbeit" if gesaegt else "bereit")
+    else:
+        anderswo = db.ungesaegt_in_plaenen(material.id, ausser_projekt=projekt.id)
+        frei = sum(max(0, t.offen_anzahl - anderswo.get(t.id, 0)) for t in teile)
+        status = "kein_plan" if frei or projekt.art == "sammel" else "verplant"
+    return WorklistLineOut(
+        material_id=material.id, material=material.name, typ=material.typ.value,
+        teile=sum(1 for t in teile if t.offen_anzahl > 0), offen=offen, status=status,
+        veraltet_grund=grund, plan_id=plan.id if plan else 0, gesamt=len(stuecke),
+        gesaegt=gesaegt, sammelplan_id=sammel[0] if sammel else 0,
+        sammelplan=sammel[1] if sammel else "")
+
+
+@app.get("/api/worklist", response_model=list[WorklistEntryOut])
+def get_worklist(fertige: bool = False):
+    """Alles, was gesägt werden kann: Sammelpläne, Sägeaufträge, Projekte je Material,
+    mit Status und Fortschritt des Plans. ?fertige=true zeigt auch fertig Gesägtes."""
+    db = get_db()
+    materialien = {m.id: m for m in db.list_materials()}
+    sammel_je_mat = {}
+    eintraege: list[WorklistEntryOut] = []
+    for s in db.list_projekte(sammel=True):
+        mat = materialien.get(s.sammel_material_id)
+        if not mat:
+            continue
+        sammel_je_mat[mat.id] = (s.id, s.name)
+        teile = _plan_teile(s, mat.id)
+        eintraege.append(WorklistEntryOut(art="sammel", projekt_id=s.id, name=s.name,
+                                          status="", materialien=[
+                                              _arbeits_zeile(db, s, mat, teile, None)]))
+    mitglied_in = {(pid, mid): sammel_je_mat[mid] for mid in sammel_je_mat
+                   for pid in db.sammel_mitglieder(sammel_je_mat[mid][0])}
+    projekte = db.list_projekte()
+    for p in sorted(projekte, key=lambda p: p.art != "liste"):
+        zeilen = []
+        for mid in dict.fromkeys(t.material_id for t in p.teile):
+            if mat := materialien.get(mid):
+                zeilen.append(_arbeits_zeile(db, p, mat, [t for t in p.teile
+                                                          if t.material_id == mid],
+                                             mitglied_in.get((p.id, mid))))
+        eintraege.append(WorklistEntryOut(art="liste" if p.art == "liste" else "projekt",
+                                          projekt_id=p.id, name=p.name, status="",
+                                          materialien=zeilen))
+    # Vorschlag Sammelplan: gleiches Material in mehreren Projekten, noch ohne Sammelplan
+    frei: dict[int, list[WorkProjectRef]] = {}
+    for e in eintraege:
+        if e.art == "projekt":
+            for z in e.materialien:
+                if z.status in ("kein_plan", "bereit") and z.material_id not in sammel_je_mat:
+                    frei.setdefault(z.material_id, []).append(
+                        WorkProjectRef(projekt_id=e.projekt_id, name=e.name))
+    for e in eintraege:
+        if e.art == "projekt":
+            for z in e.materialien:
+                if z.status in ("kein_plan", "bereit"):
+                    z.auch_in = [r for r in frei.get(z.material_id, [])
+                                 if r.projekt_id != e.projekt_id]
+        if not fertige:
+            e.materialien = [z for z in e.materialien if z.status != "fertig"]
+        e.status = min((z.status for z in e.materialien), key=_STATUS_RANG.index,
+                       default="fertig")
+    return [e for e in eintraege if e.materialien]
 
 
 def _plan_is_1d(db: Database, plan: GespeicherterPlan) -> bool:
@@ -3732,6 +3875,85 @@ WEB_EXTRA_TRANSLATIONS = {
         "en": "Delete cut job “{name}”? Anything already cut stays booked to the projects.",
         "fr": "Supprimer l’ordre de coupe « {name} » ? Ce qui est déjà coupé reste compté dans les projets.",
         "it": "Eliminare l’ordine di taglio «{name}»? Quanto già tagliato resta contato nei progetti.",
+    },
+    # Reiter Optimierung: Arbeitsliste, Hauptaktion je Stand
+    "mat.blade": {"de": "Sägeblatt", "en": "Saw blade", "fr": "Lame de scie", "it": "Lama"},
+    "mat.blade_first": {"de": "– erstes Sägeblatt –", "en": "– first saw blade –", "fr": "– première lame –", "it": "– prima lama –"},
+    "wl.title": {"de": "Was sägen?", "en": "What to cut?", "fr": "Que couper ?", "it": "Cosa tagliare?"},
+    "wl.search": {"de": "Suchen…", "en": "Search…", "fr": "Rechercher…", "it": "Cerca…"},
+    "wl.show_done": {"de": "auch fertige zeigen", "en": "show finished too", "fr": "afficher aussi les terminés", "it": "mostra anche i finiti"},
+    "wl.group_sammel": {"de": "Sammelpläne", "en": "Combined plans", "fr": "Plans groupés", "it": "Piani combinati"},
+    "wl.group_jobs": {"de": "Sägeaufträge", "en": "Cut jobs", "fr": "Ordres de coupe", "it": "Ordini di taglio"},
+    "wl.group_projects": {"de": "Projekte", "en": "Projects", "fr": "Projets", "it": "Progetti"},
+    "wl.empty": {
+        "de": "Nichts zu sägen. Teile legst du im Reiter Projekte an.",
+        "en": "Nothing to cut. Add parts in the Projects tab.",
+        "fr": "Rien à couper. Ajoutez des pièces dans l’onglet Projets.",
+        "it": "Niente da tagliare. Aggiungi pezzi nella scheda Progetti.",
+    },
+    "wl.n_materials": {"de": "{n} Materialien", "en": "{n} materials", "fr": "{n} matériaux", "it": "{n} materiali"},
+    "wl.tag_job": {"de": "Sägeauftrag", "en": "Cut job", "fr": "Ordre de coupe", "it": "Ordine di taglio"},
+    "wl.no_match": {"de": "Nichts gefunden.", "en": "Nothing found.", "fr": "Aucun résultat.", "it": "Nessun risultato."},
+    "wl.pick": {
+        "de": "Wähle links aus, was du sägen willst.",
+        "en": "Pick on the left what you want to cut.",
+        "fr": "Choisissez à gauche ce que vous voulez couper.",
+        "it": "Scegli a sinistra cosa vuoi tagliare.",
+    },
+    "wl.st_kein_plan": {"de": "noch kein Plan", "en": "no plan yet", "fr": "pas encore de plan", "it": "nessun piano"},
+    "wl.st_bereit": {"de": "Plan bereit · {done}/{total}", "en": "plan ready · {done}/{total}", "fr": "plan prêt · {done}/{total}", "it": "piano pronto · {done}/{total}"},
+    "wl.st_in_arbeit": {"de": "in Arbeit · {done}/{total}", "en": "in progress · {done}/{total}", "fr": "en cours · {done}/{total}", "it": "in corso · {done}/{total}"},
+    "wl.st_veraltet": {"de": "Plan veraltet", "en": "plan outdated", "fr": "plan obsolète", "it": "piano superato"},
+    "wl.st_fertig": {"de": "fertig", "en": "finished", "fr": "terminé", "it": "finito"},
+    "wl.st_sammel": {"de": "im Sammelplan", "en": "in combined plan", "fr": "dans le plan groupé", "it": "nel piano combinato"},
+    "wl.st_verplant": {"de": "anderswo verplant", "en": "planned elsewhere", "fr": "prévu ailleurs", "it": "pianificato altrove"},
+    "wl.open_parts": {"de": "{teile} Teile · {n} Stück offen", "en": "{teile} parts · {n} pieces open", "fr": "{teile} pièces · {n} exemplaires à couper", "it": "{teile} pezzi · {n} da tagliare"},
+    "wl.open_one": {"de": "1 Teil · {n} Stück offen", "en": "1 part · {n} pieces open", "fr": "1 pièce · {n} exemplaires à couper", "it": "1 pezzo · {n} da tagliare"},
+    "wl.reason_teile": {"de": "Teile oder Material wurden geändert", "en": "parts or material changed", "fr": "pièces ou matériau modifiés", "it": "pezzi o materiale modificati"},
+    "wl.reason_anderswo": {"de": "Teile wurden inzwischen anderswo gesägt", "en": "parts were cut elsewhere meanwhile", "fr": "des pièces ont été coupées ailleurs entre-temps", "it": "alcuni pezzi sono stati tagliati altrove"},
+    "wl.reason_lager": {"de": "eingeplante Lagerstücke fehlen", "en": "planned stock pieces are missing", "fr": "des pièces de stock prévues manquent", "it": "mancano pezzi di magazzino pianificati"},
+    "wl.outdated": {"de": "Plan veraltet: {reason}", "en": "Plan outdated: {reason}", "fr": "Plan obsolète : {reason}", "it": "Piano superato: {reason}"},
+    "wl.together": {
+        "de": "{material} wird auch in {names} gebraucht – zusammen sägen?",
+        "en": "{material} is also needed in {names} – cut together?",
+        "fr": "{material} sert aussi dans {names} – couper ensemble ?",
+        "it": "{material} serve anche in {names} – tagliare insieme?",
+    },
+    "wl.together_go": {"de": "Sammelplan anlegen", "en": "Create combined plan", "fr": "Créer un plan groupé", "it": "Crea piano combinato"},
+    "wl.verplant_hint": {
+        "de": "Alle offenen Teile stecken schon in einem Sägeauftrag oder einem anderen Plan.",
+        "en": "All open parts are already in a cut job or another plan.",
+        "fr": "Toutes les pièces à couper sont déjà dans un ordre de coupe ou un autre plan.",
+        "it": "Tutti i pezzi da tagliare sono già in un ordine di taglio o in un altro piano.",
+    },
+    "wl.done_hint": {"de": "Fertig gesägt.", "en": "All cut.", "fr": "Tout est coupé.", "it": "Tutto tagliato."},
+    "opt.calc": {"de": "Schnittplan berechnen", "en": "Calculate cutting plan", "fr": "Calculer le plan de coupe", "it": "Calcola piano di taglio"},
+    "opt.to_saw": {"de": "An die Säge →", "en": "To the saw →", "fr": "À la scie →", "it": "Alla sega →"},
+    "opt.recalc": {"de": "Neu berechnen", "en": "Recalculate", "fr": "Recalculer", "it": "Ricalcola"},
+    "opt.more": {"de": "Mehr", "en": "More", "fr": "Plus", "it": "Altro"},
+    "opt.mark_all": {"de": "Alles als gesägt markieren…", "en": "Mark everything as cut…", "fr": "Tout marquer comme coupé…", "it": "Segna tutto come tagliato…"},
+    "opt.settings": {"de": "Einstellungen", "en": "Settings", "fr": "Réglages", "it": "Impostazioni"},
+    "opt.rests_first_off": {"de": "Reste zuerst aus", "en": "remnants first off", "fr": "chutes d’abord désactivé", "it": "prima gli sfridi no"},
+    "opt.max_short": {"de": "max. {n} je Stange", "en": "max. {n} per bar", "fr": "max. {n} par barre", "it": "max. {n} per barra"},
+    "opt.algo_fast": {"de": "Schnell", "en": "Fast", "fr": "Rapide", "it": "Veloce"},
+    "opt.algo_standard": {"de": "Standard", "en": "Standard", "fr": "Standard", "it": "Standard"},
+    "opt.algo_thorough": {"de": "Gründlich", "en": "Thorough", "fr": "Approfondi", "it": "Accurato"},
+    "opt.calc_mode": {"de": "Rechenart", "en": "Calculation", "fr": "Calcul", "it": "Calcolo"},
+    "stat.line_parts": {"de": "{n} Teile", "en": "{n} parts", "fr": "{n} pièces", "it": "{n} pezzi"},
+    "stat.line_used": {"de": "{p} % genutzt", "en": "{p} % used", "fr": "{p} % utilisé", "it": "{p} % usato"},
+    "stat.line_waste": {"de": "Abfall {p} %", "en": "waste {p} %", "fr": "déchet {p} %", "it": "scarto {p} %"},
+    "stat.missing_box": {
+        "de": "{n} Teile passen nicht ins Lager: {labels}",
+        "en": "{n} parts don’t fit the stock: {labels}",
+        "fr": "{n} pièces ne tiennent pas dans le stock : {labels}",
+        "it": "{n} pezzi non entrano nel magazzino: {labels}",
+    },
+    "stat.buy": {"de": "Dafür fehlt: {list}", "en": "Missing for this: {list}", "fr": "Il manque : {list}", "it": "Manca: {list}"},
+    "proj.restart_hint": {
+        "de": "Fortschritt auf 0 und Pläne löschen, um das Projekt noch einmal zu sägen",
+        "en": "Reset progress and delete plans to cut the project once more",
+        "fr": "Remettre la progression à 0 et supprimer les plans pour recouper le projet",
+        "it": "Azzera l’avanzamento ed elimina i piani per tagliare di nuovo il progetto",
     },
     "sammel.badge": {"de": "Sammelplan", "en": "Combined plan", "fr": "Plan groupé", "it": "Piano combinato"},
     "sammel.open": {"de": "Sammelplan öffnen", "en": "Open combined plan", "fr": "Ouvrir le plan groupé", "it": "Apri piano combinato"},

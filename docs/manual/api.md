@@ -27,7 +27,7 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | **Materials** | | |
 | GET | `/api/materials` | List all materials |
 | POST | `/api/materials` | Create a material |
-| PUT | `/api/materials/{id}` | Update a material |
+| PUT | `/api/materials/{id}` | Update a material (`saegeblatt_id`: default saw blade for optimization, 0 = first, omitted = unchanged) |
 | DELETE | `/api/materials/{id}` | Delete a material |
 | **Stock** | | |
 | GET | `/api/stock?material_id=N` | List stock (optional filter) |
@@ -78,6 +78,7 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | PUT | `/api/parts/{id}` | Update a part (optional `vorrat`: set finished parts) |
 | DELETE | `/api/parts/{id}` | Delete a part |
 | **Optimization and Plans** | | |
+| GET | `/api/worklist?fertige=` | Optimization work list: combined plans, cut jobs, projects per material with status and progress |
 | POST | `/api/optimize` | Optimize and save as the project's plan for the material |
 | POST | `/api/plans/{id}/fill-choice` | Choose the filling of a group of equal bar offcuts (`wahl: null` = automatic) |
 | GET | `/api/projects/{id}/plans/{material_id}` | Get the saved plan (`null` if there is none) |
@@ -128,7 +129,23 @@ POST /api/optimize
 
 Algorithm choices: `greedy`, `nested`, `ga`. `reste_zuerst` (remnants first), `fuellteile` (filler parts) and `fuell_alle_reste` are optional (filler mode `auffuellen` = fill or `fest` = fixed quantity; without `fuellteile` the saved plan's selection is kept).
 
-The response is the saved plan: `plan_id`, `schnittplaene` (per board e.g. `stueck_code`, `lagerort`, `platzierungen` with `id` and `gesaegt`), `fehlende_teile` (parts that didn't fit), `gesamt_verschnitt_prozent` (total waste %), `materialbedarf` (additional material needed -- empty when everything fits) and the hints `veraltet` (outdated) and `lager_fehlt` (stock missing).
+The response is the saved plan: `plan_id`, `schnittplaene` (per board e.g. `stueck_code`, `lagerort`, `platzierungen` with `id` and `gesaegt`), `fehlende_teile` (parts that didn't fit), `gesamt_verschnitt_prozent` (total waste %), `materialbedarf` (additional material needed -- empty when everything fits) and the hints `veraltet` (outdated, with `veraltet_grund`: `teile` = parts/material changed, `anderswo` = parts cut elsewhere meanwhile) and `lager_fehlt` (stock missing).
+
+The saw blade used becomes the material's default saw blade (`saegeblatt_id` in `/api/materials`); the same applies to `/api/sammel/optimize`.
+
+## Work list
+
+`GET /api/worklist` returns everything that can be cut -- combined plans first, then cut jobs, then projects. Per entry `art` (`sammel` = combined plan, `liste` = cut job, `projekt`), `projekt_id`, `name`, `status` and one line per material:
+
+```json
+{"art": "projekt", "projekt_id": 5, "name": "Workbench", "status": "bereit",
+ "materialien": [{"material_id": 2, "material": "Alu profile 40x40", "typ": "Stange",
+   "teile": 2, "offen": 6, "status": "bereit", "veraltet_grund": "", "plan_id": 17,
+   "gesamt": 6, "gesaegt": 0, "sammelplan_id": 0, "sammelplan": "",
+   "auch_in": [{"projekt_id": 8, "name": "CNC router"}]}]}
+```
+
+`status`: `kein_plan` (no plan yet), `bereit` (ready), `in_arbeit` (in progress), `veraltet` (outdated), `fertig` (finished), `sammel` (material is cut in combined plan `sammelplan_id`) or `verplant` (everything open is in cut jobs or other plans). `auch_in` lists other projects with open parts in this material as long as there is no combined plan (the "cut together?" suggestion → `POST /api/sammel`). Finished lines and entries are left out unless `?fertige=true`.
 
 ## Stock commands
 

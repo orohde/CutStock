@@ -9,6 +9,8 @@ Top left the projects, below them the combined plans, on the right the parts of 
 ## Projects
 
 - **New**, **Edit**, **Delete**, **Duplicate** as usual.
+- **Restart project**: to cut a project once more – progress of all parts goes back to 0, saved
+  plans are deleted, stock stays unchanged (asks first).
 - **Number of copies**: if a project is built several times, set the number on the project –
   all copies are optimized together.
 - Import/export as JSON, import part lists from CSV.
@@ -42,8 +44,8 @@ saves whole bars or panels. There is at most one combined plan per material. The
 - **When selected**, the right box shows the members with checkboxes (change them there) and
   below their parts in this material, grouped by project and read-only. Project names link to
   the project; parts are edited there.
-- **Optimize** jumps to [Optimization](5-optimization.md#combined-plan) (material mode) with
-  this combined plan.
+- **Optimize** jumps to [Optimization](5-optimization.md#combined-plan) and selects this combined
+  plan there.
 - **Delete** like a project, with a warning if cutting has already started. Nothing is lost:
   parts already cut stay cut in their projects, the rest becomes open again and reserved stock
   pieces are released. Afterwards the projects can be optimized individually or combined anew.

@@ -89,7 +89,8 @@ CREATE TABLE IF NOT EXISTS material (
     bild            BLOB    DEFAULT NULL,
     kuerzel         TEXT    NOT NULL DEFAULT '',
     lagerort        TEXT    NOT NULL DEFAULT '',
-    lagerort_reste  TEXT    NOT NULL DEFAULT ''
+    lagerort_reste  TEXT    NOT NULL DEFAULT '',
+    saegeblatt_id   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS lagerstueck (
@@ -321,7 +322,7 @@ class Database:
         "schnittplan": {"fuell_alle_reste", "max_pro_stange", "fuell_wahl_json",
                         "fuell_vorschlaege_json"},
         "schnittplan_stueck": {"ist_fuellteil", "buchung"},
-        "material": {"kuerzel", "lagerort", "lagerort_reste"},
+        "material": {"kuerzel", "lagerort", "lagerort_reste", "saegeblatt_id"},
         "einzelstueck": {"lagerort"},
         "schnittplan_brett": {"abfall_json"},
     }
@@ -404,6 +405,9 @@ class Database:
             if spalte not in mat_cols:
                 self.conn.execute(
                     f"ALTER TABLE material ADD COLUMN {spalte} TEXT NOT NULL DEFAULT ''")
+        if "saegeblatt_id" not in mat_cols:
+            self.conn.execute(
+                "ALTER TABLE material ADD COLUMN saegeblatt_id INTEGER NOT NULL DEFAULT 0")
         if "bild" not in mat_cols:
             self.conn.execute(
                 "ALTER TABLE material ADD COLUMN bild BLOB DEFAULT NULL")
@@ -641,13 +645,14 @@ class Database:
                 """INSERT INTO material
                    (name, typ, dicke, querschnitt_breite, querschnitt_tiefe,
                     drehung_erlaubt, maserung, besaeumung,
-                    rest_min_laenge, rest_min_breite, kuerzel, lagerort, lagerort_reste)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    rest_min_laenge, rest_min_breite, kuerzel, lagerort, lagerort_reste,
+                    saegeblatt_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (m.name, m.typ.value, m.dicke, m.querschnitt_breite,
                  m.querschnitt_tiefe, int(m.maserung == Maserung.KEINE),
                  m.maserung.value, m.besaeumung,
                  m.rest_min_laenge, m.rest_min_breite,
-                 m.kuerzel, m.lagerort, m.lagerort_reste),
+                 m.kuerzel, m.lagerort, m.lagerort_reste, m.saegeblatt_id),
             )
             m.id = cur.lastrowid
         else:
@@ -656,13 +661,13 @@ class Database:
                    querschnitt_breite=?, querschnitt_tiefe=?,
                    drehung_erlaubt=?, maserung=?, besaeumung=?,
                    rest_min_laenge=?, rest_min_breite=?,
-                   kuerzel=?, lagerort=?, lagerort_reste=?
+                   kuerzel=?, lagerort=?, lagerort_reste=?, saegeblatt_id=?
                    WHERE id=?""",
                 (m.name, m.typ.value, m.dicke, m.querschnitt_breite,
                  m.querschnitt_tiefe, int(m.maserung == Maserung.KEINE),
                  m.maserung.value, m.besaeumung,
                  m.rest_min_laenge, m.rest_min_breite,
-                 m.kuerzel, m.lagerort, m.lagerort_reste, m.id),
+                 m.kuerzel, m.lagerort, m.lagerort_reste, m.saegeblatt_id, m.id),
             )
         self.conn.commit()
         return m
@@ -687,7 +692,7 @@ class Database:
         rows = self.conn.execute(
             "SELECT id, name, typ, dicke, querschnitt_breite, querschnitt_tiefe,"
             " drehung_erlaubt, maserung, besaeumung, rest_min_laenge, rest_min_breite,"
-            " kuerzel, lagerort, lagerort_reste,"
+            " kuerzel, lagerort, lagerort_reste, saegeblatt_id,"
             " (bild IS NOT NULL AND length(bild) > 0) AS hat_bild"
             " FROM material ORDER BY name").fetchall()
         return [self._row_to_material(r, hat_bild_col=True) for r in rows]
@@ -717,7 +722,13 @@ class Database:
             bild=b"\x01" if (hat_bild_col and row["hat_bild"]) else b"",
             kuerzel=row["kuerzel"], lagerort=row["lagerort"],
             lagerort_reste=row["lagerort_reste"],
+            saegeblatt_id=row["saegeblatt_id"] or 0,
         )
+
+    def set_material_saegeblatt(self, mid: int, saegeblatt_id: int):
+        """Standard-Sägeblatt des Materials merken (zuletzt verwendetes)."""
+        self.conn.execute("UPDATE material SET saegeblatt_id=? WHERE id=?", (saegeblatt_id, mid))
+        self.conn.commit()
 
     # ------------------------------------------------------------------
     # Lagerstück

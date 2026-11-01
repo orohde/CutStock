@@ -804,7 +804,7 @@ TRANSLATIONS = {
         "it": "Un numero di pezzo usato viene riassegnato solo dopo questo periodo",
     },
     "fill.button": {
-        "de": "Füllteile…", "en": "Filler parts…", "fr": "Pièces de remplissage…", "it": "Pezzi di riempimento…",
+        "de": "Reste auffüllen…", "en": "Fill remnants…", "fr": "Remplir les chutes…", "it": "Riempi gli sfridi…",
     },
     "fill.button_hint": {
         "de": "Teile anderer Projekte mitsägen, um den Abfall aufzufüllen",

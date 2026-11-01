@@ -45,7 +45,7 @@ goes to the **finished parts**.
 Running cut jobs are listed at the top of the tab with their progress ("3 of 5 cut"),
 **Continue cutting** (opens the optimization) and **Delete**. Anything already cut stays booked to
 the projects when a job is deleted. Once a job is fully cut, CutStock offers to delete it. In the
-optimization, cut jobs appear in the project selection, not in the Projects tab.
+optimization, cut jobs have their own group in the work list; they don't appear in the Projects tab.
 
 ## Finished parts
 

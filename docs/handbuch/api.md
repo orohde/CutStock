@@ -27,7 +27,7 @@ Anfragen von der eigenen Web-Oberfläche (Same-Origin) und von localhost sind im
 | **Materialien** | | |
 | GET | `/api/materials` | Alle Materialien auflisten |
 | POST | `/api/materials` | Material anlegen |
-| PUT | `/api/materials/{id}` | Material aktualisieren |
+| PUT | `/api/materials/{id}` | Material aktualisieren (`saegeblatt_id`: Standard-Sägeblatt der Optimierung, 0 = erstes, weglassen = unverändert) |
 | DELETE | `/api/materials/{id}` | Material löschen |
 | **Lagerbestand** | | |
 | GET | `/api/stock?material_id=N` | Lagerbestand auflisten (optionaler Filter) |
@@ -78,6 +78,7 @@ Anfragen von der eigenen Web-Oberfläche (Same-Origin) und von localhost sind im
 | PUT | `/api/parts/{id}` | Teil aktualisieren (optional `vorrat`: Fertigteile setzen) |
 | DELETE | `/api/parts/{id}` | Teil löschen |
 | **Optimierung und Pläne** | | |
+| GET | `/api/worklist?fertige=` | Arbeitsliste der Optimierung: Sammelpläne, Sägeaufträge, Projekte je Material mit Status und Fortschritt |
 | POST | `/api/optimize` | Optimieren und als Plan des Projekts für das Material speichern |
 | POST | `/api/plans/{id}/fill-choice` | Füllung einer Gruppe gleicher Stangenreste wählen (`wahl: null` = Automatik) |
 | GET | `/api/projects/{id}/plans/{material_id}` | Gespeicherten Plan abrufen (`null`, wenn keiner existiert) |
@@ -128,7 +129,23 @@ POST /api/optimize
 
 Algorithmus-Optionen: `greedy`, `nested`, `ga`. `reste_zuerst`, `fuellteile` und `fuell_alle_reste` sind optional (Füllteil-Modus `auffuellen` oder `fest`; ohne `fuellteile` bleibt die Auswahl des gespeicherten Plans).
 
-Die Antwort ist der gespeicherte Plan: `plan_id`, `schnittplaene` (je Brett u. a. `stueck_code`, `lagerort`, `platzierungen` mit `id` und `gesaegt`), `fehlende_teile`, `gesamt_verschnitt_prozent`, `materialbedarf` (zusätzlich benötigtes Material -- leer wenn alles passt) sowie Hinweise `veraltet` und `lager_fehlt`.
+Die Antwort ist der gespeicherte Plan: `plan_id`, `schnittplaene` (je Brett u. a. `stueck_code`, `lagerort`, `platzierungen` mit `id` und `gesaegt`), `fehlende_teile`, `gesamt_verschnitt_prozent`, `materialbedarf` (zusätzlich benötigtes Material -- leer wenn alles passt) sowie Hinweise `veraltet` (mit `veraltet_grund`: `teile` = Teile/Material geändert, `anderswo` = Teile inzwischen anderswo gesägt) und `lager_fehlt`.
+
+Das verwendete Sägeblatt wird zum Standard-Sägeblatt des Materials (`saegeblatt_id` in `/api/materials`); dasselbe gilt für `/api/sammel/optimize`.
+
+## Arbeitsliste
+
+`GET /api/worklist` liefert alles, was gesägt werden kann -- Sammelpläne zuerst, dann Sägeaufträge, dann Projekte. Je Eintrag `art` (`sammel`, `liste`, `projekt`), `projekt_id`, `name`, `status` und je Material eine Zeile:
+
+```json
+{"art": "projekt", "projekt_id": 5, "name": "Werkbank", "status": "bereit",
+ "materialien": [{"material_id": 2, "material": "Alu Profil 40x40", "typ": "Stange",
+   "teile": 2, "offen": 6, "status": "bereit", "veraltet_grund": "", "plan_id": 17,
+   "gesamt": 6, "gesaegt": 0, "sammelplan_id": 0, "sammelplan": "",
+   "auch_in": [{"projekt_id": 8, "name": "CNC-Fräse"}]}]}
+```
+
+`status`: `kein_plan`, `bereit`, `in_arbeit`, `veraltet`, `fertig`, `sammel` (Material wird im Sammelplan `sammelplan_id` gesägt) oder `verplant` (alles Offene steckt in Sägeaufträgen oder anderen Plänen). `auch_in` nennt andere Projekte mit offenen Teilen in diesem Material, solange es noch keinen Sammelplan gibt (Vorschlag „zusammen sägen?“ → `POST /api/sammel`). Fertige Zeilen und Einträge fehlen, außer mit `?fertige=true`.
 
 ## Lager-Befehle
 

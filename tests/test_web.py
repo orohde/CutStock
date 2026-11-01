@@ -1254,6 +1254,95 @@ class TestSchnittliste:
         assert kopie["teile"][0]["herkunft_teil_id"] == teile["A"]["id"]
 
 
+class TestArbeitsliste:
+    """Reiter „Optimierung“: Arbeitsliste mit Status, Sägeblatt je Material."""
+
+    def _setup(self, client):
+        mid = client.post("/api/materials", json={"name": "Flach", "typ": "Stange"}).json()["id"]
+        client.post("/api/stock", json={"material_id": mid, "laenge": 2000, "stueckzahl": 10})
+        bid = client.post("/api/blades", json={"name": "B", "schnittbreite": 3}).json()["id"]
+        pids = {}
+        for name in ("A", "B"):
+            pids[name] = client.post("/api/projects", json={"name": name}).json()["id"]
+            client.post(f"/api/projects/{pids[name]}/parts", json={
+                "label": "Leiste", "typ": "Stange", "material_id": mid,
+                "laenge": 500, "stueckzahl": 2})
+        return mid, bid, pids
+
+    def _zeile(self, client, pid, mid, **params):
+        for e in client.get("/api/worklist", params=params).json():
+            if e["projekt_id"] == pid:
+                return next((z for z in e["materialien"] if z["material_id"] == mid), None)
+        return None
+
+    def test_status_vom_plan_bis_fertig(self, client):
+        mid, bid, pids = self._setup(client)
+        z = self._zeile(client, pids["A"], mid)
+        assert (z["status"], z["offen"], z["teile"]) == ("kein_plan", 2, 1)
+        assert [r["projekt_id"] for r in z["auch_in"]] == [pids["B"]]   # zusammen sägen?
+        plan = client.post("/api/optimize", json={
+            "project_id": pids["A"], "material_id": mid, "blade_id": bid}).json()
+        z = self._zeile(client, pids["A"], mid)
+        assert (z["status"], z["gesaegt"], z["gesamt"]) == ("bereit", 0, 2)
+        stueck = plan["schnittplaene"][0]["platzierungen"][0]
+        client.post(f"/api/plan-pieces/{stueck['id']}", json={"gesaegt": True})
+        assert self._zeile(client, pids["A"], mid)["status"] == "in_arbeit"
+        client.post(f"/api/plans/{plan['plan_id']}/confirm-all")
+        assert self._zeile(client, pids["A"], mid) is None          # fertige ausgeblendet
+        assert self._zeile(client, pids["A"], mid, fertige=True)["status"] == "fertig"
+
+    def test_veraltet_mit_grund(self, client):
+        mid, bid, pids = self._setup(client)
+        client.post("/api/optimize", json={
+            "project_id": pids["A"], "material_id": mid, "blade_id": bid})
+        teil = client.get(f"/api/projects/{pids['A']}").json()["teile"][0]
+        client.put(f"/api/parts/{teil['id']}", json={**teil, "stueckzahl": 3})
+        z = self._zeile(client, pids["A"], mid)
+        assert (z["status"], z["veraltet_grund"]) == ("veraltet", "teile")
+        plan = client.get(f"/api/projects/{pids['A']}/plans/{mid}").json()
+        assert plan["veraltet_grund"] == "teile"
+
+    def test_sammelplan_steht_oben_und_mitglieder_verweisen(self, client):
+        mid, bid, pids = self._setup(client)
+        sammel = client.post("/api/sammel", json={
+            "material": str(mid), "projekte": [str(pids["A"]), str(pids["B"])]}).json()
+        liste = client.get("/api/worklist").json()
+        arten = [e["art"] for e in liste]
+        assert arten.index("sammel") < arten.index("projekt")
+        eintrag = next(e for e in liste if e["projekt_id"] == sammel["id"])
+        assert eintrag["materialien"][0]["offen"] == 4
+        z = self._zeile(client, pids["A"], mid)
+        assert (z["status"], z["sammelplan_id"]) == ("sammel", sammel["id"])
+        assert z["auch_in"] == []
+
+    def test_saegeauftrag_ist_eigener_eintrag(self, client):
+        mid, _, pids = self._setup(client)
+        teil = client.get(f"/api/projects/{pids['A']}").json()["teile"][0]
+        auftrag = client.post("/api/cut-lists", json={
+            "eintraege": [{"teil_id": teil["id"], "menge": 2}]}).json()
+        eintrag = next(e for e in client.get("/api/worklist").json()
+                       if e["projekt_id"] == auftrag["id"])
+        assert eintrag["art"] == "liste"
+        # Alles Offene von A steckt im Sägeauftrag
+        assert self._zeile(client, pids["A"], mid)["status"] == "verplant"
+
+    def test_saegeblatt_wird_am_material_gemerkt(self, client):
+        mid, bid, pids = self._setup(client)
+        bid2 = client.post("/api/blades", json={"name": "Fein", "schnittbreite": 2}).json()["id"]
+        mat = next(m for m in client.get("/api/materials").json() if m["id"] == mid)
+        assert mat["saegeblatt_id"] == 0
+        client.post("/api/optimize", json={
+            "project_id": pids["A"], "material_id": mid, "blade_id": bid2})
+        mat = next(m for m in client.get("/api/materials").json() if m["id"] == mid)
+        assert mat["saegeblatt_id"] == bid2
+        # Ändern ohne Feld behält es, mit Feld setzt es
+        r = client.put(f"/api/materials/{mid}", json={"name": "Flach", "typ": "Stange"})
+        assert r.json()["saegeblatt_id"] == bid2
+        r = client.put(f"/api/materials/{mid}", json={"name": "Flach", "typ": "Stange",
+                                                      "saegeblatt_id": bid})
+        assert r.json()["saegeblatt_id"] == bid
+
+
 # =====================================================================
 # Lager: Lagerorte, Zugang/Entnahme per Code, Abfallkiste, Journal
 # =====================================================================

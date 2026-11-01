@@ -264,11 +264,16 @@ def seed_demo_data() -> dict:
 def shoot(ids: dict):
     from playwright.sync_api import sync_playwright
 
+    def select(page, project: int, material: int):
+        """Eintrag der Arbeitsliste wählen (wie ein Klick auf die Zeile)."""
+        page.evaluate(f"selectWork({project}, {material})")
+        page.wait_for_timeout(800)
+
     def optimize(page, project: int, material: int, algorithm: str = "nested"):
-        page.select_option("#opt-project", str(project))
-        page.select_option("#opt-material", str(material))
-        page.select_option("#opt-algorithm", algorithm)
-        page.click("#btn-optimize")
+        select(page, project, material)
+        # Einstellungen sind eingeklappt → Rechenart direkt setzen
+        page.evaluate(f"document.getElementById('opt-algorithm').value = '{algorithm}'")
+        page.evaluate("runOptimize()")
         page.wait_for_selector(".cut-plan-canvas", timeout=30000)
         page.wait_for_timeout(600)
 
@@ -326,7 +331,6 @@ def shoot(ids: dict):
         # "Fehlende Teile" + "Materialbedarf" mit Button "Ins Lager"
         api("PUT", f"/api/stock/{ids['span_stock']['id']}", {
             "material_id": ids["span"], "laenge": 2800, "breite": 2070, "stueckzahl": 2})
-        page.select_option("#opt-project", str(ids["bank"]))  # reset view
         optimize(page, ids["schrank"], ids["span"])
         hide_toasts(page)
         page.evaluate("window.scrollTo(0, 0)")
@@ -343,7 +347,7 @@ def shoot(ids: dict):
 
         # 5) Werkstatt-Modus: zwei Teile abhaken, damit Fortschritt,
         # Häkchen und "Als Nächstes"-Markierung sichtbar sind
-        page.click("#btn-saw-mode")
+        page.click("#btn-optimize")   # „An die Säge →“
         page.wait_for_selector(".saw-piece")
         page.click(".saw-piece >> nth=0")
         page.wait_for_timeout(500)
@@ -370,7 +374,7 @@ def shoot(ids: dict):
         page.wait_for_timeout(300)
         # Direkt optimieren: ein erneutes Auswählen von Projekt/Material würde
         # den gespeicherten Plan neu laden und die Füllteil-Auswahl ersetzen
-        page.click("#btn-optimize")
+        page.evaluate("runOptimize()")
         page.wait_for_selector("#btn-fill:has-text('(1)')")
         page.wait_for_timeout(1200)
         hide_toasts(page)
@@ -390,10 +394,10 @@ def shoot(ids: dict):
 
         # 7b) Sammelplan: Buchenleisten für Kleiderschrank + Schuhregal
         # gemeinsam, mit Vergleich getrennt/gemeinsam und Projektfarben
+        # Angelegt über den Hinweis „zusammen sägen?“ beim Kleiderschrank
         page.set_viewport_size({"width": 1280, "height": 1000})
-        page.select_option("#opt-mode", "material")
-        page.wait_for_timeout(400)
-        page.select_option("#opt-material", str(ids["leiste"]))
+        select(page, ids["schrank"], ids["leiste"])
+        page.click("#btn-wl-together")
         page.wait_for_selector(f'#sammel-panel tr[data-pid="{ids["schuh"]}"]')
         for pid in (ids["schrank"], ids["schuh"]):
             box = page.locator(f'#sammel-panel tr[data-pid="{pid}"] .sammel-check')
@@ -401,15 +405,13 @@ def shoot(ids: dict):
                 box.check()
         page.click("#btn-sammel-compare")
         page.wait_for_selector("#sammel-compare .sammel-note")
-        page.click("#btn-optimize")
+        page.evaluate("runOptimize()")
         page.wait_for_selector(".cut-plan-canvas", timeout=30000)
         page.wait_for_timeout(1000)
         hide_toasts(page)
         page.evaluate("window.scrollTo(0, 0)")
         page.wait_for_timeout(300)
         page.screenshot(path=shot("sammelplan"))
-        page.select_option("#opt-mode", "project")
-        page.wait_for_timeout(400)
 
         # 7b2) Reiter Projekte: Sammelplan ausgewählt (Mitglieder, Teile nur lesend)
         page.set_viewport_size({"width": 1280, "height": 860})

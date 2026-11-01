@@ -24,6 +24,7 @@ const State = {
     selectedPartId: null,
     selectedBladeId: null,
     optimizationResult: null,
+    worklist: [],         // Arbeitsliste der Optimierung (GET /api/worklist)
 };
 
 // ===========================================================================
@@ -256,6 +257,7 @@ const Api = {
     restartProject: (projectId) => fetchJSON(`/api/projects/${projectId}/restart`, 'POST'),
     discardPlan: (planId) => fetchJSON(`/api/plans/${planId}`, 'DELETE'),
     getSammel: (materialId) => fetchJSON(`/api/sammel/${materialId}`),
+    getWorklist: (fertige) => fetchJSON(`/api/worklist${fertige ? '?fertige=true' : ''}`),
     createSammel: (data) => fetchJSON('/api/sammel', 'POST', data),
     setSammelMembers: (material, projekte) =>
         fetchJSON(`/api/sammel/${encodeURIComponent(material)}/members`, 'PUT', { projekte }),
@@ -1020,6 +1022,8 @@ async function renderProjects() {
     } catch { return; }
 
     renderSammelList();
+    // Stand der Arbeitsliste nachziehen (Sägen, Berechnen, Teile geändert)
+    if (document.getElementById('tab-optimization')?.classList.contains('active')) refreshWorklist();
     const tbody = document.querySelector('#project-list tbody');
     if (!tbody) return;
 
@@ -1256,19 +1260,18 @@ function renderOptDropdowns() {
     const projSel = document.getElementById('opt-project');
     const matSel = document.getElementById('opt-material');
     const bladeSel = document.getElementById('opt-blade');
-    const algoSel = document.getElementById('opt-algorithm');
 
     // Bisherige Auswahl merken, damit sie beim Neuaufbau (z.B. Tab-Wechsel)
-    // erhalten bleibt und nicht auf das erste Projekt zurückspringt.
-    const prevProj = projSel?.value;
-    const prevMat = matSel?.value;
+    // erhalten bleibt. Die Auswahl selbst trifft die Arbeitsliste.
+    const saved = (storageGet('localStorage', 'cutstock_opt_sel') || '').split(':');
+    const prevProj = projSel?.value || saved[0];
+    const prevMat = matSel?.value || saved[1];
     const prevBlade = bladeSel?.value;
-    const prevAlgo = algoSel?.value;
 
     applyOptMode();
 
     if (projSel) {
-        projSel.innerHTML = State.projects.map(p =>
+        projSel.innerHTML = '<option value=""></option>' + State.projects.map(p =>
             `<option value="${p.id}">${escHtml(p.name)}</option>`
         ).join('');
         if (prevProj && projSel.querySelector(`option[value="${prevProj}"]`)) {
@@ -1289,38 +1292,68 @@ function renderOptDropdowns() {
             bladeSel.value = prevBlade;
         }
     }
-
-    if (algoSel) {
-        algoSel.innerHTML = [
-            { value: 'greedy', key: 'opt.algo_greedy' },
-            { value: 'nested', key: 'opt.algo_nested' },
-            { value: 'ga', key: 'opt.algo_ga' },
-        ].map(a => `<option value="${a.value}">${t(a.key)}</option>`).join('');
-        // Standard: Nested Guillotine (dreht Teile, packt dichter als Greedy)
-        algoSel.value = prevAlgo || 'nested';
-    }
+    updateAlgoOptions();
 
     // Gespeicherten Plan zur (wiederhergestellten) Auswahl laden – auch, um
     // nach Änderungen an Teilen den Hinweis „veraltet“ aktuell zu halten.
     updateFillButton();
     loadSavedPlan();
+    refreshWorklist();
+}
+
+// Rechenart nach Materialtyp: bei Stangen rechnen „Schnell“ und „Standard“ gleich
+function updateAlgoOptions() {
+    const algoSel = document.getElementById('opt-algorithm');
+    if (!algoSel) return;
+    const prev = algoSel.value;
+    const opts = optMaterial()?.typ === 'Stange'
+        ? [['nested', 'opt.algo_standard'], ['ga', 'opt.algo_thorough']]
+        : [['greedy', 'opt.algo_fast'], ['nested', 'opt.algo_standard'], ['ga', 'opt.algo_thorough']];
+    algoSel.innerHTML = opts.map(([v, k]) => `<option value="${v}">${escHtml(t(k))}</option>`).join('');
+    algoSel.value = opts.some(([v]) => v === prev) ? prev : 'nested';
+    updateSettingsSummary();
+}
+
+function optMaterial() {
+    const matId = parseInt(document.getElementById('opt-material')?.value);
+    return State.materials.find(m => m.id === matId) || null;
+}
+
+// Neues Material gewählt: dessen Sägeblatt vorwählen (ein Plan überschreibt das)
+function applyMaterialDefaults() {
+    const mat = optMaterial();
+    if (!mat || State.optDefaultsFor === mat.id) return;
+    State.optDefaultsFor = mat.id;
+    const bladeSel = document.getElementById('opt-blade');
+    if (mat.saegeblatt_id && bladeSel?.querySelector(`option[value="${mat.saegeblatt_id}"]`)) {
+        bladeSel.value = String(mat.saegeblatt_id);
+    }
+    updateAlgoOptions();
 }
 
 // Plan des gewählten Projekts/Materials vom Server holen und anzeigen.
 async function loadSavedPlan() {
     const matId = parseInt(document.getElementById('opt-material')?.value);
     const mode = State.optMode;
+    // Nur der zuletzt gestartete Ladevorgang zählt (Reiterwechsel + Sprung gleichzeitig)
+    const seq = State.planLoadSeq = (State.planLoadSeq || 0) + 1;
+    storageSet('localStorage', 'cutstock_opt_sel',
+        `${document.getElementById('opt-project')?.value || ''}:${matId || ''}`);
+    renderWorklist();
+    renderOptHead();
     if (mode === 'material' && matId) await loadSammel(matId);
+    if (seq !== State.planLoadSeq) return;
     renderSammelPanel();
     const projId = optProjId();
     updateMaxPerBar();
-    if (!projId || !matId) { clearOptResult(); return; }
+    applyMaterialDefaults();
+    if (!projId || !matId) { clearOptResult(); renderOptHead(); return; }
     let plan = null;
     try { plan = await Api.getSavedPlan(projId, matId); } catch { /* offline o.ä. */ }
     // Auswahl hat sich während des Ladens geändert → Ergebnis verwerfen
-    if (State.optMode !== mode || optProjId() !== projId ||
+    if (seq !== State.planLoadSeq || State.optMode !== mode || optProjId() !== projId ||
         parseInt(document.getElementById('opt-material')?.value) !== matId) return;
-    if (!plan) { setMaxPerBar(0); clearOptResult(); return; }
+    if (!plan) { setMaxPerBar(0); clearOptResult(); renderOptHead(); return; }
     adoptPlan(plan);
     const bladeSel = document.getElementById('opt-blade');
     if (plan.saegeblatt_id && bladeSel?.querySelector(`option[value="${plan.saegeblatt_id}"]`)) {
@@ -1330,6 +1363,7 @@ async function loadSavedPlan() {
     if (plan.algorithmus && algoSel?.querySelector(`option[value="${plan.algorithmus}"]`)) {
         algoSel.value = plan.algorithmus;
     }
+    updateSettingsSummary();
     renderOptResults({ quiet: true });
     if (sawModeActive()) renderSawMode();
 }
@@ -1402,14 +1436,12 @@ function optProjName() {
     return document.getElementById('opt-project')?.selectedOptions[0]?.text || '';
 }
 
-// Modus-Umschalter: Projekt-Auswahl bzw. Projektliste und passende Knöpfe zeigen
+// Modus (Projekt oder Sammelplan, gesetzt über die Arbeitsliste): passende Knöpfe zeigen
 function applyOptMode() {
     const sammel = State.optMode === 'material';
     const modeSel = document.getElementById('opt-mode');
     if (modeSel) modeSel.value = State.optMode;
-    document.getElementById('opt-project-group')?.classList.toggle('hidden', sammel);
     document.getElementById('btn-fill')?.classList.toggle('hidden', sammel);
-    document.getElementById('btn-restart')?.classList.toggle('hidden', sammel);
     updateMaxPerBar();
 }
 
@@ -1424,6 +1456,7 @@ function updateMaxPerBar() {
 function setMaxPerBar(n) {
     const input = document.getElementById('opt-max-per-bar');
     if (input) input.value = n > 0 ? String(n) : '';
+    updateSettingsSummary();
 }
 
 function maxPerBar() {
@@ -1588,66 +1621,26 @@ function setOptMode(mode, matId) {
     loadSavedPlan();
 }
 
+// Interne Materialauswahl: alle Materialien, gewählt wird über die Arbeitsliste
 function updateOptMaterialDropdown() {
-    const projSel = document.getElementById('opt-project');
     const matSel = document.getElementById('opt-material');
-    if (!projSel || !matSel) return;
-
-    if (State.optMode === 'material') {
-        // Alle Materialien mit offenen Teilen in irgendeinem Projekt oder mit Sammelplan.
-        // Je Material die Zahl der Projekte, die es brauchen – die lohnenden zuerst.
-        const projekte = new Map();
-        const add = (mid, pid) => {
-            if (!projekte.has(mid)) projekte.set(mid, new Set());
-            if (pid) projekte.get(mid).add(pid);
-        };
-        State.projects.forEach(p => {
-            (p.teile || []).forEach(tl => { if (tl.offen_anzahl > 0) add(tl.material_id, p.id); });
-            Object.keys(p.sammel || {}).forEach(mid => add(parseInt(mid), 0));
-        });
-        const anzahl = m => projekte.get(m.id).size;
-        matSel.innerHTML = State.materials.filter(m => projekte.has(m.id))
-            .sort((a, b) => anzahl(b) - anzahl(a) || a.name.localeCompare(b.name))
-            .map(m => {
-                const n = anzahl(m);
-                const info = n ? ` (${t(n === 1 ? 'sammel.one_project' : 'sammel.n_projects', { n })})` : '';
-                return `<option value="${m.id}">${escHtml(m.name)}${info}</option>`;
-            }).join('');
-        return;
-    }
-
-    const projectId = parseInt(projSel.value);
-    const project = State.projects.find(p => p.id === projectId);
-    const materialIds = new Set();
-
-    if (project?.teile) {
-        project.teile.forEach(t => {
-            if (t.offen_anzahl > 0) materialIds.add(t.material_id);
-        });
-    }
-    // Auch fertig gesägte Materialien bleiben wählbar, solange es einen Plan gibt
-    (project?.plaene || []).forEach(p => materialIds.add(p.material_id));
-
-    const filtered = materialIds.size > 0
-        ? State.materials.filter(m => materialIds.has(m.id))
-        : State.materials;
-
-    matSel.innerHTML = filtered.map(m =>
-        `<option value="${m.id}">${escHtml(m.name)}</option>`
-    ).join('');
+    if (!matSel) return;
+    const prev = matSel.value;
+    matSel.innerHTML = '<option value=""></option>' + State.materials.map(m =>
+        `<option value="${m.id}">${escHtml(m.name)}</option>`).join('');
+    if (prev && matSel.querySelector(`option[value="${prev}"]`)) matSel.value = prev;
 }
 
 function renderOptResults({ quiet = false } = {}) {
     const container = document.getElementById('opt-results');
     const statsEl = document.getElementById('opt-stats');
     const plansEl = document.getElementById('cut-plans');
-    const actionsEl = document.querySelector('.opt-actions');
 
     if (!State.optimizationResult) {
         if (container) container.classList.add('hidden');
         if (statsEl) statsEl.innerHTML = '';
         if (plansEl) plansEl.innerHTML = '';
-        if (actionsEl) actionsEl.style.display = 'none';
+        renderOptHead();
         return;
     }
 
@@ -1687,81 +1680,41 @@ function renderOptResults({ quiet = false } = {}) {
     const realWaste = Math.max(0, waste - usablePct);
 
     if (statsEl) {
-        const missingCard = missing.length > 0
-            ? `<div class="stat-card">
-                <div class="stat-icon">&#9888;</div>
-                <div><div class="stat-value stat-danger">${missing.length}</div>
-                <div class="stat-label">${t('stat.parts_missing')}</div>
-                <div class="stat-sub stat-danger">${escHtml(summarizeLabels(missing))}</div></div>
-            </div>`
-            : `<div class="stat-card">
-                <div class="stat-icon">&#9888;</div>
-                <div><div class="stat-value">0</div>
-                <div class="stat-label">${t('stat.parts_missing')}</div></div>
-            </div>`;
+        // Eine Zeile Kennzahlen; fehlende Teile deutlich mit Einkaufsliste
+        const ganzeN = plans.filter(p => !p.ist_rest).length;
+        const resteN = plans.length - ganzeN;
+        const ganz = t(is1D ? (ganzeN === 1 ? 'sammel.bar_one' : 'sammel.bar_n')
+                            : (ganzeN === 1 ? 'sammel.board_one' : 'sammel.board_n'), { n: ganzeN });
+        const brett = (ganzeN || !resteN ? ganz : '')
+            + (resteN ? (ganzeN ? ' + ' : '') + t(resteN === 1 ? 'sammel.rest_one' : 'sammel.rest_n', { n: resteN }) : '');
+        const loc = State.settings.language || undefined;
+        const pct = (v) => v.toLocaleString(loc, { maximumFractionDigits: 1 });
+        const teileTxt = t('stat.line_parts', { n: totalParts })
+            + (fillerCount ? ` (${t('fill.of_which', { n: fillerCount })})` : '');
+        const detail = `${t('stat.usable_remnant')}: ${pct(usablePct)} % · ${t('stat.total_waste')}: ${pct(waste)} %`;
+        const line = `<div class="opt-stats-line" title="${escAttr(detail)}">
+            <span>${escHtml(brett)}</span><span>${escHtml(teileTxt)}</span>
+            <span>${escHtml(t('stat.line_used', { p: pct(utilization) }))}</span>
+            <span>${escHtml(t('stat.line_waste', { p: pct(realWaste) }))}</span></div>`;
 
         const materialbedarf = result.materialbedarf || [];
-        const bedarfCard = materialbedarf.length > 0
-            ? `<div class="stat-card">
-                <div class="stat-icon">&#128722;</div>
-                <div><div class="stat-value">${materialbedarf.reduce((s, m) => s + m.anzahl, 0)}</div>
-                <div class="stat-label">${t('stat.material_needed')}</div>
-                <div class="stat-sub">${materialbedarf.map(m => {
-                    const dims = m.breite > 0
-                        ? formatDim(m.laenge) + ' × ' + formatDim(m.breite)
-                        : formatDim(m.laenge);
-                    return m.anzahl + '× ' + dims;
-                }).join(', ')}</div>
-                <button class="fd-button fd-button--compact btn-add-bedarf" type="button"
-                    style="margin-top:4px">${t('stat.add_to_stock')}</button></div>
-            </div>`
-            : '';
+        const bedarfTxt = materialbedarf.map(m => m.anzahl + '× ' + (m.breite > 0
+            ? formatDim(m.laenge) + ' × ' + formatDim(m.breite) : formatDim(m.laenge))).join(', ');
+        const missingBox = missing.length ? `<div class="opt-missing">
+            <div>&#9888; ${escHtml(t('stat.missing_box', { n: missing.length, labels: summarizeLabels(missing) }))}</div>
+            ${materialbedarf.length ? `<div>&#128722; ${escHtml(t('stat.buy', { list: bedarfTxt }))}
+                <button class="fd-button fd-button--compact btn-add-bedarf" type="button">${t('stat.add_to_stock')}</button></div>` : ''}
+        </div>` : '';
 
         // Sammelplan: Legende mit Farbe und Stückzahl je Projekt
         const projects = sammelProjects();
-        const projectsCard = projects.length
-            ? `<div class="stat-card">
-                <div class="stat-icon">&#128279;</div>
-                <div><div class="stat-value">${projects.length}</div>
-                <div class="stat-label">${t('sammel.stat_projects')}</div>
-                <div class="stat-sub sammel-legend">${projects.map(pr =>
-                    `<span><span class="saw-dot" style="background:${pr.color}"></span>${escHtml(pr.name || '–')} ${pr.count}</span>`
-                ).join('')}</div></div>
-            </div>`
+        const legend = projects.length
+            ? `<div class="opt-stats-line sammel-legend">${projects.map(pr =>
+                `<span><span class="saw-dot" style="background:${pr.color}"></span>${escHtml(pr.name || '–')} ${pr.count}</span>`
+            ).join('')}</div>`
             : '';
 
-        statsEl.innerHTML = `
-            <div class="stat-card">
-                <div class="stat-icon">&#128196;</div>
-                <div><div class="stat-value">${plans.length}</div>
-                <div class="stat-label">${t('stat.stock_used')}</div></div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon">&#9998;</div>
-                <div><div class="stat-value">${totalParts}</div>
-                <div class="stat-label">${t('stat.parts_placed')}</div>
-                ${fillerCount ? `<div class="stat-sub">${escHtml(t('fill.of_which', { n: fillerCount }))}</div>` : ''}</div>
-            </div>
-            ${missingCard}
-            ${bedarfCard}
-            ${projectsCard}
-            <div class="stat-card">
-                <div class="stat-icon">&#9989;</div>
-                <div><div class="stat-value">${utilization.toFixed(1)}%</div>
-                <div class="stat-label">${t('stat.utilization')}</div></div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon">&#128230;</div>
-                <div><div class="stat-value">${usablePct.toFixed(1)}%</div>
-                <div class="stat-label">${t('stat.usable_remnant')}</div></div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon">&#9851;</div>
-                <div><div class="stat-value">${waste.toFixed(1)}%</div>
-                <div class="stat-label">${t('stat.total_waste')}</div>
-                <div class="stat-sub">${t('stat.real_waste')}: ${realWaste.toFixed(1)}%</div></div>
-            </div>
-        `;
+        statsEl.innerHTML = line + legend + missingBox;
         statsEl.className = 'opt-stats';
 
         const addBedarfBtn = statsEl.querySelector('.btn-add-bedarf');
@@ -1825,7 +1778,6 @@ function renderOptResults({ quiet = false } = {}) {
         setupFillSuggestions(plansEl);
     }
 
-    if (actionsEl) actionsEl.style.display = '';
     renderPlanInfo();
 
     if (missing.length > 0 && !quiet) {
@@ -1854,7 +1806,7 @@ function renderPlanInfo() {
             { dateStyle: 'short', timeStyle: 'short' })
         : '';
     const warn = [];
-    if (result.veraltet) warn.push(t('plan.outdated'));
+    if (result.veraltet) warn.push(t('wl.outdated', { reason: t(`wl.reason_${result.veraltet_grund || 'teile'}`) }));
     if (result.lager_fehlt) {
         const codes = result.fehlende_stuecke || [];
         warn.push(codes.length ? t('plan.stock_missing_codes', { codes: codes.join(', ') })
@@ -1872,8 +1824,256 @@ function renderPlanInfo() {
         ${vorratHtml}`;
     document.getElementById('btn-take-stock')?.addEventListener('click', takePartStock);
     el.classList.remove('hidden');
-    const restartBtn = document.getElementById('btn-restart');
-    if (restartBtn) restartBtn.classList.toggle('fd-button--emphasized', total > 0 && done >= total);
+    renderOptHead();
+}
+
+// ---------------------------------------------------------------------------
+// Arbeitsliste: Sammelpläne, Sägeaufträge, Projekte je Material mit Status
+// ---------------------------------------------------------------------------
+
+// Aufgeklappte Einträge mit mehreren Materialien (projekt_id)
+const WlOpen = new Set();
+
+async function refreshWorklist() {
+    const fertige = !!document.getElementById('wl-show-done')?.checked;
+    try { State.worklist = await Api.getWorklist(fertige); } catch { return; }
+    renderWorklist();
+    renderOptHead();
+}
+
+// Eintrag und Materialzeile der Arbeitsliste, die zur Auswahl passen
+function currentWork() {
+    const matId = parseInt(document.getElementById('opt-material')?.value) || 0;
+    if (State.optMode === 'material') {
+        const e = State.worklist.find(x => x.art === 'sammel' && x.materialien[0]?.material_id === matId);
+        return { entry: e || null, line: e?.materialien[0] || null };
+    }
+    const pid = parseInt(document.getElementById('opt-project')?.value) || 0;
+    const e = State.worklist.find(x => x.art !== 'sammel' && x.projekt_id === pid);
+    return { entry: e || null, line: e?.materialien.find(z => z.material_id === matId) || null };
+}
+
+function wlStatusHtml(z) {
+    const txt = t(`wl.st_${z.status}`, { done: z.gesaegt, total: z.gesamt });
+    const title = z.status === 'sammel' ? z.sammelplan
+        : z.status === 'veraltet' ? t(`wl.reason_${z.veraltet_grund || 'teile'}`) : '';
+    return `<span class="wl-status wl-status--${z.status}" title="${escAttr(title)}">${escHtml(txt)}</span>`;
+}
+
+function renderWorklist() {
+    const el = document.getElementById('wl-list');
+    if (!el) return;
+    const q = (document.getElementById('wl-search')?.value || '').trim().toLowerCase();
+    const passt = e => !q || e.name.toLowerCase().includes(q)
+        || e.materialien.some(z => z.material.toLowerCase().includes(q));
+    const liste = State.worklist.filter(passt);
+    if (!liste.length) {
+        el.innerHTML = `<p class="empty-state">${escHtml(t(State.worklist.length ? 'wl.no_match' : 'wl.empty'))}</p>`;
+        return;
+    }
+    const cur = currentWork();
+    const zeile = (e, z, nurMaterial) => `<div class="wl-row${cur.entry === e && cur.line === z ? ' selected' : ''}"
+        data-pid="${e.projekt_id}" data-mid="${z.material_id}" data-art="${e.art}" data-status="${z.status}" role="button" tabindex="0">
+        <span class="wl-name">${escHtml(nurMaterial ? z.material : e.name)}${nurMaterial || e.art === 'sammel' ? ''
+            : `<span class="wl-sub">${escHtml(z.material)}</span>`}</span>${wlStatusHtml(z)}</div>`;
+    const eintrag = e => {
+        if (e.materialien.length === 1) return zeile(e, e.materialien[0], false);
+        const offen = WlOpen.has(e.projekt_id) || cur.entry === e || !!q;
+        const gesamt = { status: e.status, gesaegt: 0, gesamt: 0 };
+        e.materialien.forEach(z => { gesamt.gesaegt += z.gesaegt; gesamt.gesamt += z.gesamt; });
+        return `<div class="wl-entry">
+            <div class="wl-row wl-head" data-toggle="${e.projekt_id}" role="button" tabindex="0" aria-expanded="${offen}">
+                <span class="wl-name"><span class="wl-caret">${offen ? '▾' : '▸'}</span>${escHtml(e.name)}</span>
+                ${offen ? '' : ['veraltet', 'in_arbeit', 'fertig'].includes(e.status) ? wlStatusHtml(gesamt)
+                    : `<span class="wl-status">${escHtml(t('wl.n_materials', { n: e.materialien.length }))}</span>`}</div>
+            ${offen ? `<div class="wl-children">${e.materialien.map(z => zeile(e, z, true)).join('')}</div>` : ''}
+        </div>`;
+    };
+    el.innerHTML = [['sammel', 'wl.group_sammel'], ['liste', 'wl.group_jobs'], ['projekt', 'wl.group_projects']]
+        .map(([art, titel]) => {
+            const es = liste.filter(e => e.art === art);
+            return es.length ? `<div class="wl-group"><div class="wl-group-title">${escHtml(t(titel))}</div>
+                ${es.map(eintrag).join('')}</div>` : '';
+        }).join('');
+
+    el.querySelectorAll('.wl-row').forEach(row => {
+        const go = () => {
+            if (row.dataset.toggle) {
+                const id = parseInt(row.dataset.toggle);
+                if (!WlOpen.delete(id)) WlOpen.add(id);
+                renderWorklist();
+                return;
+            }
+            const mid = parseInt(row.dataset.mid);
+            // Im Sammelplan: die Zeile führt zum Sammelplan
+            if (row.dataset.art === 'sammel' || row.dataset.status === 'sammel') setOptMode('material', mid);
+            else selectWork(parseInt(row.dataset.pid), mid);
+        };
+        row.addEventListener('click', go);
+        row.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(); } });
+    });
+}
+
+// Projekt/Sägeauftrag + Material aus der Arbeitsliste wählen
+function selectWork(projId, matId) {
+    document.getElementById('opt-project').value = String(projId);
+    setOptMode('project', matId);
+}
+
+// Kopf rechts: was gewählt ist, wie weit es ist und die eine passende Hauptaktion
+function renderOptHead() {
+    const head = document.getElementById('opt-head');
+    if (!head) return;
+    const settings = document.getElementById('opt-settings');
+    const actions = document.querySelector('#tab-optimization .opt-actions');
+    const hint = document.getElementById('opt-hint');
+    const mainBtn = document.getElementById('btn-optimize');
+    const sammelMode = State.optMode === 'material';
+    const matId = parseInt(document.getElementById('opt-material')?.value) || 0;
+    const projId = parseInt(document.getElementById('opt-project')?.value) || 0;
+    const mat = optMaterial();
+    const show = (node, on) => node?.classList.toggle('hidden', !on);
+
+    if (!mat || (!sammelMode && !projId)) {
+        head.innerHTML = `<p class="opt-pick">${escHtml(t('wl.pick'))}</p>`;
+        [settings, actions, hint].forEach(n => show(n, false));
+        return;
+    }
+    const { entry, line } = currentWork();
+    const result = State.optimizationResult;
+    const stuecke = (result?.schnittplaene || []).flatMap(p => p.platzierungen);
+    const allDone = stuecke.length > 0 && stuecke.every(p => p._done);
+    const status = line?.status || '';
+
+    let stage;
+    if (status === 'sammel' || status === 'verplant') stage = 'blocked';
+    else if (status === 'fertig') stage = 'done';
+    else if (!result?.plan_id) stage = 'calc';
+    else if (result.veraltet || result.lager_fehlt || status === 'veraltet') stage = 'recalc';
+    else if (allDone) stage = 'done';
+    else stage = 'saw';
+
+    const proj = State.projects.find(p => p.id === projId);
+    const name = sammelMode ? (entry?.name || State.sammel?.name || t('sammel.badge'))
+        : (proj?.name || entry?.name || '');
+    const tag = sammelMode ? t('sammel.badge') : (proj?.art === 'liste' ? t('wl.tag_job') : '');
+    const offen = line ? t(line.teile === 1 ? 'wl.open_one' : 'wl.open_parts', { teile: line.teile, n: line.offen }) : '';
+    head.innerHTML = `<div class="opt-head-title">
+            <h3 class="fd-title fd-title--h5">${escHtml(name)}</h3>
+            ${tag ? `<span class="sammel-tag">${escHtml(tag)}</span>` : ''}
+            ${line ? wlStatusHtml(line) : ''}
+        </div>
+        <div class="opt-head-sub">${escHtml([mat.name, offen].filter(Boolean).join(' · '))}</div>`;
+
+    // Hinweise: anderswo verplant, fertig, „zusammen sägen?“
+    let hintHtml = '';
+    if (status === 'verplant') hintHtml = `<span>${escHtml(t('wl.verplant_hint'))}</span>`;
+    else if (stage === 'done') hintHtml = `<span>&#9989; ${escHtml(t('wl.done_hint'))}</span>`;
+    else if (!sammelMode && line?.auch_in?.length && (stage === 'calc' || stage === 'saw' && !stuecke.some(p => p._done))) {
+        hintHtml = `<span>&#128279; ${escHtml(t('wl.together', { material: mat.name,
+            names: line.auch_in.map(r => `„${r.name}“`).join(', ') }))}</span>
+            <button id="btn-wl-together" class="fd-button fd-button--compact" type="button">${escHtml(t('wl.together_go'))}</button>`;
+    }
+    hint.innerHTML = hintHtml;
+    show(hint, !!hintHtml);
+    document.getElementById('btn-wl-together')?.addEventListener('click', () => createSammelFromHint(projId, line));
+
+    show(settings, stage === 'calc' || stage === 'recalc' || stage === 'saw');
+    show(actions, stage !== 'blocked');
+    mainBtn.dataset.stage = stage;
+    mainBtn.textContent = t({ calc: 'opt.calc', recalc: 'opt.recalc', saw: 'opt.to_saw' }[stage] || 'opt.calc');
+    show(mainBtn, stage === 'calc' || stage === 'recalc' || stage === 'saw');
+    const hasPlan = !!result?.plan_id;
+    show(document.getElementById('btn-fill'), !sammelMode && hasPlan && stage !== 'done');
+    show(document.getElementById('btn-pdf'), hasPlan);
+    show(document.getElementById('btn-labels'), hasPlan);
+    show(document.querySelector('#tab-optimization .opt-more'), hasPlan);
+    show(document.getElementById('btn-confirm'), hasPlan && !allDone);
+}
+
+// „Zusammen sägen?“: Sammelplan mit den Projekten anlegen und auswählen
+async function createSammelFromHint(projId, line) {
+    const ids = [projId, ...line.auch_in.map(r => r.projekt_id)].map(String);
+    try { await Api.createSammel({ material: String(line.material_id), projekte: ids }); } catch { return; }
+    await renderProjects();
+    setOptMode('material', line.material_id);
+    refreshWorklist();
+}
+
+// Eingeklappte Einstellungen: Zusammenfassung in einer Zeile
+function updateSettingsSummary() {
+    const el = document.getElementById('opt-settings-summary');
+    if (!el) return;
+    const blade = document.getElementById('opt-blade')?.selectedOptions[0]?.text || '';
+    const algo = document.getElementById('opt-algorithm')?.selectedOptions[0]?.text || '';
+    const reste = t(document.getElementById('opt-rests-first')?.checked ? 'opt.rests_first' : 'opt.rests_first_off');
+    const max = maxPerBar();
+    el.textContent = [blade, algo, reste, max ? t('opt.max_short', { n: max }) : ''].filter(Boolean).join(' · ');
+}
+
+function closeOptMoreMenu() {
+    document.getElementById('opt-more-menu')?.classList.add('hidden');
+    document.getElementById('btn-opt-more')?.setAttribute('aria-expanded', 'false');
+}
+
+// Berechnen bzw. neu berechnen (Projekt oder Sammelplan); merkt das Sägeblatt am Material
+async function runOptimize() {
+    const btn = document.getElementById('btn-optimize');
+    const bladeId = parseInt(document.getElementById('opt-blade')?.value);
+    const mat = optMaterial();
+    if (State.optMode === 'material') {
+        btn.disabled = true;
+        btn.textContent = '...';
+        try {
+            await optimizeSammel();
+            if (mat) mat.saegeblatt_id = bladeId;
+            try { State.projects = await Api.getProjects(); renderProjects(); } catch { /* ignore */ }
+        } catch {
+            await loadSavedPlan();
+        } finally {
+            btn.disabled = false;
+            renderOptHead();
+        }
+        return;
+    }
+    const projId = parseInt(document.getElementById('opt-project')?.value);
+    const matId = parseInt(document.getElementById('opt-material')?.value);
+    const algo = document.getElementById('opt-algorithm')?.value || 'nested';
+
+    if (!projId || !matId || !bladeId) {
+        showToast(t('dlg.select_all'), 'error');
+        return;
+    }
+
+    // Angefangener Plan: angefangene Bretter bleiben, der Rest wird neu verteilt
+    const cur = State.optimizationResult;
+    const started = cur?.plan_id && String(cur.projekt_id) === String(projId) &&
+        cur.material_id === matId && (cur.schnittplaene || []).some(p => p.verbraucht);
+    if (started && !(await confirmAsync(t('plan.reoptimize_started')))) return;
+
+    btn.disabled = true;
+    btn.textContent = '...';
+
+    try {
+        adoptPlan(await Api.optimize({
+            project_id: projId,
+            material_id: matId,
+            blade_id: bladeId,
+            algorithm: algo,
+            reste_zuerst: !!document.getElementById('opt-rests-first')?.checked,
+            max_pro_stange: maxPerBar(),
+            ...fillRequest(projId, matId),
+        }));
+        if (mat) mat.saegeblatt_id = bladeId;
+        renderOptResults();
+        try { State.projects = await Api.getProjects(); renderProjects(); } catch { /* ignore */ }
+    } catch {
+        // Gespeicherten Stand wieder anzeigen (z.B. keine offenen Teile mehr)
+        await loadSavedPlan();
+    } finally {
+        btn.disabled = false;
+        renderOptHead();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2636,7 +2836,7 @@ async function openInOptimization(projId, matId, optimize) {
     if (matId && matSel.querySelector(`option[value="${matId}"]`)) matSel.value = String(matId);
     updateFillButton();
     await loadSavedPlan();
-    if (optimize && !State.optimizationResult?.plan_id) document.getElementById('btn-optimize')?.click();
+    if (optimize && !State.optimizationResult?.plan_id) await runOptimize();
 }
 
 // Ausgewählte Teile als Füllteile in den Plan eines anderen Projekts übernehmen
@@ -2677,7 +2877,7 @@ function partsAsFillers() {
             { teil_id: g.teil.teil_id, modus: 'auffuellen', menge: g.menge }));
         State.fillSel = { key, items: [...items.values()], alle: alt.alle };
         updateFillButton();
-        document.getElementById('btn-optimize')?.click();
+        runOptimize();
     };
 }
 
@@ -2766,7 +2966,7 @@ async function openFillDialog() {
         State.fillSel = { key, items, alle: !!document.getElementById('fill-all-rests')?.checked };
         closeModal();
         updateFillButton();
-        document.getElementById('btn-optimize')?.click();
+        runOptimize();
     };
 }
 
@@ -2823,7 +3023,7 @@ async function takePartStock() {
     try { State.projects = await Api.getProjects(); } catch { /* ignore */ }
     renderProjects();
     showToast(t('fill.taken'), 'info');
-    document.getElementById('btn-optimize')?.click();
+    runOptimize();
 }
 
 // „Plan verwerfen": Plan löschen und reservierte Bretter freigeben.
@@ -2840,12 +3040,10 @@ async function discardPlan() {
     showToast(t('plan.discarded'), 'info');
 }
 
-// „Projekt neu starten": Fortschritt auf 0, Pläne löschen (Lager bleibt).
-async function restartProject() {
-    const projId = parseInt(document.getElementById('opt-project')?.value);
-    if (!projId) return;
+// „Projekt neu starten" (Reiter Projekte): Fortschritt auf 0, Pläne löschen (Lager bleibt).
+async function restartProject(projId) {
     try { await Api.restartProject(projId); } catch { return; }
-    clearOptResult();
+    if (optProjId() === projId) clearOptResult();
     try { State.projects = await Api.getProjects(); } catch { /* ignore */ }
     renderProjects();
     renderOptDropdowns();
@@ -3869,7 +4067,12 @@ async function openMaterialDialog(material = null) {
         { key: 'lagerort', label: t('mat.location'), type: 'select', options: [...orte, neuerOrt] },
         { key: 'lagerort_reste', label: t('mat.location_rest'), type: 'select',
           options: [{ value: '', text: t('mat.location_rest_same') }, ...orte, neuerOrt] },
+        // Vorauswahl in der Optimierung; wer dort mit einem anderen rechnet, ändert sie mit
+        { key: 'saegeblatt_id', label: t('mat.blade'), type: 'select',
+          options: [{ value: '0', text: t('mat.blade_first') },
+                    ...State.blades.map(b => ({ value: String(b.id), text: `${b.name} (${formatDim(b.schnittbreite)})` }))] },
     ];
+    data.saegeblatt_id = String(data.saegeblatt_id || 0);
 
     openModal(title, fields, data, async (formData) => {
         try {
@@ -5195,76 +5398,39 @@ function initEvents() {
     });
 
     // ----- Optimization -----
-    document.getElementById('btn-optimize')?.addEventListener('click', async () => {
-        if (State.optMode === 'material') {
-            const btn = document.getElementById('btn-optimize');
-            btn.disabled = true;
-            btn.textContent = '...';
-            try {
-                await optimizeSammel();
-                try { State.projects = await Api.getProjects(); renderProjects(); } catch { /* ignore */ }
-            } catch {
-                await loadSavedPlan();
-            } finally {
-                btn.disabled = false;
-                btn.textContent = t('opt.run');
-            }
-            return;
-        }
-        const projId = parseInt(document.getElementById('opt-project')?.value);
-        const matId = parseInt(document.getElementById('opt-material')?.value);
-        const bladeId = parseInt(document.getElementById('opt-blade')?.value);
-        const algo = document.getElementById('opt-algorithm')?.value || 'greedy';
-
-        if (!projId || !matId || !bladeId) {
-            showToast(t('dlg.select_all'), 'error');
-            return;
-        }
-
-        // Angefangener Plan: angefangene Bretter bleiben, der Rest wird neu verteilt
-        const cur = State.optimizationResult;
-        const started = cur?.plan_id && String(cur.projekt_id) === String(projId) &&
-            cur.material_id === matId && (cur.schnittplaene || []).some(p => p.verbraucht);
-        if (started && !(await confirmAsync(t('plan.reoptimize_started')))) return;
-
-        const btn = document.getElementById('btn-optimize');
-        btn.disabled = true;
-        btn.textContent = '...';
-
-        try {
-            adoptPlan(await Api.optimize({
-                project_id: projId,
-                material_id: matId,
-                blade_id: bladeId,
-                algorithm: algo,
-                reste_zuerst: !!document.getElementById('opt-rests-first')?.checked,
-                max_pro_stange: maxPerBar(),
-                ...fillRequest(projId, matId),
-            }));
-            renderOptResults();
-            try { State.projects = await Api.getProjects(); renderProjects(); } catch { /* ignore */ }
-        } catch {
-            // Gespeicherten Stand wieder anzeigen (z.B. keine offenen Teile mehr)
-            await loadSavedPlan();
-        } finally {
-            btn.disabled = false;
-            btn.textContent = t('opt.run');
-        }
+    // Hauptaktion je nach Stand: berechnen, neu berechnen oder an die Säge
+    document.getElementById('btn-optimize')?.addEventListener('click', () => {
+        if (document.getElementById('btn-optimize').dataset.stage === 'saw') openSawMode();
+        else runOptimize();
     });
+    document.getElementById('btn-opt-more')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const menu = document.getElementById('opt-more-menu');
+        const auf = menu.classList.toggle('hidden') === false;
+        e.currentTarget.setAttribute('aria-expanded', String(auf));
+    });
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest?.('.opt-more')) closeOptMoreMenu();
+    });
+    document.getElementById('btn-recalc')?.addEventListener('click', () => {
+        closeOptMoreMenu();
+        runOptimize();
+    });
+    document.getElementById('wl-search')?.addEventListener('input', () => renderWorklist());
+    document.getElementById('wl-show-done')?.addEventListener('change', () => refreshWorklist());
+    ['opt-blade', 'opt-algorithm', 'opt-rests-first', 'opt-max-per-bar'].forEach(id =>
+        document.getElementById(id)?.addEventListener('change', () => updateSettingsSummary()));
 
     document.getElementById('btn-confirm')?.addEventListener('click', () => {
+        closeOptMoreMenu();
         if (!State.optimizationResult) return;
         openConfirmDialog(t('opt.confirm_msg'), () => confirmAllPieces());
     });
 
     document.getElementById('btn-fill')?.addEventListener('click', () => openFillDialog());
-    ['opt-project', 'opt-material'].forEach(id =>
-        document.getElementById(id)?.addEventListener('change', () => {
-            updateFillButton();
-            updateMaxPerBar();
-        }));
 
     document.getElementById('btn-discard-plan')?.addEventListener('click', () => {
+        closeOptMoreMenu();
         if (!State.optimizationResult) return;
         openConfirmDialog(t('plan.discard_confirm'), () => discardPlan());
     });
@@ -5300,9 +5466,10 @@ function initEvents() {
         try { await Api.updateSettings({ waste_min: v }); } catch { /* non-critical */ }
     });
 
-    document.getElementById('btn-restart')?.addEventListener('click', () => {
-        if (!State.optimizationResult) return;
-        openConfirmDialog(t('plan.restart_confirm'), () => restartProject());
+    document.getElementById('btn-proj-restart')?.addEventListener('click', () => {
+        const proj = State.projects.find(p => p.id === State.selectedProjectId);
+        if (!proj) { showToast(t('dlg.select_project'), 'error'); return; }
+        openConfirmDialog(t('plan.restart_confirm'), () => restartProject(proj.id));
     });
 
     document.getElementById('btn-pdf')?.addEventListener('click', () => {
@@ -5331,19 +5498,6 @@ function initEvents() {
         });
     });
 
-    document.getElementById('opt-mode')?.addEventListener('change', (e) => {
-        setOptMode(e.target.value, parseInt(document.getElementById('opt-material')?.value));
-    });
-
-    // ----- Optimization project dropdown changes material filter -----
-    document.getElementById('opt-project')?.addEventListener('change', () => {
-        updateOptMaterialDropdown();
-        loadSavedPlan();
-    });
-
-    // Anderes Material → dessen gespeicherten Plan zeigen. Sägeblatt/Algorithmus
-    // wirken erst beim nächsten Optimieren, der gespeicherte Plan bleibt stehen.
-    document.getElementById('opt-material')?.addEventListener('change', () => loadSavedPlan());
 
     // ----- Settings -----
     document.getElementById('settings-lang')?.addEventListener('change', async (e) => {
@@ -5470,7 +5624,6 @@ function initEvents() {
     document.getElementById('btn-stock-labels')?.addEventListener('click', () => printStockLabels());
 
     // ----- Werkstatt-Modus -----
-    document.getElementById('btn-saw-mode')?.addEventListener('click', () => openSawMode());
     document.getElementById('saw-close')?.addEventListener('click', () => closeSawMode());
     document.getElementById('saw-prev')?.addEventListener('click', () => { sawPlanIdx--; renderSawMode(); });
     document.getElementById('saw-next')?.addEventListener('click', () => { sawPlanIdx++; renderSawMode(); });
@@ -5613,7 +5766,7 @@ function initEvents() {
         // Optimierung starten
         if (hotkeyMatches('optimize', e) && tab === 'optimization') {
             e.preventDefault();
-            document.getElementById('btn-optimize')?.click();
+            runOptimize();
             return;
         }
     });
