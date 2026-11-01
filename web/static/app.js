@@ -14,6 +14,7 @@ const State = {
     selectedLocation: null,   // Name des gewählten Lagerorts, WASTE_BOX = Abfallkiste
     optMode: 'project',   // Optimieren nach 'project' oder 'material' (Sammelplan)
     sammel: null,         // Sammelplan-Infos des gewählten Materials (Material-Modus)
+    sammelPlans: [],      // Sammelpläne als eigene Einträge im Reiter Projekte
     blades: [],
     projects: [],
     parts: [],
@@ -232,7 +233,8 @@ const Api = {
     updateBlade: (id, data) => fetchJSON(`/api/blades/${id}`, 'PUT', data),
     deleteBlade: (id) => fetchJSON(`/api/blades/${id}`, 'DELETE'),
 
-    getProjects: () => fetchJSON('/api/projects'),
+    // art: '' = normale Projekte, 'sammel' = Sammelpläne, 'alle' = beides
+    getProjects: (art = '') => fetchJSON('/api/projects' + (art ? `?art=${art}` : '')),
     getProject: (id) => fetchJSON(`/api/projects/${id}`),
     createProject: (data) => fetchJSON('/api/projects', 'POST', data),
     updateProject: (id, data) => fetchJSON(`/api/projects/${id}`, 'PUT', data),
@@ -254,6 +256,9 @@ const Api = {
     restartProject: (projectId) => fetchJSON(`/api/projects/${projectId}/restart`, 'POST'),
     discardPlan: (planId) => fetchJSON(`/api/plans/${planId}`, 'DELETE'),
     getSammel: (materialId) => fetchJSON(`/api/sammel/${materialId}`),
+    createSammel: (data) => fetchJSON('/api/sammel', 'POST', data),
+    setSammelMembers: (material, projekte) =>
+        fetchJSON(`/api/sammel/${encodeURIComponent(material)}/members`, 'PUT', { projekte }),
     optimizeSammel: (data) => fetchJSON('/api/sammel/optimize', 'POST', data),
     compareSammel: (data) => fetchJSON('/api/sammel/compare', 'POST', data),
     getFillCandidates: (projectId, materialId) =>
@@ -1007,15 +1012,18 @@ function printLocationLabels() {
 
 async function renderProjects() {
     try {
-        State.projects = await Api.getProjects();
+        const alle = await Api.getProjects('alle');
+        State.projects = alle.filter(p => p.art !== 'sammel');
+        State.sammelPlans = alle.filter(p => p.art === 'sammel');
     } catch { return; }
 
+    renderSammelList();
     const tbody = document.querySelector('#project-list tbody');
     if (!tbody) return;
 
     if (State.projects.length === 0) {
         tbody.innerHTML = `<tr><td class="empty-state">${t('proj.empty')}</td></tr>`;
-        State.selectedProjectId = null;
+        if (!selectedSammel()) State.selectedProjectId = null;
         renderParts();
         return;
     }
@@ -1052,7 +1060,42 @@ function planBadge(project) {
 function sammelBadge(project) {
     const names = Object.values(project.sammel || {});
     if (!names.length) return '';
-    return ` <span class="plan-badge sammel-badge" title="${escAttr(names.join(', '))}">&#128279; ${escHtml(t('sammel.badge'))}</span>`;
+    return ` <span class="sammel-link-icon" title="${escAttr(t('sammel.icon_title', { names: names.join(', ') }))}">&#128279;</span>`;
+}
+
+// Gewählter Eintrag im Kasten „Sammelpläne“ (teilt sich selectedProjectId mit den Projekten)
+function selectedSammel() {
+    return (State.sammelPlans || []).find(s => s.id === State.selectedProjectId) || null;
+}
+
+function renderSammelList() {
+    const tbody = document.querySelector('#sammel-list tbody');
+    if (!tbody) return;
+    const plans = State.sammelPlans || [];
+    if (!plans.length) {
+        tbody.innerHTML = `<tr><td class="empty-state">${escHtml(t('sammel.list_empty'))}</td></tr>`;
+        return;
+    }
+    tbody.innerHTML = plans.map(s => {
+        const selected = s.id === State.selectedProjectId ? ' selected' : '';
+        return `<tr class="fd-table__row${selected}" data-id="${s.id}"><td class="fd-table__cell">&#128279; ${escHtml(s.name)} <span class="sammel-tag">${escHtml(t('sammel.badge'))}</span>${planBadge(s)}</td></tr>`;
+    }).join('');
+    tbody.querySelectorAll('tr[data-id]').forEach(row => {
+        row.addEventListener('click', () => selectProjectRow(parseInt(row.dataset.id)));
+        row.addEventListener('dblclick', () => {
+            selectProjectRow(parseInt(row.dataset.id));
+            const s = selectedSammel();
+            if (s) openSammelRenameDialog(s);
+        });
+    });
+}
+
+// Sammelplan eines Materials im Reiter Projekte auswählen (Link aus Teile-Tabelle)
+function selectSammelOfMaterial(matId) {
+    const s = (State.sammelPlans || []).find(x => x.sammel_material_id === matId);
+    if (!s) return;
+    selectProjectRow(s.id);
+    document.querySelector(`#sammel-list tr[data-id="${s.id}"]`)?.scrollIntoView({ block: 'nearest' });
 }
 
 // Schnittliste: gesägte Teile gehen ins Regal ihres Herkunftsprojekts
@@ -1063,7 +1106,7 @@ function cutListBadge(project) {
 
 function selectProjectRow(id) {
     State.selectedProjectId = id;
-    document.querySelectorAll('#project-list tbody tr').forEach(r => {
+    document.querySelectorAll('#project-list tbody tr, #sammel-list tbody tr').forEach(r => {
         r.classList.toggle('selected', parseInt(r.dataset.id) === id);
     });
     renderParts();
@@ -1072,6 +1115,11 @@ function selectProjectRow(id) {
 async function renderParts() {
     const tbody = document.querySelector('#parts-table tbody');
     if (!tbody) return;
+
+    const sammel = selectedSammel();
+    document.getElementById('parts-toolbar')?.classList.toggle('hidden', !!sammel);
+    if (sammel) { await renderSammelParts(sammel); return; }
+    document.getElementById('sammel-detail')?.classList.add('hidden');
 
     if (!State.selectedProjectId) {
         tbody.innerHTML = `<tr><td colspan="8" class="empty-state">${t('dlg.select_project')}</td></tr>`;
@@ -1090,38 +1138,19 @@ async function renderParts() {
         return;
     }
 
+    // Teile, deren Material im Sammelplan gesägt wird: grau mit Link dorthin
+    const ausgelagert = State.projects.find(p => p.id === State.selectedProjectId)?.sammel || {};
     tbody.innerHTML = State.parts.map(p => {
-        const selected = p.id === State.selectedPartId ? ' selected' : '';
-        const mat = State.materials.find(m => m.id === p.material_id);
-        const matName = mat ? mat.name : `#${p.material_id}`;
-        const isPlatte = p.typ === 'Platte';
-        const grain = isPlatte ? t(GRAIN_KEY[p.maserung] || p.maserung) : '';
-        // Fortschritt über alle Exemplare des Projekts (gesamt = Stück × Anzahl)
-        const gesamt = p.gesamt_anzahl || p.stueckzahl;
-        const pct = gesamt > 0 ? Math.round((p.gesaegt_anzahl / gesamt) * 100) : 0;
-        const statusText = `${p.gesaegt_anzahl}/${gesamt}`;
-        const statusClass = p.gesaegt_anzahl >= gesamt ? 'status-cut' : 'status-open';
-        const qtyText = gesamt !== p.stueckzahl ? `${p.stueckzahl} <small>(${gesamt})</small>` : p.stueckzahl;
-        return `<tr class="fd-table__row ${selected}" data-id="${p.id}">
-            <td class="fd-table__cell">${escHtml(p.label)}</td>
-            <td class="fd-table__cell">${t(TYP_KEY[p.typ] || p.typ)}</td>
-            <td class="fd-table__cell">${escHtml(matName)}</td>
-            <td class="fd-table__cell">${grain}</td>
-            <td class="fd-table__cell num">${formatDim(p.laenge)}</td>
-            <td class="fd-table__cell num">${isPlatte ? formatDim(p.breite) : ''}</td>
-            <td class="fd-table__cell num">${qtyText}</td>
-            <td class="fd-table__cell">
-                <div style="display:flex;align-items:center;gap:8px">
-                    <div class="progress-bar" style="flex:1;min-width:60px">
-                        <div class="progress-fill" style="width:${pct}%"></div>
-                    </div>
-                    <span class="status-badge ${statusClass}">${statusText}</span>
-                    ${p.vorrat > 0 ? `<span class="stock-badge" title="${escAttr(t('fill.stock_hint'))}">&#128230; ${p.vorrat}</span>` : ''}
-                </div>
-            </td>
-        </tr>`;
+        const name = ausgelagert[p.material_id];
+        if (!name) return partRowHtml(p, p.id === State.selectedPartId ? ' selected' : '');
+        const link = ` <button type="button" class="cs-link part-sammel-link" data-sammel-mat="${p.material_id}" title="${escAttr(t('sammel.part_hint'))}">&rarr; ${escHtml(name)}</button>`;
+        return partRowHtml(p, (p.id === State.selectedPartId ? ' selected' : '') + ' part-ausgelagert', link);
     }).join('');
 
+    tbody.querySelectorAll('.part-sammel-link').forEach(btn => btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        selectSammelOfMaterial(parseInt(btn.dataset.sammelMat));
+    }));
     tbody.querySelectorAll('tr[data-id]').forEach(row => {
         row.addEventListener('click', () => selectPartRow(parseInt(row.dataset.id)));
         row.addEventListener('dblclick', () => {
@@ -1130,6 +1159,88 @@ async function renderParts() {
             if (part) openPartDialog(part);
         });
     });
+}
+
+// Eine Zeile der Teile-Tabelle; cls = zusätzliche Zeilen-Klassen, labelExtra = HTML hinter dem Label
+function partRowHtml(p, cls = '', labelExtra = '') {
+    const mat = State.materials.find(m => m.id === p.material_id);
+    const matName = mat ? mat.name : `#${p.material_id}`;
+    const isPlatte = p.typ === 'Platte';
+    const grain = isPlatte ? t(GRAIN_KEY[p.maserung] || p.maserung) : '';
+    // Fortschritt über alle Exemplare des Projekts (gesamt = Stück × Anzahl)
+    const gesamt = p.gesamt_anzahl || p.stueckzahl;
+    const pct = gesamt > 0 ? Math.round((p.gesaegt_anzahl / gesamt) * 100) : 0;
+    const statusText = `${p.gesaegt_anzahl}/${gesamt}`;
+    const statusClass = p.gesaegt_anzahl >= gesamt ? 'status-cut' : 'status-open';
+    const qtyText = gesamt !== p.stueckzahl ? `${p.stueckzahl} <small>(${gesamt})</small>` : p.stueckzahl;
+    return `<tr class="fd-table__row${cls}"${cls.includes('sammel-readonly') ? '' : ` data-id="${p.id}"`}>
+        <td class="fd-table__cell">${escHtml(p.label)}${labelExtra}</td>
+        <td class="fd-table__cell">${t(TYP_KEY[p.typ] || p.typ)}</td>
+        <td class="fd-table__cell">${escHtml(matName)}</td>
+        <td class="fd-table__cell">${grain}</td>
+        <td class="fd-table__cell num">${formatDim(p.laenge)}</td>
+        <td class="fd-table__cell num">${isPlatte ? formatDim(p.breite) : ''}</td>
+        <td class="fd-table__cell num">${qtyText}</td>
+        <td class="fd-table__cell">
+            <div style="display:flex;align-items:center;gap:8px">
+                <div class="progress-bar" style="flex:1;min-width:60px">
+                    <div class="progress-fill" style="width:${pct}%"></div>
+                </div>
+                <span class="status-badge ${statusClass}">${statusText}</span>
+                ${p.vorrat > 0 ? `<span class="stock-badge" title="${escAttr(t('fill.stock_hint'))}">&#128230; ${p.vorrat}</span>` : ''}
+            </div>
+        </td>
+    </tr>`;
+}
+
+// Sammelplan gewählt: Mitglieder mit Häkchen, darunter deren Teile in diesem Material
+// (nur lesend, nach Projekt gruppiert). Projektnamen springen ins Projekt.
+async function renderSammelParts(sammel) {
+    const tbody = document.querySelector('#parts-table tbody');
+    const detail = document.getElementById('sammel-detail');
+    const mid = sammel.sammel_material_id;
+    let info = null;
+    try { info = await Api.getSammel(mid); } catch { return; }
+    if (State.selectedProjectId !== sammel.id) return;
+    State.parts = [];
+    State.selectedPartId = null;
+
+    const mitglieder = new Set(sammel.mitglieder);
+    const kandidaten = info.kandidaten.map(k => ({ id: k.projekt_id, name: k.name, offen: k.offen }));
+    // Mitglieder ohne Teile in diesem Material stehen nicht unter den Kandidaten
+    sammel.mitglieder.forEach(pid => {
+        if (kandidaten.some(k => k.id === pid)) return;
+        const pr = State.projects.find(p => p.id === pid);
+        if (pr) kandidaten.push({ id: pid, name: pr.name, offen: 0 });
+    });
+    const mat = State.materials.find(m => m.id === mid);
+    detail.classList.remove('hidden');
+    detail.innerHTML = `<p class="sammel-note">${escHtml(t('opt.material'))} <b>${escHtml(mat?.name || `#${mid}`)}</b> · ${escHtml(t('sammel.readonly'))}</p>
+        <h4 class="fd-title fd-title--h6">${escHtml(t('sammel.members'))}</h4>
+        <div class="sammel-members">${kandidaten.map(k => `<label>
+            <input type="checkbox" class="cs-checkbox sammel-member-check" data-pid="${k.id}"${mitglieder.has(k.id) ? ' checked' : ''}>
+            <button type="button" class="cs-link" data-goto="${k.id}">${escHtml(k.name)}</button>
+            <span class="sammel-note">${escHtml(t('sammel.col_open'))}: ${k.offen}</span></label>`).join('')}</div>`;
+
+    const rows = kandidaten.filter(k => mitglieder.has(k.id)).map(k => {
+        const teile = (State.projects.find(p => p.id === k.id)?.teile || []).filter(tl => tl.material_id === mid);
+        return `<tr class="fd-table__row sammel-group"><td class="fd-table__cell" colspan="8">
+            <button type="button" class="cs-link" data-goto="${k.id}">${escHtml(k.name)}</button></td></tr>`
+            + teile.map(tl => partRowHtml(tl, ' sammel-readonly')).join('');
+    }).join('');
+    tbody.innerHTML = rows || `<tr><td colspan="8" class="empty-state">${escHtml(t('sammel.no_parts'))}</td></tr>`;
+
+    document.querySelectorAll('#tab-projects [data-goto]').forEach(btn => btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        selectProjectRow(parseInt(btn.dataset.goto));
+        document.querySelector(`#project-list tr[data-id="${btn.dataset.goto}"]`)?.scrollIntoView({ block: 'nearest' });
+    }));
+    detail.querySelectorAll('.sammel-member-check').forEach(cb => cb.addEventListener('change', async () => {
+        const ids = [...detail.querySelectorAll('.sammel-member-check:checked')].map(c => c.dataset.pid);
+        if (!ids.length) { cb.checked = true; showToast(t('sammel.select_projects'), 'error'); return; }
+        try { await Api.setSammelMembers(String(mid), ids); } catch { cb.checked = !cb.checked; return; }
+        await renderProjects();
+    }));
 }
 
 function selectPartRow(id) {
@@ -3922,6 +4033,110 @@ function openProjectDialog(project = null) {
     });
 }
 
+// ----- Sammelpläne im Reiter Projekte -----
+
+// Neuer Sammelplan: Material wählen, dann Projekte mit offenen Teilen ankreuzen.
+// Gibt es für das Material schon einen, wird der bestehende geöffnet.
+function openSammelNewDialog() {
+    const overlay = document.getElementById('modal-overlay');
+    const body = document.getElementById('modal-body');
+    const saveBtn = document.getElementById('modal-save');
+    const projekte = new Map();
+    State.projects.forEach(p => (p.teile || []).forEach(tl => {
+        if (tl.offen_anzahl <= 0) return;
+        if (!projekte.has(tl.material_id)) projekte.set(tl.material_id, new Set());
+        projekte.get(tl.material_id).add(p.id);
+    }));
+    const anzahl = m => projekte.get(m.id).size;
+    const mats = State.materials.filter(m => projekte.has(m.id))
+        .sort((a, b) => anzahl(b) - anzahl(a) || a.name.localeCompare(b.name));
+    if (!mats.length) { showToast(t('sammel.no_material'), 'error'); return; }
+
+    document.getElementById('modal-title').textContent = t('sammel.new_title');
+    body.innerHTML = `<div class="form-group">
+            <label class="fd-form-label" for="sn-material">${escHtml(t('opt.material'))}</label>
+            <select id="sn-material" class="cs-select">${mats.map(m => {
+                const n = anzahl(m);
+                return `<option value="${m.id}">${escHtml(m.name)} (${escHtml(t(n === 1 ? 'sammel.one_project' : 'sammel.n_projects', { n }))})</option>`;
+            }).join('')}</select>
+        </div>
+        <div class="form-group">
+            <label class="fd-form-label">${escHtml(t('sammel.projects'))}</label>
+            <div id="sn-projects" class="sammel-dialog-projects"></div>
+        </div>`;
+    const matSel = body.querySelector('#sn-material');
+    const liste = body.querySelector('#sn-projects');
+    const ladeProjekte = async () => {
+        const mid = parseInt(matSel.value);
+        const vorhanden = State.sammelPlans.find(x => x.sammel_material_id === mid);
+        if (vorhanden) {
+            liste.innerHTML = `<p class="sammel-note">${escHtml(t('sammel.exists', { name: vorhanden.name }))}</p>`;
+            return;
+        }
+        liste.innerHTML = '…';
+        let info = null;
+        try { info = await Api.getSammel(mid); } catch { liste.innerHTML = ''; return; }
+        if (parseInt(matSel.value) !== mid) return;
+        liste.innerHTML = info.kandidaten.map(k => `<label>
+            <input type="checkbox" class="cs-checkbox" value="${k.projekt_id}"${k.offen > 0 ? ' checked' : ' disabled'}>
+            ${escHtml(k.name)} <span class="sammel-note">${escHtml(t('sammel.col_open'))}: ${k.offen}</span></label>`).join('')
+            || `<p class="sammel-note">${escHtml(t('sammel.none'))}</p>`;
+    };
+    matSel.addEventListener('change', ladeProjekte);
+    ladeProjekte();
+
+    saveBtn.style.display = '';
+    saveBtn.disabled = false;
+    saveBtn.textContent = t('btn.save');
+    overlay.classList.remove('hidden');
+    overlay.classList.add('active');
+    saveBtn.onclick = async () => {
+        const mid = parseInt(matSel.value);
+        const vorhanden = State.sammelPlans.find(x => x.sammel_material_id === mid);
+        let ziel = vorhanden;
+        if (!vorhanden) {
+            const ids = [...liste.querySelectorAll('input:checked')].map(cb => cb.value);
+            if (!ids.length) { showToast(t('sammel.select_projects'), 'error'); return; }
+            try { ziel = await Api.createSammel({ material: String(mid), projekte: ids }); } catch { return; }
+        }
+        closeModal();
+        State.selectedProjectId = ziel.id;
+        await renderProjects();
+        document.querySelector(`#sammel-list tr[data-id="${ziel.id}"]`)?.scrollIntoView({ block: 'nearest' });
+    };
+}
+
+function openSammelRenameDialog(sammel) {
+    openModal(t('sammel.rename_title'), [{ key: 'name', label: t('proj.name'), type: 'text', required: true }],
+        sammel, async (formData) => {
+            try { await Api.updateProject(sammel.id, { name: formData.name, anzahl: 1 }); } catch { return; }
+            await renderProjects();
+            renderOptDropdowns();
+        });
+}
+
+// Löschen wie ein Projekt – mit Warnung, wenn schon gesägt wurde. Gesägtes zählt
+// bereits in den Mitglieds-Projekten, der Rest wird dort wieder offen.
+function deleteSammel(sammel) {
+    const plan = (sammel.plaene || [])[0];
+    let msg = t('sammel.delete_confirm', { name: sammel.name });
+    if (plan?.gesaegt > 0) msg += '\n\n' + t('sammel.delete_sawn', { done: plan.gesaegt, total: plan.gesamt });
+    else if (plan) msg += '\n\n' + t('sammel.delete_plan');
+    openConfirmDialog(msg, async () => {
+        try { await Api.deleteProject(sammel.id); } catch { return; }
+        State.selectedProjectId = null;
+        await renderProjects();
+        if (State.sammel?.sammel_id === sammel.id) State.sammel.material_id = 0;
+        renderOptDropdowns();
+    });
+}
+
+// „Optimieren“: in die Optimierung (Material-Modus) mit diesem Sammelplan
+function optimizeSelectedSammel(sammel) {
+    document.querySelector('.tab-btn[data-tab="optimization"]')?.click();
+    setOptMode('material', sammel.sammel_material_id);
+}
+
 // Projekt als JSON exportieren – Format kompatibel mit der Desktop-App
 async function exportProject() {
     const proj = State.projects.find(p => p.id === State.selectedProjectId);
@@ -4561,7 +4776,7 @@ function openCopyPartsDialog() {
 function setupSplitters() {
     document.querySelectorAll('.split-panel').forEach(sp => {
         if (sp._resizable) return;
-        const panels = sp.querySelectorAll(':scope > .panel');
+        const panels = sp.querySelectorAll(':scope > .panel, :scope > .panel-stack');
         if (panels.length !== 2) return;
         sp._resizable = true;
         sp.classList.add('resizable');
@@ -4738,6 +4953,17 @@ function initEvents() {
             } catch { /* handled */ }
         });
     });
+
+    // ----- Sammelpläne -----
+    document.getElementById('btn-sammel-new')?.addEventListener('click', () => openSammelNewDialog());
+    const mitSammel = (fn) => () => {
+        const s = selectedSammel();
+        if (!s) { showToast(t('sammel.select'), 'error'); return; }
+        fn(s);
+    };
+    document.getElementById('btn-sammel-edit')?.addEventListener('click', mitSammel(openSammelRenameDialog));
+    document.getElementById('btn-sammel-del')?.addEventListener('click', mitSammel(deleteSammel));
+    document.getElementById('btn-sammel-opt')?.addEventListener('click', mitSammel(optimizeSelectedSammel));
 
     document.getElementById('btn-proj-clone')?.addEventListener('click', async () => {
         const proj = State.projects.find(p => p.id === State.selectedProjectId);
@@ -5190,7 +5416,8 @@ function initEvents() {
             if (tab === 'material') document.getElementById('btn-mat-new')?.click();
             else if (tab === 'stock') document.getElementById('btn-loc-new')?.click();
             else if (tab === 'projects') {
-                if (State.selectedProjectId) document.getElementById('btn-part-new')?.click();
+                if (selectedSammel()) document.getElementById('btn-sammel-new')?.click();
+                else if (State.selectedProjectId) document.getElementById('btn-part-new')?.click();
                 else document.getElementById('btn-proj-new')?.click();
             }
             else if (tab === 'settings') document.getElementById('btn-blade-new')?.click();
@@ -5206,7 +5433,8 @@ function initEvents() {
             }
             else if (tab === 'stock') document.getElementById('btn-loc-edit')?.click();
             else if (tab === 'projects') {
-                if (State.selectedPartId) document.getElementById('btn-part-edit')?.click();
+                if (selectedSammel()) document.getElementById('btn-sammel-edit')?.click();
+                else if (State.selectedPartId) document.getElementById('btn-part-edit')?.click();
                 else document.getElementById('btn-proj-edit')?.click();
             }
             else if (tab === 'settings') document.getElementById('btn-blade-edit')?.click();
@@ -5222,7 +5450,8 @@ function initEvents() {
             }
             else if (tab === 'stock') document.getElementById('btn-loc-del')?.click();
             else if (tab === 'projects') {
-                if (State.selectedPartId) document.getElementById('btn-part-del')?.click();
+                if (selectedSammel()) document.getElementById('btn-sammel-del')?.click();
+                else if (State.selectedPartId) document.getElementById('btn-part-del')?.click();
                 else document.getElementById('btn-proj-del')?.click();
             }
             else if (tab === 'settings') document.getElementById('btn-blade-del')?.click();

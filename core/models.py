@@ -90,6 +90,7 @@ class Projekt:
     teile: list[Teil] = field(default_factory=list)
     art: str = ""          # "sammel" = Sammelplan mehrerer Projekte (ohne eigene Teile),
                            # "liste" = Schnittliste (Kopien von Teilen, gesägt → Vorrat)
+    sammel_material_id: int = 0   # nur Sammelplan: das gemeinsam gesägte Material
 
 
 @dataclass

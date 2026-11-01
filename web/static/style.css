@@ -966,6 +966,26 @@ td.expand-toggle:hover { background: rgba(255,255,255,0.05); }
 .sammel-compare .sammel-note { font-weight: 400; margin-top: 0.15rem; }
 .sammel-compare .sammel-saving { color: var(--sapPositiveColor, #256f3a); }
 .sammel-hint { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+/* Reiter Projekte: Kasten „Sammelpläne“ unter „Projekte“ */
+.panel-stack { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+.sammel-tag { margin-left: 0.375rem; padding: 0 0.375rem; border-radius: 0.5rem; font-size: 0.75rem;
+  background: var(--sapInformationBackground, #e1f4ff); color: var(--sapInformativeTextColor, #0064d9); }
+.sammel-link-icon { margin-left: 0.3rem; cursor: help; }
+.sammel-detail { margin-bottom: 0.75rem; }
+.sammel-detail .sammel-note { color: var(--sapNeutralTextColor, #6a6d70); font-size: 0.9em; margin: 0 0 0.5rem; }
+.sammel-members { display: flex; flex-direction: column; gap: 0.25rem; margin: 0.25rem 0 0.5rem; }
+.sammel-members label { display: inline-flex; align-items: center; gap: 0.4rem; }
+.sammel-members .sammel-note { margin: 0; }
+.sammel-dialog-projects { display: flex; flex-direction: column; gap: 0.3rem; max-height: 50vh; overflow-y: auto; }
+.sammel-dialog-projects label { display: inline-flex; align-items: center; gap: 0.4rem; }
+.cs-link { color: var(--sapLinkColor, #0064d9); cursor: pointer; text-decoration: none; background: none;
+  border: 0; padding: 0; font: inherit; }
+.cs-link:hover { text-decoration: underline; }
+#parts-table tr.part-ausgelagert > td { color: var(--sapContent_DisabledTextColor, #8396a8); }
+#parts-table tr.part-ausgelagert .progress-fill { opacity: 0.5; }
+.part-sammel-link { display: block; margin-top: 0.1rem; text-align: left; font-size: 0.85em; }
+#parts-table tr.sammel-group > td { font-weight: 600; background: var(--sapList_GroupHeaderBackground, #f5f6f7); }
+#parts-table tr.sammel-readonly { cursor: default; }
 .sammel-legend { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; }
 .sammel-legend > span { display: inline-flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
 .sammel-legend .saw-dot { width: 0.7rem; height: 0.7rem; display: inline-block; }

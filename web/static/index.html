@@ -153,6 +153,7 @@
 
     <section id="tab-projects" class="tab-content">
       <div class="split-panel">
+        <div class="panel-stack">
         <div class="panel">
           <div class="panel-header">
             <h2 class="fd-title fd-title--h5" data-i18n="proj.title">Projekte</h2>
@@ -179,8 +180,30 @@
         </div>
         <div class="panel">
           <div class="panel-header">
-            <h2 class="fd-title fd-title--h5" data-i18n="proj.parts">Teile</h2>
+            <h2 class="fd-title fd-title--h5" data-i18n="sammel.list_title">Sammelpläne</h2>
             <div class="toolbar">
+              <button id="btn-sammel-new" class="fd-button fd-button--emphasized" type="button" data-i18n="btn.new">Neu</button>
+              <button id="btn-sammel-edit" class="fd-button" type="button" data-i18n="btn.edit">Bearbeiten</button>
+              <button id="btn-sammel-del" class="fd-button fd-button--negative" type="button" data-i18n="btn.delete">Entfernen</button>
+              <button id="btn-sammel-opt" class="fd-button" type="button" data-i18n="opt.run">Optimieren</button>
+            </div>
+          </div>
+          <div class="panel-content">
+            <table id="sammel-list" class="fd-table">
+              <thead class="fd-table__header">
+                <tr class="fd-table__row">
+                  <th class="fd-table__cell" data-i18n="proj.name">Name</th>
+                </tr>
+              </thead>
+              <tbody class="fd-table__body"></tbody>
+            </table>
+          </div>
+        </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header">
+            <h2 class="fd-title fd-title--h5" data-i18n="proj.parts">Teile</h2>
+            <div class="toolbar" id="parts-toolbar">
               <button id="btn-part-new" class="fd-button fd-button--emphasized" type="button" data-i18n="part.add">Neu</button>
               <button id="btn-part-edit" class="fd-button" type="button" data-i18n="btn.edit">Bearbeiten</button>
               <button id="btn-part-del" class="fd-button fd-button--negative" type="button" data-i18n="btn.delete">Entfernen</button>
@@ -191,6 +214,7 @@
             </div>
           </div>
           <div class="panel-content">
+            <div id="sammel-detail" class="sammel-detail hidden"></div>
             <table id="parts-table" class="fd-table">
               <thead class="fd-table__header">
                 <tr class="fd-table__row">

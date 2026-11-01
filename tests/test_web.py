@@ -1013,6 +1013,104 @@ class TestSammelplan:
         assert len(self._stuecke(plan_b)) == 1                  # 3 liegen schon bei A
 
 
+class TestSammelplanImReiterProjekte:
+    """Sammelpläne als eigene Einträge: Liste, Anlegen, Mitglieder, Umbenennen, Löschen."""
+
+    _setup = TestSammelplan._setup
+    _req = TestSammelplan._req
+    _sammel = TestSammelplan._sammel
+
+    def test_liste_nur_mit_art(self, client):
+        mid, bid, a, _ = self._setup(client)
+        self._sammel(client, mid, bid, [a])
+        assert all(p["art"] != "sammel" for p in client.get("/api/projects").json())
+        sammel = client.get("/api/projects?art=sammel").json()
+        s = next(p for p in sammel if p["sammel_material_id"] == mid)
+        assert (s["art"], s["mitglieder"], s["teile"]) == ("sammel", [a], [])
+        alle = client.get("/api/projects?art=alle").json()
+        assert {p["art"] for p in alle} >= {"", "sammel"} and alle[-1]["art"] == "sammel"
+        assert client.get("/api/projects?art=quatsch").status_code == 400
+
+    def test_anlegen_mit_kuerzel_und_namen(self, client):
+        mid, bid, a, b = self._setup(client)
+        kuerzel = next(m["kuerzel"] for m in client.get("/api/materials").json()
+                       if m["id"] == mid)
+        name_b = client.put(f"/api/projects/{b}", json={"name": "Sammel-B-Name"}).json()["name"]
+        r = client.post("/api/sammel", json={"material": kuerzel.lower(), "projekte": [str(a), name_b]})
+        assert r.status_code == 201, r.text
+        s = r.json()
+        assert (s["name"], s["mitglieder"], s["plaene"]) == ("Sammelplan Alu 40x40", [a, b], [])
+        assert client.get(f"/api/projects/{a}").json()["sammel"] == {str(mid): s["name"]}
+        # Je Material nur einer – der bestehende wird genannt
+        r = client.post("/api/sammel", json={"material": str(mid), "projekte": [str(a)]})
+        assert r.status_code == 409 and r.json()["detail"]["sammel_id"] == s["id"]
+        # Danach rechnet die Optimierung mit diesen Mitgliedern
+        plan = self._sammel(client, mid, bid, [a, b])
+        assert plan["projekt_id"] == s["id"]
+
+    def test_anlegen_fehler(self, client):
+        mid, _, a, _ = self._setup(client)
+        assert client.post("/api/sammel", json={"material": "XX-unbekannt", "projekte": [str(a)]}
+                           ).json()["detail"]["code"] == "material_unbekannt"
+        r = client.post("/api/sammel", json={"material": str(mid), "projekte": ["gibt es nicht"]})
+        assert r.status_code == 404 and r.json()["detail"]["code"] == "projekt_unbekannt"
+        assert client.post("/api/sammel", json={"material": str(mid), "projekte": []}
+                           ).status_code == 422
+
+    def test_mitglieder_aendern_macht_plan_veraltet(self, client):
+        mid, bid, a, b = self._setup(client)
+        plan = self._sammel(client, mid, bid, [a, b])
+        r = client.put(f"/api/sammel/{mid}/members", json={"projekte": [str(a)]})
+        assert r.status_code == 200 and r.json()["mitglieder"] == [a]
+        assert client.get(f"/api/projects/{b}").json()["sammel"] == {}
+        neu = client.get(f"/api/projects/{plan['projekt_id']}/plans/{mid}").json()
+        assert neu["veraltet"]
+        andere = client.post("/api/materials", json={"name": "Ohne", "typ": "Stange"}).json()["id"]
+        r = client.put(f"/api/sammel/{andere}/members", json={"projekte": [str(a)]})
+        assert r.status_code == 404 and r.json()["detail"]["code"] == "sammel_unbekannt"
+        # Ein Sammelplan ist selbst kein Mitglied
+        r = client.put(f"/api/sammel/{mid}/members", json={"projekte": [str(plan["projekt_id"])]})
+        assert r.json()["detail"]["code"] == "projekt_unbekannt"
+
+    def test_umbenennen_und_keine_eigenen_teile(self, client):
+        mid, bid, a, _ = self._setup(client)
+        sid = self._sammel(client, mid, bid, [a])["projekt_id"]
+        r = client.put(f"/api/projects/{sid}", json={"name": "Alu-Runde", "anzahl": 5})
+        assert (r.json()["name"], r.json()["anzahl"]) == ("Alu-Runde", 1)
+        assert client.get(f"/api/projects/{a}").json()["sammel"] == {str(mid): "Alu-Runde"}
+        teil = {"label": "X", "typ": "Stange", "material_id": mid, "laenge": 100, "stueckzahl": 1}
+        assert client.post(f"/api/projects/{sid}/parts", json=teil
+                           ).json()["detail"]["code"] == "sammel_ohne_teile"
+        assert client.post(f"/api/projects/{sid}/clone").status_code == 400
+        assert client.post(f"/api/projects/{sid}/copy-parts",
+                           json={"part_ids": [1]}).status_code == 400
+
+    def test_loeschen_uebernimmt_gesaegtes(self, client):
+        mid, bid, a, b = self._setup(client)
+        plan = self._sammel(client, mid, bid, [a, b])
+        sid = plan["projekt_id"]
+        # Erste Stange ganz sägen: Teile beider Projekte gesägt, Stange verbraucht
+        for st in plan["schnittplaene"][0]["platzierungen"]:
+            client.post(f"/api/plan-pieces/{st['id']}", json={"gesaegt": True})
+        vorher = {pid: client.get(f"/api/projects/{pid}").json()["teile"][0]["gesaegt_anzahl"]
+                  for pid in (a, b)}
+        assert sum(vorher.values()) == len(plan["schnittplaene"][0]["platzierungen"])
+        assert client.delete(f"/api/projects/{sid}").status_code == 204
+        assert client.get(f"/api/projects/{sid}").status_code == 404
+        assert client.get(f"/api/sammel/{mid}").json()["sammel_id"] == 0
+        for pid in (a, b):
+            p = client.get(f"/api/projects/{pid}").json()
+            assert p["sammel"] == {} and p["teile"][0]["gesaegt_anzahl"] == vorher[pid]
+        # Der Rest ist wieder offen: das Projekt lässt sich einzeln optimieren
+        r = client.post("/api/optimize", json={"project_id": a, "material_id": mid, "blade_id": bid})
+        assert r.status_code == 200, r.text
+        n = sum(len(sp["platzierungen"]) for sp in r.json()["schnittplaene"])
+        assert n == 4 - vorher[a]
+        # Reservierte, ungesägte Stangen des Sammelplans sind wieder frei
+        frei = client.get("/api/stock", params={"material_id": mid}).json()
+        assert sum(s["stueckzahl"] for s in frei if s["laenge"] == 2000) == 9
+
+
 class TestRegalKorrektur:
     """Teil-Dialog: Regal-Bestand von Hand setzen (Inventur)."""
 

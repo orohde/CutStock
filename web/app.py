@@ -433,7 +433,9 @@ class ProjectOut(BaseModel):
     plaene: list[PlanStatusOut] = []
     # Materialien, für die das Projekt in einem Sammelplan steckt: {material_id: Name}
     sammel: dict[int, str] = {}
-    art: str = ""   # "" = normales Projekt, "liste" = Schnittliste
+    art: str = ""   # "" = normales Projekt, "liste" = Schnittliste, "sammel" = Sammelplan
+    sammel_material_id: int = 0      # nur Sammelplan: sein Material
+    mitglieder: list[int] = []       # nur Sammelplan: IDs der Mitglieds-Projekte
 
 
 class FuellKandidatOut(BaseModel):
@@ -731,6 +733,8 @@ def _projekt_to_out(p: Projekt) -> ProjectOut:
                 for r in get_db().list_plan_status(p.id)] if p.id else [],
         sammel=get_db().sammel_von_projekt(p.id) if p.id else {},
         art=p.art,
+        sammel_material_id=p.sammel_material_id,
+        mitglieder=get_db().sammel_mitglieder(p.id) if p.id and p.art == "sammel" else [],
     )
 
 
@@ -1567,8 +1571,15 @@ def delete_blade(bid: int):
 
 
 @app.get("/api/projects", response_model=list[ProjectOut])
-def list_projects():
-    return [_projekt_to_out(p) for p in get_db().list_projekte()]
+def list_projects(art: str = ""):
+    """Projekte; ?art=sammel nur die Sammelpläne, ?art=alle beides (Sammelpläne zuletzt)."""
+    if art not in ("", "sammel", "alle"):
+        raise HTTPException(400, "art must be '', 'sammel' or 'alle'")
+    db = get_db()
+    projekte = [] if art == "sammel" else db.list_projekte()
+    if art:
+        projekte += db.list_projekte(sammel=True)
+    return [_projekt_to_out(p) for p in projekte]
 
 
 class AllPartOut(BaseModel):
@@ -1642,7 +1653,8 @@ def update_project(pid: int, data: ProjectIn):
     if not existing:
         raise HTTPException(404, "Project not found")
     existing.name = data.name
-    existing.anzahl = data.anzahl
+    # Ein Sammelplan wird genau einmal gesägt; die Exemplare stecken in den Mitgliedern
+    existing.anzahl = 1 if existing.art == "sammel" else data.anzahl
     get_db().save_projekt(existing)
     return _projekt_to_out(get_db().get_projekt(pid))
 
@@ -1653,6 +1665,8 @@ def clone_project(pid: int):
     existing = db.get_projekt(pid)
     if not existing:
         raise HTTPException(404, "Project not found")
+    if existing.art == "sammel":
+        raise _sammel_ohne_teile()
     # Eine Schnittliste bleibt beim Duplizieren eine Schnittliste (samt Herkunft)
     art = "liste" if existing.art == "liste" else ""
     clone = Projekt(name=f"{existing.name} (Kopie)", anzahl=existing.anzahl, art=art)
@@ -1681,6 +1695,8 @@ def copy_parts_to_project(pid: int, data: CopyPartsRequest):
     target = db.get_projekt(pid)
     if not target:
         raise HTTPException(404, "Target project not found")
+    if target.art == "sammel":
+        raise _sammel_ohne_teile()
     copied = []
     for tid in data.part_ids:
         rows = db.conn.execute("SELECT * FROM teil WHERE id=?", (tid,)).fetchone()
@@ -1702,8 +1718,16 @@ def copy_parts_to_project(pid: int, data: CopyPartsRequest):
     return copied
 
 
+def _sammel_ohne_teile() -> HTTPException:
+    return _fehler(400, "sammel_ohne_teile",
+                   "A combined plan has no parts of its own; edit them in the member projects")
+
+
 @app.delete("/api/projects/{pid}", status_code=204)
 def delete_project(pid: int):
+    """Projekt löschen. Ein Sammelplan verschwindet samt Plan und Mitgliederliste:
+    Gesägtes zählt schon in den Mitglieds-Projekten, der Rest wird dort wieder offen,
+    reservierte Lagerstücke werden frei."""
     existing = get_db().get_projekt(pid)
     if not existing:
         raise HTTPException(404, "Project not found")
@@ -1725,6 +1749,8 @@ def create_part(pid: int, data: PartIn):
     existing = get_db().get_projekt(pid)
     if not existing:
         raise HTTPException(404, "Project not found")
+    if existing.art == "sammel":
+        raise _sammel_ohne_teile()
     t = Teil(
         projekt_id=pid,
         label=data.label,
@@ -2163,6 +2189,59 @@ def get_sammel(mid: int):
             mitglied=pr.id in mitglieder))
     return SammelOut(sammel_id=sammel_id, name=sammel.name if sammel else "",
                      kandidaten=kandidaten)
+
+
+class SammelCreateIn(BaseModel):
+    material: str                      # ID oder Kürzel
+    projekte: list[str] = Field(min_length=1)   # IDs oder Namen
+    name: str = ""                     # leer = „Sammelplan <Material>“
+
+
+class SammelMembersIn(BaseModel):
+    projekte: list[str] = Field(min_length=1)   # IDs oder Namen
+
+
+def _mitglieder_ref(db: Database, refs: list[str]) -> list[int]:
+    """Projekt-IDs zu IDs/Namen; nur normale Projekte und Schnittlisten."""
+    ids = []
+    for ref in refs:
+        pr = db.projekt_finden(ref)
+        if not pr or pr.art == "sammel":
+            raise _fehler(404, "projekt_unbekannt", f"Project {ref} not found")
+        if pr.id not in ids:
+            ids.append(pr.id)
+    return ids
+
+
+@app.post("/api/sammel", response_model=ProjectOut, status_code=201)
+def create_sammel(data: SammelCreateIn):
+    """Sammelplan anlegen (noch ohne Schnittplan – gerechnet wird mit /api/sammel/optimize).
+
+    Je Material gibt es höchstens einen; ist schon einer da, kommt 409 mit seiner ID.
+    """
+    db = get_db()
+    material = _material_ref(db, data.material)
+    if alt := db.get_sammel(material.id):
+        raise _fehler(409, "sammel_vorhanden",
+                      f"“{material.name}” already has a combined plan", sammel_id=alt.id)
+    ids = _mitglieder_ref(db, data.projekte)
+    sammel = db.sammel_anlegen(material.id, data.name.strip() or f"Sammelplan {material.name}")
+    db.sammel_mitglieder_setzen(sammel.id, ids)
+    return _projekt_to_out(db.get_projekt(sammel.id))
+
+
+@app.put("/api/sammel/{material}/members", response_model=ProjectOut)
+def set_sammel_members(material: str, data: SammelMembersIn):
+    """Mitglieder des Sammelplans eines Materials (ID oder Kürzel) ersetzen.
+
+    Ein schon berechneter Plan bleibt stehen und gilt danach als veraltet."""
+    db = get_db()
+    mat = _material_ref(db, material)
+    sammel = db.get_sammel(mat.id)
+    if not sammel:
+        raise _fehler(404, "sammel_unbekannt", f"“{mat.name}” has no combined plan")
+    db.sammel_mitglieder_setzen(sammel.id, _mitglieder_ref(db, data.projekte))
+    return _projekt_to_out(db.get_projekt(sammel.id))
 
 
 @app.post("/api/sammel/optimize", response_model=OptimizeResult)
@@ -3483,6 +3562,56 @@ WEB_EXTRA_TRANSLATIONS = {
     },
     "sammel.badge": {"de": "Sammelplan", "en": "Combined plan", "fr": "Plan groupé", "it": "Piano combinato"},
     "sammel.open": {"de": "Sammelplan öffnen", "en": "Open combined plan", "fr": "Ouvrir le plan groupé", "it": "Apri piano combinato"},
+    "sammel.list_title": {"de": "Sammelpläne", "en": "Combined plans", "fr": "Plans groupés", "it": "Piani combinati"},
+    "sammel.list_empty": {
+        "de": "Noch kein Sammelplan. Mit „Neu“ sägst du mehrere Projekte aus einem Material gemeinsam.",
+        "en": "No combined plan yet. Use “New” to cut several projects from one material together.",
+        "fr": "Aucun plan groupé. Avec « Nouveau », découpez plusieurs projets dans un même matériau.",
+        "it": "Nessun piano combinato. Con «Nuovo» tagli insieme più progetti dallo stesso materiale.",
+    },
+    "sammel.new_title": {"de": "Neuer Sammelplan", "en": "New combined plan", "fr": "Nouveau plan groupé", "it": "Nuovo piano combinato"},
+    "sammel.rename_title": {"de": "Sammelplan umbenennen", "en": "Rename combined plan", "fr": "Renommer le plan groupé", "it": "Rinomina piano combinato"},
+    "sammel.select": {"de": "Bitte einen Sammelplan auswählen.", "en": "Please select a combined plan.", "fr": "Veuillez choisir un plan groupé.", "it": "Seleziona un piano combinato."},
+    "sammel.no_material": {"de": "Kein Projekt hat offene Teile.", "en": "No project has open parts.", "fr": "Aucun projet n’a de pièces ouvertes.", "it": "Nessun progetto ha pezzi aperti."},
+    "sammel.exists": {
+        "de": "Für dieses Material gibt es schon „{name}“ – er wird geöffnet.",
+        "en": "This material already has “{name}” – opening it.",
+        "fr": "Ce matériau a déjà « {name} » – il est ouvert.",
+        "it": "Questo materiale ha già «{name}» – viene aperto.",
+    },
+    "sammel.members": {"de": "Mitglieder", "en": "Members", "fr": "Membres", "it": "Membri"},
+    "sammel.readonly": {
+        "de": "Nur Ansicht – die Teile bearbeitest du im jeweiligen Projekt.",
+        "en": "View only – edit the parts in their own project.",
+        "fr": "Lecture seule – modifiez les pièces dans leur propre projet.",
+        "it": "Sola lettura – modifica i pezzi nel loro progetto.",
+    },
+    "sammel.no_parts": {"de": "Keine Teile in diesem Material.", "en": "No parts in this material.", "fr": "Aucune pièce dans ce matériau.", "it": "Nessun pezzo in questo materiale."},
+    "sammel.part_hint": {
+        "de": "Wird im Sammelplan gesägt – klicken öffnet ihn",
+        "en": "Cut in the combined plan – click to open it",
+        "fr": "Découpée dans le plan groupé – cliquer pour l’ouvrir",
+        "it": "Tagliato nel piano combinato – clic per aprirlo",
+    },
+    "sammel.icon_title": {"de": "Im Sammelplan: {names}", "en": "In combined plan: {names}", "fr": "Dans le plan groupé : {names}", "it": "Nel piano combinato: {names}"},
+    "sammel.delete_confirm": {
+        "de": "Sammelplan „{name}“ löschen?\n\nDie Projekte und ihre Teile bleiben erhalten.",
+        "en": "Delete combined plan “{name}”?\n\nThe projects and their parts stay.",
+        "fr": "Supprimer le plan groupé « {name} » ?\n\nLes projets et leurs pièces restent.",
+        "it": "Eliminare il piano combinato «{name}»?\n\nI progetti e i loro pezzi restano.",
+    },
+    "sammel.delete_sawn": {
+        "de": "Achtung: {done} von {total} Stück sind schon gesägt. Sie bleiben in den Projekten als gesägt; der Rest wird wieder offen, reservierte Lagerstücke werden frei.",
+        "en": "Caution: {done} of {total} pieces are already cut. They stay cut in the projects; the rest becomes open again and reserved stock is released.",
+        "fr": "Attention : {done} sur {total} pièces sont déjà découpées. Elles restent découpées dans les projets ; le reste redevient ouvert et le stock réservé est libéré.",
+        "it": "Attenzione: {done} di {total} pezzi sono già tagliati. Restano tagliati nei progetti; il resto torna aperto e il magazzino riservato viene liberato.",
+    },
+    "sammel.delete_plan": {
+        "de": "Der berechnete Schnittplan wird verworfen, reservierte Lagerstücke werden frei.",
+        "en": "The calculated cutting plan is discarded and reserved stock is released.",
+        "fr": "Le plan de coupe calculé est abandonné et le stock réservé est libéré.",
+        "it": "Il piano di taglio calcolato viene scartato e il magazzino riservato viene liberato.",
+    },
     # ---- Lager: Reiter, Lagerorte, Abfallkiste, Entnahme ----
     "tab.material": {"de": "Material", "en": "Material", "fr": "Matériau", "it": "Materiale"},
     "tab.stock": {"de": "Lager", "en": "Stock", "fr": "Stock", "it": "Magazzino"},

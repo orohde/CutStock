@@ -1038,13 +1038,14 @@ class Database:
         self.conn.commit()
         return p
 
-    def list_projekte(self) -> list[Projekt]:
-        """Alle normalen Projekte (ohne Sammelpläne)."""
+    def list_projekte(self, sammel: bool = False) -> list[Projekt]:
+        """Alle normalen Projekte (ohne Sammelpläne) bzw. mit sammel=True nur die Sammelpläne."""
         rows = self.conn.execute(
-            "SELECT * FROM projekt WHERE art != 'sammel' ORDER BY name").fetchall()
+            f"SELECT * FROM projekt WHERE art {'=' if sammel else '!='} 'sammel'"
+            " ORDER BY name").fetchall()
         projekte = []
         for r in rows:
-            p = Projekt(id=r["id"], name=r["name"], anzahl=r["anzahl"], art=r["art"])
+            p = self._row_to_projekt(r)
             p.teile = self.list_teile(p.id)
             projekte.append(p)
         return projekte
@@ -1055,9 +1056,25 @@ class Database:
         ).fetchone()
         if not row:
             return None
-        p = Projekt(id=row["id"], name=row["name"], anzahl=row["anzahl"], art=row["art"])
+        p = self._row_to_projekt(row)
         p.teile = self.list_teile(p.id)
         return p
+
+    @staticmethod
+    def _row_to_projekt(row: sqlite3.Row) -> Projekt:
+        return Projekt(id=row["id"], name=row["name"], anzahl=row["anzahl"], art=row["art"],
+                       sammel_material_id=row["sammel_material_id"])
+
+    def projekt_finden(self, ref: int | str) -> Projekt | None:
+        """Projekt über ID oder genauen Namen (ohne Sammelpläne beim Namen)."""
+        if isinstance(ref, int) or str(ref).isdigit():
+            p = self.get_projekt(int(ref))
+            if p:
+                return p
+        row = self.conn.execute(
+            "SELECT id FROM projekt WHERE name=? AND art != 'sammel' ORDER BY id",
+            (str(ref).strip(),)).fetchone()
+        return self.get_projekt(row["id"]) if row else None
 
     # ------------------------------------------------------------------
     # Sammelplan: ein Plan je Material über mehrere Projekte
