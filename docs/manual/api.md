@@ -64,11 +64,11 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | PUT | `/api/blades/{id}` | Update a blade |
 | DELETE | `/api/blades/{id}` | Delete a blade |
 | **Projects** | | |
-| GET | `/api/projects` | List projects |
+| GET | `/api/projects?art=` | List projects; `art=sammel` combined plans only, `art=alle` both (without: projects only) |
 | GET | `/api/projects/{id}` | Get a project |
 | POST | `/api/projects` | Create a project |
 | PUT | `/api/projects/{id}` | Update a project (name, number of copies) |
-| DELETE | `/api/projects/{id}` | Delete a project |
+| DELETE | `/api/projects/{id}` | Delete a project or combined plan (cut parts stay in the projects) |
 | POST | `/api/projects/{id}/clone` | Duplicate a project |
 | POST | `/api/projects/{id}/copy-parts` | Copy parts into a project |
 | POST | `/api/projects/{id}/restart` | Restart project (progress 0, plans removed, stock unchanged) |
@@ -86,6 +86,8 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | DELETE | `/api/plans/{id}` | Discard plan (releases reserved pieces) |
 | GET | `/api/projects/{id}/fill-candidates/{material_id}` | Possible filler parts from other projects |
 | GET | `/api/sammel/{material_id}` | Combined plan status and eligible projects |
+| POST | `/api/sammel` | Create a combined plan (material and projects, no cutting plan yet) |
+| PUT | `/api/sammel/{id or code}/members` | Replace the members of a material's combined plan |
 | POST | `/api/sammel/optimize` | Create/replace and compute the combined plan |
 | GET | `/api/parts` | Parts of all projects ("Parts" tab) |
 | POST | `/api/cut-lists` | Create a cut list from individual parts |
@@ -183,3 +185,33 @@ DELETE /api/waste?material=AP40
 ```
 
 Stock journal: `GET /api/journal?material=AP40&seit=1767225600&limit=100` -- each entry has `zeit` (Unix time), `art` (`zugang`, `korrektur_ab`, `entnahme`, `plan_verbrauch`, `plan_zurueck`, `rest_ein`, `rest_zurueck`, `abfall_ein`, `abfall_zurueck`, `abfall_ab`, `abfall_leer`, `material_lagerort`, `lagerort_neu`, `lagerort_umbenannt`, `lagerort_geloescht`), `code`, sizes, `anzahl`, `quelle` (`ui`/`api`), `notiz`.
+
+## Combined plans
+
+A combined plan is a project with `art: "sammel"`, `sammel_material_id` and `mitglieder`
+(member project IDs); it has no parts of its own. `GET /api/projects` only lists it with
+`?art=sammel` or `?art=alle`; member projects name it under `sammel` (`{material_id: name}`).
+
+```json
+POST /api/sammel
+{"material": "AP40", "projekte": ["Workbench", "12"]}
+
+→ 201 {"id": 31, "name": "Sammelplan Alu Profil 40x40", "art": "sammel", "sammel_material_id": 2, "mitglieder": [5, 12], ...}
+```
+
+Material by ID or code, projects by ID or name, `name` optional. If the material already has
+one, you get `409 sammel_vorhanden` with `sammel_id`; unknown references give
+`404 material_unbekannt` or `projekt_unbekannt`. The plan is calculated with
+`POST /api/sammel/optimize`.
+
+Change members (a calculated plan is then `veraltet`, i.e. outdated):
+
+```json
+PUT /api/sammel/AP40/members
+{"projekte": ["Workbench"]}
+```
+
+Rename with `PUT /api/projects/{id}` (the number of copies stays 1), delete with
+`DELETE /api/projects/{id}`: what has been cut already counts in the member projects
+(`gesaegt_anzahl`), the rest becomes open again and reserved stock pieces are released. Adding,
+copying or duplicating parts is not possible for a combined plan (`400 sammel_ohne_teile`).

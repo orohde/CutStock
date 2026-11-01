@@ -411,6 +411,18 @@ def shoot(ids: dict):
         page.select_option("#opt-mode", "project")
         page.wait_for_timeout(400)
 
+        # 7b2) Reiter Projekte: Sammelplan ausgewählt (Mitglieder, Teile nur lesend)
+        page.set_viewport_size({"width": 1280, "height": 860})
+        page.click('.tab-btn[data-tab="projects"]')
+        page.wait_for_selector("#sammel-list tbody tr[data-id]")
+        page.click("#sammel-list tbody tr[data-id]")
+        page.wait_for_selector("#parts-table tr.sammel-group")
+        page.wait_for_timeout(300)
+        page.screenshot(path=shot("sammelplaene"))
+        page.set_viewport_size({"width": 1280, "height": 1000})
+        page.click('.tab-btn[data-tab="optimization"]')
+        page.wait_for_timeout(400)
+
         # 7c) Reiter Teile: Teile aller Projekte, zwei Hocker-Teile angehakt
         # (Schnittliste / Als Füllteile), Spalte "Regal" mit Vorrat
         page.set_viewport_size({"width": 1280, "height": 860})

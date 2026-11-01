@@ -2,7 +2,7 @@
 
 [← Handbuch](README.md)
 
-Links die Projekte, rechts die Teile des gewählten Projekts.
+Links oben die Projekte, darunter die Sammelpläne, rechts die Teile des gewählten Eintrags.
 
 ![Projekte](../screenshot_projekte.png)
 
@@ -12,9 +12,8 @@ Links die Projekte, rechts die Teile des gewählten Projekts.
 - **Anzahl Exemplare**: Wird ein Projekt mehrfach gebaut, genügt die Anzahl am Projekt –
   alle Exemplare werden gemeinsam optimiert.
 - Import/Export als JSON, Teilelisten-Import aus CSV.
-- Ein Hinweis „Sammelplan“ markiert Projekte, die in einem gemeinsamen Plan stecken
-  (siehe [Optimierung](5-optimierung.md#sammelplan)); „Schnittliste“ markiert Listen aus dem
-  Reiter [Teile](4-teile.md).
+- Ein kleines 🔗 markiert Projekte, die in einem Sammelplan stecken (der Tooltip nennt ihn);
+  „Schnittliste“ markiert Listen aus dem Reiter [Teile](4-teile.md).
 
 ## Teile
 
@@ -23,3 +22,29 @@ Jedes Teil hat Label, Typ, Material, Maße, Stückzahl (je Exemplar) und Maserun
 
 Im Dialog „Teil bearbeiten“ lässt sich der **Regal-Vorrat** von Hand korrigieren
 („Im Regal“), etwa nach einer Inventur.
+
+Teile, deren Material in einem Sammelplan gesägt wird, sind **grau** und tragen den Hinweis
+„→ <Sammelplan>“; ein Klick darauf wählt den Sammelplan aus. Bearbeiten lassen sie sich trotzdem –
+ein schon berechneter Sammelplan gilt danach als veraltet.
+
+## Sammelpläne
+
+Ein Sammelplan sägt die Teile mehrerer Projekte aus **einem Material** gemeinsam – das spart
+oft ganze Stangen oder Platten. Je Material gibt es höchstens einen Sammelplan. Die Einträge im
+Kasten „Sammelpläne“ tragen ein 🔗 und das Etikett „Sammelplan“.
+
+![Sammelplan im Reiter Projekte](../screenshot_sammelplaene.png)
+
+- **Neu**: Material wählen, dann die Projekte mit offenen Teilen in diesem Material ankreuzen.
+  Hat das Material schon einen Sammelplan, wird dieser geöffnet. Der Name lautet
+  „Sammelplan <Material>“.
+- **Bearbeiten**: umbenennen.
+- **Ausgewählt** zeigt der rechte Kasten die Mitglieder mit Häkchen (dort ändern) und darunter
+  ihre Teile in diesem Material, nach Projekt gruppiert und nur zur Ansicht. Projektnamen sind
+  Links ins jeweilige Projekt; bearbeitet wird dort.
+- **Optimieren** springt in die [Optimierung](5-optimierung.md#sammelplan) (Material-Modus) mit
+  diesem Sammelplan.
+- **Löschen** wie ein Projekt, mit Warnung, wenn schon gesägt wurde. Nichts geht verloren:
+  Gesägte Teile bleiben in ihren Projekten als gesägt, der Rest wird wieder offen, reservierte
+  Lagerstücke werden frei. Danach lassen sich die Projekte einzeln optimieren oder neu
+  zusammenfassen.

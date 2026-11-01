@@ -60,7 +60,8 @@ schraffiert, tragen ihr Herkunftsprojekt und kommen gesägt in den Regal-Vorrat 
 Wird dasselbe Material in mehreren Projekten gebraucht: „Optimieren nach: **Material
 (Sammelplan)**“, Material wählen, Projekte anhaken. **Vergleichen** zeigt die Ersparnis gegenüber
 getrennten Plänen. Jedes Projekt bekommt eine eigene Farbe; abgehakte Teile zählen in ihrem
-Projekt.
+Projekt. Anlegen, umbenennen, Mitglieder ändern und löschen geht auch im Reiter
+[Projekte](3-projekte.md#sammelpläne), Kasten „Sammelpläne“.
 
 ![Sammelplan](../screenshot_sammelplan.png)
 

@@ -64,11 +64,11 @@ Anfragen von der eigenen Web-Oberfläche (Same-Origin) und von localhost sind im
 | PUT | `/api/blades/{id}` | Sägeblatt aktualisieren |
 | DELETE | `/api/blades/{id}` | Sägeblatt löschen |
 | **Projekte** | | |
-| GET | `/api/projects` | Projekte auflisten |
+| GET | `/api/projects?art=` | Projekte auflisten; `art=sammel` nur Sammelpläne, `art=alle` beides (ohne: nur Projekte) |
 | GET | `/api/projects/{id}` | Projekt abrufen |
 | POST | `/api/projects` | Projekt anlegen |
 | PUT | `/api/projects/{id}` | Projekt aktualisieren (Name, Anzahl Exemplare) |
-| DELETE | `/api/projects/{id}` | Projekt löschen |
+| DELETE | `/api/projects/{id}` | Projekt oder Sammelplan löschen (Gesägtes bleibt in den Projekten) |
 | POST | `/api/projects/{id}/clone` | Projekt kopieren |
 | POST | `/api/projects/{id}/copy-parts` | Teile in ein Projekt kopieren |
 | POST | `/api/projects/{id}/restart` | Projekt neu starten (Fortschritt 0, Pläne weg, Lager bleibt) |
@@ -86,6 +86,8 @@ Anfragen von der eigenen Web-Oberfläche (Same-Origin) und von localhost sind im
 | DELETE | `/api/plans/{id}` | Plan verwerfen (gibt reservierte Stücke frei) |
 | GET | `/api/projects/{id}/fill-candidates/{material_id}` | Mögliche Füllteile aus anderen Projekten |
 | GET | `/api/sammel/{material_id}` | Sammelplan-Status und mögliche Projekte |
+| POST | `/api/sammel` | Sammelplan anlegen (Material und Projekte, noch ohne Schnittplan) |
+| PUT | `/api/sammel/{id oder Kuerzel}/members` | Mitglieder des Sammelplans eines Materials ersetzen |
 | POST | `/api/sammel/optimize` | Sammelplan anlegen/ersetzen und berechnen |
 | GET | `/api/parts` | Teile aller Projekte (Reiter "Teile") |
 | POST | `/api/cut-lists` | Schnittliste aus einzelnen Teilen anlegen |
@@ -183,3 +185,32 @@ DELETE /api/waste?material=AP40
 ```
 
 Lagerjournal: `GET /api/journal?material=AP40&seit=1767225600&limit=100` -- je Eintrag `zeit` (Unix-Zeit), `art` (`zugang`, `korrektur_ab`, `entnahme`, `plan_verbrauch`, `plan_zurueck`, `rest_ein`, `rest_zurueck`, `abfall_ein`, `abfall_zurueck`, `abfall_ab`, `abfall_leer`, `material_lagerort`, `lagerort_neu`, `lagerort_umbenannt`, `lagerort_geloescht`), `code`, Masse, `anzahl`, `quelle` (`ui`/`api`), `notiz`.
+
+## Sammelpläne
+
+Ein Sammelplan ist ein Projekt mit `art: "sammel"`, `sammel_material_id` und `mitglieder`
+(Projekt-IDs); eigene Teile hat er nicht. `GET /api/projects` liefert ihn nur mit `?art=sammel`
+oder `?art=alle`, Mitglieds-Projekte nennen ihn unter `sammel` (`{material_id: Name}`).
+
+```json
+POST /api/sammel
+{"material": "AP40", "projekte": ["Werkbank", "12"]}
+
+→ 201 {"id": 31, "name": "Sammelplan Alu Profil 40x40", "art": "sammel", "sammel_material_id": 2, "mitglieder": [5, 12], ...}
+```
+
+Material per ID oder Kürzel, Projekte per ID oder Namen, `name` optional. Gibt es für das
+Material schon einen, kommt `409 sammel_vorhanden` mit `sammel_id`; unbekannt sind
+`404 material_unbekannt` bzw. `projekt_unbekannt`. Berechnet wird mit `POST /api/sammel/optimize`.
+
+Mitglieder ändern (ein berechneter Plan gilt danach als `veraltet`):
+
+```json
+PUT /api/sammel/AP40/members
+{"projekte": ["Werkbank"]}
+```
+
+Umbenennen mit `PUT /api/projects/{id}` (die Anzahl bleibt 1), löschen mit
+`DELETE /api/projects/{id}`: Gesägtes zählt schon in den Mitglieds-Projekten (`gesaegt_anzahl`),
+der Rest wird wieder offen, reservierte Lagerstücke werden frei. Teile anlegen, kopieren oder
+duplizieren geht bei einem Sammelplan nicht (`400 sammel_ohne_teile`).

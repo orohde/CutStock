@@ -57,7 +57,9 @@ project and go onto their project's shelf once cut.
 
 If the same material is needed in several projects: "Optimize by: **Material (combined plan)**",
 choose the material, tick the projects. **Compare** shows the savings against separate plans.
-Every project gets its own color; ticked-off parts count in their project.
+Every project gets its own color; ticked-off parts count in their project. Creating,
+renaming, changing members and deleting also works in the [Projects](3-projects.md#combined-plans)
+tab, box "Combined plans".
 
 ![Combined plan](../screenshot_sammelplan_en.png)
 
