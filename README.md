@@ -9,6 +9,8 @@ CutStock comes in two flavors that share the same optimization core:
 - **Desktop app** (macOS, Windows) -- double-click, works offline, data stays local (opens the web UI in your default browser)
 - **Web app** (Docker) -- self-hosted, reachable from any browser or tablet in your network
 
+Website and manual: **[cutstock.app](https://cutstock.app/en/)** · [Manual](https://cutstock.app/en/manual/) · [REST API](https://cutstock.app/en/rest-api/)
+
 ![CutStock Optimization](docs/screenshot_platten_en.png)
 
 > **[Deutsche Version](README.de.md)**
@@ -284,7 +286,7 @@ CutStock/
 
 **[PolyForm Noncommercial 1.0.0](LICENSE)** -- free for any noncommercial use: private use, hobby projects, schools, non-profits, and public institutions. You may use, modify, and share CutStock for these purposes.
 
-**Commercial use:** If you would like to use CutStock in your business -- for example in a joinery, cabinet shop, or any other commercial workshop -- a separate commercial license is available. Please use the contact form at [worldgate.de/cutstock](https://worldgate.de/en/cutstock-en/).
+**Commercial use:** If you would like to use CutStock in your business -- for example in a joinery, cabinet shop, or any other commercial workshop -- a separate commercial license is available. Please request a license on [cutstock.app](https://cutstock.app/en/#download).
 
 CutStock is *source-available*: the code is public, but it is not open source in the OSI sense because commercial use requires a license. Versions up to and including 2026.10.46 were released under CC BY-NC-SA 4.0.
 

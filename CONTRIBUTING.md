@@ -20,8 +20,8 @@ currently not accepted.** Pull requests will be closed without merging.
 If you've found a fix, please describe the problem and the cause in an issue.
 The fix will then be implemented in the main codebase.
 
-**Commercial licensing** is not handled on GitHub. Please use the contact form at
-[worldgate.de/cutstock](https://worldgate.de/en/cutstock-en/) instead of opening
+**Commercial licensing** is not handled on GitHub. Please request a license on
+[cutstock.app](https://cutstock.app/en/#download) instead of opening
 an issue or discussion.
 
 ## Running from source
