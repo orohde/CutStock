@@ -101,5 +101,5 @@ def test_fuellteile_eigener_abschnitt(tmp_path, monkeypatch):
         reste=[], verschnitt_mm=0, verschnitt_prozent=0)])
     pfad = tmp_path / "f.pdf"
     export_pdf(erg, pfad, projekt_name="Regal", is_1d=True)
-    i = texte.index("Füllteile (1) – kommen ins Regal ihres Projekts")
+    i = texte.index("Füllteile (1) – zählen bei ihrem eigenen Projekt")
     assert "Seite" in texte[:i] and "Leiste" in texte[i:]   # getrennt, ohne „→ Projekt“

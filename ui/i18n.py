@@ -631,18 +631,18 @@ TRANSLATIONS = {
         "fr": "Scié (pièces) :", "it": "Tagliato (pezzi):",
     },
     "part.shelf_count": {
-        "de": "Im Regal (fertige Stück):", "en": "On the shelf (finished pieces):",
-        "fr": "En stock (pièces finies) :", "it": "A scaffale (pezzi finiti):",
+        "de": "Fertigteile (Stück auf Vorrat):", "en": "Finished parts (pieces in stock):",
+        "fr": "Pièces finies (en réserve) :", "it": "Pezzi finiti (di scorta):",
     },
     "part.shelf_hint": {
-        "de": "Fertig gesägte Teile, die schon bereitliegen (z.B. als Füllteil entstanden). "
-              "Hier von Hand korrigieren, etwa nach einer Inventur.",
-        "en": "Finished parts already waiting (e.g. cut as filler parts). "
-              "Correct by hand here, e.g. after a stock check.",
-        "fr": "Pièces finies déjà disponibles (p. ex. découpées comme pièces de remplissage). "
-              "À corriger ici à la main, p. ex. après un inventaire.",
-        "it": "Pezzi finiti già pronti (ad es. tagliati come pezzi di riempimento). "
-              "Correggi qui a mano, ad es. dopo un inventario.",
+        "de": "Fertig gesägte Teile auf Vorrat, die noch keinem Projekt angerechnet sind "
+              "(z.B. mehr gesägt als offen war). Hier von Hand korrigieren, etwa nach einer Inventur.",
+        "en": "Finished parts in stock that no project has counted yet "
+              "(e.g. more cut than was open). Correct by hand here, e.g. after a stocktake.",
+        "fr": "Pièces finies en réserve, pas encore comptées dans un projet "
+              "(p. ex. plus coupé que nécessaire). À corriger ici, par exemple après un inventaire.",
+        "it": "Pezzi finiti di scorta non ancora contati in un progetto "
+              "(es. tagliati più del necessario). Correggi qui, ad esempio dopo un inventario.",
     },
     "set.about": {
         "de": "Über / Links", "en": "About / Links",
@@ -817,16 +817,16 @@ TRANSLATIONS = {
         "fr": "Pièces de remplissage d'autres projets", "it": "Pezzi di riempimento da altri progetti",
     },
     "fill.hint_1d": {
-        "de": "Haken setzen genügt: Die Teile kommen in den Abfall der Stangen, so viele wie hineinpassen – es wird nie mehr Material gebraucht. Eine Menge begrenzt die Stückzahl, und diese Teile haben Vorrang. Gesägte Füllteile kommen ins Regal ihres Projekts.",
-        "en": "Just tick the parts: they go into the bar waste, as many as fit – never using more material. A quantity limits the count, and those parts take priority. Cut filler parts go to their project's shelf.",
-        "fr": "Il suffit de cocher : les pièces vont dans les chutes des barres, autant que possible – jamais plus de matériau. Une quantité limite le nombre, et ces pièces sont prioritaires. Les pièces coupées vont sur l'étagère de leur projet.",
-        "it": "Basta spuntare: i pezzi vanno negli scarti delle barre, quanti ci stanno – mai più materiale. Una quantità limita il numero e questi pezzi hanno la precedenza. I pezzi tagliati vanno sullo scaffale del loro progetto.",
+        "de": "Haken setzen genügt: Die Teile kommen in den Abfall der Stangen, so viele wie hineinpassen – es wird nie mehr Material gebraucht. Eine Menge begrenzt die Stückzahl, und diese Teile haben Vorrang. Gesägt zählen Füllteile bei ihrem eigenen Projekt, Überzählige kommen zu den Fertigteilen.",
+        "en": "Just tick the parts: they go into the bar waste, as many as fit – never using more material. A quantity limits the count, and those parts take priority. Once cut, filler parts count for their own project; any extra go to the finished parts.",
+        "fr": "Il suffit de cocher : les pièces vont dans les chutes des barres, autant que possible – jamais plus de matériau. Une quantité limite le nombre, et ces pièces sont prioritaires. Une fois coupées, elles comptent pour leur propre projet ; le surplus va aux pièces finies.",
+        "it": "Basta spuntare: i pezzi vanno negli scarti delle barre, quanti ci stanno – mai più materiale. Una quantità limita il numero e questi pezzi hanno la precedenza. Una volta tagliati contano per il loro progetto; quelli in più vanno ai pezzi finiti.",
     },
     "fill.hint_2d": {
-        "de": "Haken setzen genügt: Die Teile kommen in die freien Abfallflächen der Platten, so viele wie hineinpassen – es wird nie mehr Material gebraucht. Eine Menge begrenzt die Stückzahl. Gesägte Füllteile kommen ins Regal ihres Projekts.",
-        "en": "Just tick the parts: they go into the free waste areas of the panels, as many as fit – never using more material. A quantity limits the count. Cut filler parts go to their project's shelf.",
-        "fr": "Il suffit de cocher : les pièces vont dans les zones de chute libres des panneaux, autant que possible – jamais plus de matériau. Une quantité limite le nombre. Les pièces coupées vont sur l'étagère de leur projet.",
-        "it": "Basta spuntare: i pezzi vanno nelle aree di scarto libere dei pannelli, quanti ci stanno – mai più materiale. Una quantità limita il numero. I pezzi tagliati vanno sullo scaffale del loro progetto.",
+        "de": "Haken setzen genügt: Die Teile kommen in die freien Abfallflächen der Platten, so viele wie hineinpassen – es wird nie mehr Material gebraucht. Eine Menge begrenzt die Stückzahl. Gesägt zählen Füllteile bei ihrem eigenen Projekt, Überzählige kommen zu den Fertigteilen.",
+        "en": "Just tick the parts: they go into the free waste areas of the panels, as many as fit – never using more material. A quantity limits the count. Once cut, filler parts count for their own project; any extra go to the finished parts.",
+        "fr": "Il suffit de cocher : les pièces vont dans les zones de chute libres des panneaux, autant que possible – jamais plus de matériau. Une quantité limite le nombre. Une fois coupées, elles comptent pour leur propre projet ; le surplus va aux pièces finies.",
+        "it": "Basta spuntare: i pezzi vanno nelle aree di scarto libere dei pannelli, quanti ci stanno – mai più materiale. Una quantità limita il numero. Una volta tagliati contano per il loro progetto; quelli in più vanno ai pezzi finiti.",
     },
     "fill.all_rests": {
         "de": "Auch verwertbare Reste auffüllen (sonst nur Abfall unter dem Mindest-Restmaß)",
@@ -838,7 +838,7 @@ TRANSLATIONS = {
     "fill.project": {"de": "Projekt", "en": "Project", "fr": "Projet", "it": "Progetto"},
     "fill.size": {"de": "Maß", "en": "Size", "fr": "Dimension", "it": "Misura"},
     "fill.open": {"de": "offen", "en": "open", "fr": "ouvert", "it": "aperti"},
-    "fill.stock": {"de": "Vorrat", "en": "Stock", "fr": "Stock", "it": "Scorta"},
+    "fill.stock": {"de": "Fertigteile", "en": "Finished", "fr": "Finies", "it": "Finiti"},
     "fill.qty": {"de": "Menge", "en": "Qty", "fr": "Qté", "it": "Qtà"},
     "fill.none": {
         "de": "Keine Teile aus anderen Projekten mit diesem Material.",
@@ -851,19 +851,19 @@ TRANSLATIONS = {
         "fr": "dont {n} pièces de remplissage", "it": "di cui {n} pezzi di riempimento",
     },
     "fill.stock_hint": {
-        "de": "Fertige Teile im Regal (Vorrat)", "en": "Finished parts on the shelf (stock)",
-        "fr": "Pièces finies sur l'étagère (stock)", "it": "Pezzi finiti sullo scaffale (scorta)",
+        "de": "Fertigteile: schon gesägt, liegen auf Vorrat", "en": "Finished parts: already cut, in stock",
+        "fr": "Pièces finies : déjà coupées, en réserve", "it": "Pezzi finiti: già tagliati, di scorta",
     },
     "fill.from_shelf": {
-        "de": "Aus dem Regal verfügbar", "en": "Available from the shelf",
-        "fr": "Disponible sur l'étagère", "it": "Disponibile dallo scaffale",
+        "de": "Fertigteile verfügbar", "en": "Finished parts available",
+        "fr": "Pièces finies disponibles", "it": "Pezzi finiti disponibili",
     },
     "fill.take": {"de": "Übernehmen", "en": "Use", "fr": "Utiliser", "it": "Usa"},
     "fill.taken": {
-        "de": "Teile aus dem Regal übernommen – Plan wird neu berechnet",
-        "en": "Parts taken from the shelf – recalculating plan",
-        "fr": "Pièces reprises de l'étagère – recalcul du plan",
-        "it": "Pezzi presi dallo scaffale – ricalcolo del piano",
+        "de": "Fertigteile übernommen – Plan wird neu berechnet",
+        "en": "Finished parts used – recalculating plan",
+        "fr": "Pièces finies utilisées – recalcul du plan",
+        "it": "Pezzi finiti usati – ricalcolo del piano",
     },
     "plan.badge_title": {
         "de": "Gesägt laut gespeicherten Plänen",

@@ -161,7 +161,10 @@ class PlanStueck:
     y: float = 0.0
     gedreht: bool = False
     gesaegt: bool = False
-    ist_fuellteil: bool = False   # Teil eines anderen Projekts, gesägt geht in dessen Vorrat
+    ist_fuellteil: bool = False   # Teil eines anderen Projekts (Füllteil)
+    # Wohin das Sägen gebucht wurde (fürs Zurücknehmen): "teil" = Fortschritt des
+    # (Herkunfts-)Teils, "vorrat" = Fertigteile, "" = vor 2026.10.77 (immer Fertigteile)
+    buchung: str = ""
 
 
 @dataclass

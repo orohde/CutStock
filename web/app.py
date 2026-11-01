@@ -1572,14 +1572,24 @@ def delete_blade(bid: int):
 
 @app.get("/api/projects", response_model=list[ProjectOut])
 def list_projects(art: str = ""):
-    """Projekte; ?art=sammel nur die Sammelpläne, ?art=alle beides (Sammelpläne zuletzt)."""
-    if art not in ("", "sammel", "alle"):
-        raise HTTPException(400, "art must be '', 'sammel' or 'alle'")
+    """Projekte samt Sägeaufträgen; ?art=sammel nur die Sammelpläne, ?art=alle alles
+    (Sammelpläne zuletzt), ?art=liste nur die Sägeaufträge, ?art=projekt nur normale."""
+    if art not in ("", "sammel", "alle", "liste", "projekt"):
+        raise HTTPException(400, "art must be '', 'projekt', 'liste', 'sammel' or 'alle'")
     db = get_db()
+    if art in ("liste", "projekt"):
+        return [_projekt_to_out(p) for p in db.list_projekte()
+                if (p.art == "liste") == (art == "liste")]
     projekte = [] if art == "sammel" else db.list_projekte()
     if art:
         projekte += db.list_projekte(sammel=True)
     return [_projekt_to_out(p) for p in projekte]
+
+
+class CutJobRef(BaseModel):
+    projekt_id: int
+    name: str
+    anzahl: int
 
 
 class AllPartOut(BaseModel):
@@ -1592,7 +1602,26 @@ class AllPartOut(BaseModel):
     breite: float
     offen: int
     gesamt: int
-    vorrat: int
+    vorrat: int                               # Fertigteile
+    beauftragt: int = 0                       # offen in Sägeaufträgen
+    auftraege: list[CutJobRef] = []
+    verplant: int = 0                         # ungesägt in Plänen anderer Projekte (Füllteile)
+    sammelplan_id: int = 0                    # Material dieses Projekts läuft im Sammelplan
+    sammelplan: str = ""
+    verfuegbar: int = 0                       # offen − beauftragt − verplant (0 im Sammelplan)
+
+
+class PartMaterialOut(BaseModel):
+    material_id: int
+    material: str
+    typ: str
+    teile: int                    # Teile mit verfügbarer Menge
+    stueck: int                   # verfügbare Stück
+    einheit: str                  # "mm" (Stangen, Länge) oder "mm2" (Platten, Fläche)
+    bedarf: float                 # grob: Σ Länge (+ Schnittfuge) bzw. Σ Fläche
+    lager: float                  # nutzbare Länge bzw. Fläche im Lager
+    reicht: bool
+    fehlt_stueck: int = 0         # grob: so viele größte Lagerstücke fehlen
 
 
 class CutListEntry(BaseModel):
@@ -1601,25 +1630,103 @@ class CutListEntry(BaseModel):
 
 
 class CutListIn(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
+    name: str = Field("", max_length=200)   # leer = „Sägeauftrag <Datum>“
     eintraege: list[CutListEntry] = Field(min_length=1)
+
+
+class TakeStockIn(BaseModel):
+    anzahl: int = Field(0, ge=0)   # 0 = so viele wie möglich
+
+
+def _alle_teile_out(db: Database) -> list[AllPartOut]:
+    vp = db.teile_verplanung()
+    erg = []
+    for k in db.alle_teile():
+        t = k["teil"]
+        auftraege = [CutJobRef(**a) for a in vp["beauftragt"].get(t.id, [])]
+        beauftragt = sum(a.anzahl for a in auftraege)
+        verplant = vp["in_plaenen"].get(t.id, 0)
+        sid, sname = vp["sammel"].get((t.projekt_id, t.material_id), (0, ""))
+        verfuegbar = 0 if sid else max(0, t.offen_anzahl - beauftragt - verplant)
+        erg.append(AllPartOut(
+            teil_id=t.id, label=t.label, projekt=k["projekt"], projekt_id=t.projekt_id,
+            material_id=t.material_id, laenge=t.laenge, breite=t.breite,
+            offen=t.offen_anzahl, gesamt=t.gesamt_anzahl, vorrat=t.vorrat,
+            beauftragt=beauftragt, auftraege=auftraege, verplant=verplant,
+            sammelplan_id=sid, sammelplan=sname, verfuegbar=verfuegbar))
+    return erg
 
 
 @app.get("/api/parts", response_model=list[AllPartOut])
 def list_all_parts():
-    """Alle Teile aller Projekte – für den Reiter „Teile“."""
-    return [AllPartOut(teil_id=k["teil"].id, label=k["teil"].label, projekt=k["projekt"],
-                       projekt_id=k["teil"].projekt_id, material_id=k["teil"].material_id,
-                       laenge=k["teil"].laenge, breite=k["teil"].breite,
-                       offen=k["teil"].offen_anzahl, gesamt=k["teil"].gesamt_anzahl,
-                       vorrat=k["teil"].vorrat)
-            for k in get_db().alle_teile()]
+    """Alle Teile aller Projekte – für den Reiter „Teile“, mit dem, was davon schon
+    verplant ist (Sägeauftrag, Sammelplan, Füllteil) und was noch verfügbar ist."""
+    return _alle_teile_out(get_db())
+
+
+@app.get("/api/parts/materials", response_model=list[PartMaterialOut])
+def parts_by_material():
+    """Verfügbare Teile je Material mit grober Lager-Schätzung (Länge bzw. Fläche).
+    Die genaue Antwort gibt erst die Optimierung."""
+    db = get_db()
+    blaetter = db.list_saegeblaetter()
+    kerf = blaetter[0].schnittbreite if blaetter else 0.0
+    je_mat: dict[int, list[AllPartOut]] = {}
+    for x in _alle_teile_out(db):
+        if x.verfuegbar > 0:
+            je_mat.setdefault(x.material_id, []).append(x)
+    erg = []
+    for mid, teile in je_mat.items():
+        m = db.get_material(mid)
+        if not m:
+            continue
+        stange = m.typ == MaterialTyp.STANGE
+        rand = 2 * (m.besaeumung or 0)
+        if stange:
+            bedarf = sum((x.laenge + kerf) * x.verfuegbar for x in teile)
+            groessen = [(max(0.0, ls.laenge - rand), ls.stueckzahl)
+                        for ls in db.list_lagerstuecke(mid)]
+        else:
+            bedarf = sum(x.laenge * x.breite * x.verfuegbar for x in teile)
+            groessen = [(max(0.0, ls.laenge - rand) * max(0.0, ls.breite - rand), ls.stueckzahl)
+                        for ls in db.list_lagerstuecke(mid)]
+        lager = sum(g * n for g, n in groessen)
+        groesste = max((g for g, _ in groessen), default=0.0)
+        if not groesste:   # leeres Lager: nach dem Teil schätzen
+            groesste = max((x.laenge if stange else x.laenge * x.breite) for x in teile)
+        fehlt = 0 if bedarf <= lager else -(-(bedarf - lager) // groesste)
+        erg.append(PartMaterialOut(
+            material_id=mid, material=m.name, typ=m.typ.value, teile=len(teile),
+            stueck=sum(x.verfuegbar for x in teile), einheit="mm" if stange else "mm2",
+            bedarf=round(bedarf, 1), lager=round(lager, 1), reicht=bedarf <= lager,
+            fehlt_stueck=int(fehlt)))
+    return sorted(erg, key=lambda e: e.material.lower())
+
+
+@app.post("/api/parts/{ref}/take-stock", response_model=PartOut)
+def take_stock_of_part(ref: int, data: TakeStockIn = TakeStockIn()):
+    """Fertigteile eines Teils als gesägt übernehmen (höchstens so viele wie offen)."""
+    db = get_db()
+    if not db.get_teil(ref):
+        raise HTTPException(404, "Part not found")
+    db.vorrat_uebernehmen_teil(ref, data.anzahl)
+    return _teil_to_out(db.get_teil(ref))
+
+
+def _saegeauftrag_name() -> str:
+    import datetime
+    lang = _get_settings_dict().get("language", "en")
+    heute = datetime.date.today()
+    datum = heute.strftime("%d.%m.%Y") if lang in ("de", "fr", "it") else heute.isoformat()
+    vorlage = WEB_EXTRA_TRANSLATIONS["parts.list_default"]
+    return vorlage.get(lang, vorlage["en"]).replace("{datum}", datum)
 
 
 @app.post("/api/cut-lists", response_model=ProjectOut, status_code=201)
 def create_cut_list(data: CutListIn):
-    """Schnittliste aus einzelnen Teilen: wird wie ein Projekt optimiert und gesägt,
-    die gesägten Teile gehen in den Vorrat ihrer Herkunftsteile."""
+    """Sägeauftrag (intern „Schnittliste“, art='liste') aus einzelnen Teilen: wird wie ein
+    Projekt optimiert und gesägt. Gesägt zählt beim Herkunftsteil, Überschuss geht zu
+    dessen Fertigteilen. Ohne Name heißt er „Sägeauftrag <Datum>“."""
     db = get_db()
     erlaubt = {k["teil"].id for k in db.alle_teile()}
     mengen: dict[int, int] = {}
@@ -1627,7 +1734,8 @@ def create_cut_list(data: CutListIn):
         if e.teil_id not in erlaubt:
             raise HTTPException(404, f"Part {e.teil_id} not found")
         mengen[e.teil_id] = mengen.get(e.teil_id, 0) + e.menge
-    liste = db.schnittliste_anlegen(data.name.strip(), list(mengen.items()))
+    liste = db.schnittliste_anlegen(data.name.strip() or _saegeauftrag_name(),
+                                    list(mengen.items()))
     return _projekt_to_out(liste)
 
 
@@ -2621,6 +2729,21 @@ def _reste_auffuellen_1d(bretter: list[PlanBrett], auffuellen: list[tuple[Teil, 
     return list(gruppen.values())
 
 
+def _plan_ueberplant(db: Database, plan: GespeicherterPlan) -> bool:
+    """Liegen mehr ungesägte Stücke eines Teils im Plan, als noch offen sind?
+    Passiert, wenn das Teil inzwischen anderswo gesägt wurde (Sägeauftrag, Füllteil)."""
+    ungesaegt: dict[int, int] = {}
+    for b in plan.bretter:
+        for st in b.stuecke:
+            if st.teil_id and not st.gesaegt and not st.ist_fuellteil:
+                ungesaegt[st.teil_id] = ungesaegt.get(st.teil_id, 0) + 1
+    for tid, n in ungesaegt.items():
+        t = db.get_teil(tid)
+        if t and n > t.offen_anzahl:
+            return True
+    return False
+
+
 def _plan_to_out(plan: GespeicherterPlan) -> OptimizeResult:
     db = get_db()
     material = db.get_material(plan.material_id)
@@ -2708,7 +2831,8 @@ def _plan_to_out(plan: GespeicherterPlan) -> OptimizeResult:
         saegeblatt_id=plan.saegeblatt_id, algorithmus=plan.algorithmus,
         erstellt=plan.erstellt, version=plan.version,
         veraltet=(projekt is None or material is None or
-                  _eingabe_hash(projekt, material, plan.kerf) != plan.eingabe_hash),
+                  _eingabe_hash(projekt, material, plan.kerf) != plan.eingabe_hash
+                  or _plan_ueberplant(db, plan)),
         lager_fehlt=lager_fehlt,
         fehlende_stuecke=fehlende_stuecke,
         fuellteile=plan.fuellteile,
@@ -2783,9 +2907,9 @@ def set_piece_sawn(sid: int, data: PieceSawnIn):
     teil = None
     if stueck.gesaegt != data.gesaegt:
         stueck.gesaegt = data.gesaegt
-        db.set_stueck_gesaegt(sid, data.gesaegt)
         if stueck.teil_id:
             _gesaegt_buchen(db, stueck, 1 if data.gesaegt else -1)
+        db.set_stueck_gesaegt(sid, data.gesaegt, stueck.buchung)
         _brett_abgleichen(db, plan, brett, _plan_is_1d(db, plan))
         db.plan_geaendert(plan.id)
     if stueck.teil_id:
@@ -2810,19 +2934,29 @@ def discard_plan(plan_id: int):
 
 
 def _gesaegt_buchen(db: Database, st: PlanStueck, delta: int):
-    """Gesägtes Stück verbuchen: Füllteile gehen in den Vorrat ihres Teils ("Regal"),
-    alle anderen zählen als Fortschritt des Projekts. Teile einer Schnittliste zählen
-    für die Liste und landen zusätzlich im Vorrat ihres Herkunftsteils."""
-    if st.ist_fuellteil:
-        db.teil_vorrat_aendern(st.teil_id, delta)
+    """Gesägtes Stück verbuchen (delta +1 sägen, -1 zurücknehmen), setzt st.buchung.
+
+    Füllteile und Teile eines Sägeauftrags zählen zuerst beim (Herkunfts-)Teil als
+    gesägt, solange dort etwas offen ist; erst der Überschuss geht zu den Fertigteilen
+    (teil.vorrat). Ein Sägeauftrag zählt seinen eigenen Fortschritt immer mit.
+    Zurücknehmen bucht genau das zurück, was beim Sägen passiert ist."""
+    teil = db.get_teil(st.teil_id)
+    if not teil:
         return
-    vorher = db.get_teil(st.teil_id)
-    db.teil_gesaegt_aendern(st.teil_id, delta)
-    if vorher and vorher.herkunft_teil_id:
-        nachher = db.get_teil(st.teil_id)
-        geaendert = nachher.gesaegt_anzahl - vorher.gesaegt_anzahl
-        if geaendert:
-            db.teil_vorrat_aendern(vorher.herkunft_teil_id, geaendert)
+    ziel_id = st.teil_id if st.ist_fuellteil else teil.herkunft_teil_id
+    if not st.ist_fuellteil:
+        db.teil_gesaegt_aendern(st.teil_id, delta)
+        if not ziel_id:
+            return
+    if delta > 0:
+        ziel = db.get_teil(ziel_id)
+        st.buchung = "teil" if ziel and ziel.offen_anzahl > 0 else "vorrat"
+    if st.buchung == "teil":
+        db.teil_gesaegt_aendern(ziel_id, delta)
+    else:   # "vorrat", oder "" = vor 2026.10.77 gesägt (ging immer zu den Fertigteilen)
+        db.teil_vorrat_aendern(ziel_id, delta)
+    if delta < 0:
+        st.buchung = ""
 
 
 @app.get("/api/projects/{pid}/fill-candidates/{mid}", response_model=list[FuellKandidatOut])
@@ -2859,9 +2993,9 @@ def confirm_all_pieces(plan_id: int):
             continue
         for st in offen:
             st.gesaegt = True
-            db.set_stueck_gesaegt(st.id, True)
             if st.teil_id:
                 _gesaegt_buchen(db, st, 1)
+            db.set_stueck_gesaegt(st.id, True, st.buchung)
         _brett_abgleichen(db, plan, brett, is_1d)
     db.plan_geaendert(plan.id)
     return _plan_to_out(db.get_plan_by_id(plan.id))
@@ -3515,50 +3649,89 @@ WEB_EXTRA_TRANSLATIONS = {
     "sammel.one_project": {"de": "1 Projekt", "en": "1 project", "fr": "1 projet", "it": "1 progetto"},
     "sammel.n_projects": {"de": "{n} Projekte", "en": "{n} projects", "fr": "{n} projets", "it": "{n} progetti"},
     "tab.parts": {"de": "Teile", "en": "Parts", "fr": "Pièces", "it": "Pezzi"},
-    "parts.title": {"de": "Teile aller Projekte", "en": "Parts of all projects", "fr": "Pièces de tous les projets", "it": "Pezzi di tutti i progetti"},
+    "parts.title": {"de": "Offene Teile", "en": "Open parts", "fr": "Pièces à couper", "it": "Pezzi da tagliare"},
+    "parts.summary": {"de": "· {p} Projekte · {n} Stück noch zu sägen", "en": "· {p} projects · {n} pieces still to cut",
+                      "fr": "· {p} projets · {n} pièces encore à couper", "it": "· {p} progetti · {n} pezzi ancora da tagliare"},
     "parts.hint": {
-        "de": "Teile anhaken und Stückzahl eintragen. „Schnittliste erstellen“ legt eine Liste an, die du wie ein Projekt optimierst und sägst. Gesägte Teile kommen ins Regal (Vorrat) ihres Projekts, das sie später per Klick übernimmt.",
-        "en": "Tick parts and enter a quantity. “Create cut list” makes a list you optimize and cut like a project. Cut parts go to the shelf (stock) of their project, which can take them over later with one click.",
-        "fr": "Cochez des pièces et indiquez une quantité. « Créer une liste de coupe » crée une liste à optimiser et découper comme un projet. Les pièces découpées vont sur l’étagère (stock) de leur projet, qui peut les reprendre plus tard en un clic.",
-        "it": "Spunta i pezzi e inserisci una quantità. «Crea lista di taglio» crea una lista da ottimizzare e tagliare come un progetto. I pezzi tagliati vanno sullo scaffale (scorta) del loro progetto, che potrà riprenderli con un clic.",
+        "de": "Hake Teile an, die du zusammen sägen willst. Sortiert nach Material, weil immer ein Material auf einmal gesägt wird.",
+        "en": "Tick the parts you want to cut together. Sorted by material, because you always cut one material at a time.",
+        "fr": "Cochez les pièces à couper ensemble. Triées par matériau, car on coupe toujours un matériau à la fois.",
+        "it": "Spunta i pezzi da tagliare insieme. Ordinati per materiale, perché si taglia sempre un materiale alla volta.",
     },
     "parts.filter_material": {"de": "Material", "en": "Material", "fr": "Matériau", "it": "Materiale"},
     "parts.filter_project": {"de": "Projekt", "en": "Project", "fr": "Projet", "it": "Progetto"},
     "parts.all": {"de": "alle", "en": "all", "fr": "tous", "it": "tutti"},
-    "parts.only_open": {"de": "nur offene", "en": "open only", "fr": "ouvertes seulement", "it": "solo aperti"},
+    "parts.show_done": {"de": "auch fertige zeigen", "en": "show finished too", "fr": "afficher aussi les terminées", "it": "mostra anche i finiti"},
     "parts.col_part": {"de": "Teil", "en": "Part", "fr": "Pièce", "it": "Pezzo"},
     "parts.col_size": {"de": "Maße", "en": "Size", "fr": "Dimensions", "it": "Misure"},
     "parts.col_open": {"de": "offen", "en": "open", "fr": "ouvert", "it": "aperti"},
-    "parts.col_stock": {"de": "Regal", "en": "Shelf", "fr": "Étagère", "it": "Scaffale"},
-    "parts.col_qty": {"de": "Menge", "en": "Qty", "fr": "Qté", "it": "Qtà"},
+    "parts.col_qty": {"de": "sägen", "en": "cut", "fr": "couper", "it": "tagliare"},
+    "parts.free": {"de": "({n} frei)", "en": "({n} free)", "fr": "({n} libres)", "it": "({n} liberi)"},
     "parts.none": {"de": "Keine Teile gefunden.", "en": "No parts found.", "fr": "Aucune pièce trouvée.", "it": "Nessun pezzo trovato."},
-    "parts.selected": {"de": "{n} ausgewählt", "en": "{n} selected", "fr": "{n} sélectionnées", "it": "{n} selezionati"},
-    "parts.create_list": {"de": "Schnittliste erstellen", "en": "Create cut list", "fr": "Créer une liste de coupe", "it": "Crea lista di taglio"},
-    "parts.list_name": {"de": "Name der Schnittliste", "en": "Cut list name", "fr": "Nom de la liste de coupe", "it": "Nome della lista di taglio"},
-    "parts.list_default": {"de": "Schnittliste {datum}", "en": "Cut list {datum}", "fr": "Liste de coupe {datum}", "it": "Lista di taglio {datum}"},
-    "parts.list_created": {"de": "Schnittliste „{name}“ angelegt", "en": "Cut list “{name}” created", "fr": "Liste de coupe « {name} » créée", "it": "Lista di taglio «{name}» creata"},
+    "parts.empty_all": {
+        "de": "Noch keine Teile. Lege im Reiter Projekte ein Projekt mit Teilen an.",
+        "en": "No parts yet. Create a project with parts in the Projects tab.",
+        "fr": "Aucune pièce pour l’instant. Créez un projet avec des pièces dans l’onglet Projets.",
+        "it": "Ancora nessun pezzo. Crea un progetto con pezzi nella scheda Progetti.",
+    },
+    "parts.group_info_one": {"de": "· 1 Teil · {n} Stück", "en": "· 1 part · {n} pieces",
+                             "fr": "· 1 pièce · {n} unités", "it": "· 1 pezzo · {n} unità"},
+    "parts.group_info": {"de": "· {teile} Teile · {n} Stück", "en": "· {teile} parts · {n} pieces",
+                         "fr": "· {teile} pièces · {n} unités", "it": "· {teile} pezzi · {n} unità"},
+    "parts.stock_ok": {"de": "Lager reicht", "en": "Enough stock", "fr": "Stock suffisant", "it": "Scorta sufficiente"},
+    "parts.stock_low_bars": {"de": "Lager fehlt ca. {n} Stangen", "en": "About {n} bars short",
+                             "fr": "Il manque env. {n} barres", "it": "Mancano circa {n} barre"},
+    "parts.stock_low_panels": {"de": "Lager fehlt ca. {n} Platten", "en": "About {n} panels short",
+                               "fr": "Il manque env. {n} panneaux", "it": "Mancano circa {n} pannelli"},
+    "parts.estimate_hint": {
+        "de": "Grobe Schätzung über Länge bzw. Fläche. Genau rechnet erst die Optimierung.",
+        "en": "Rough estimate by length or area. The optimization gives the exact answer.",
+        "fr": "Estimation grossière par longueur ou surface. L’optimisation donne la réponse exacte.",
+        "it": "Stima approssimativa per lunghezza o superficie. Il calcolo esatto lo fa l’ottimizzazione.",
+    },
+    "parts.in_sammel": {"de": "im {name}", "en": "in {name}", "fr": "dans {name}", "it": "in {name}"},
+    "parts.in_job": {"de": "{n} im Sägeauftrag „{name}“", "en": "{n} in cut job “{name}”",
+                     "fr": "{n} dans l’ordre de coupe « {name} »", "it": "{n} nell’ordine di taglio «{name}»"},
+    "parts.as_filler_planned": {"de": "{n} als Füllteil verplant", "en": "{n} planned as filler parts",
+                                "fr": "{n} prévues comme pièces de remplissage", "it": "{n} previsti come pezzi di riempimento"},
+    "parts.finished": {"de": "{n} Fertigteile", "en": "{n} finished parts", "fr": "{n} pièces finies", "it": "{n} pezzi finiti"},
+    "parts.take": {"de": "{n} übernehmen", "en": "use {n}", "fr": "utiliser {n}", "it": "usa {n}"},
+    "parts.taken": {"de": "Fertigteile von „{label}“ als gesägt übernommen", "en": "Finished parts of “{label}” counted as cut",
+                    "fr": "Pièces finies de « {label} » comptées comme coupées", "it": "Pezzi finiti di «{label}» contati come tagliati"},
+    "parts.selected_one": {"de": "{teile} Teile, {n} Stück aus {material}", "en": "{teile} parts, {n} pieces of {material}",
+                           "fr": "{teile} pièces, {n} unités en {material}", "it": "{teile} pezzi, {n} unità di {material}"},
+    "parts.selected_many": {"de": "{teile} Teile, {n} Stück aus {m} Materialien", "en": "{teile} parts, {n} pieces of {m} materials",
+                            "fr": "{teile} pièces, {n} unités de {m} matériaux", "it": "{teile} pezzi, {n} unità di {m} materiali"},
+    "parts.clear": {"de": "Auswahl aufheben", "en": "Clear selection", "fr": "Effacer la sélection", "it": "Annulla selezione"},
+    "parts.saw_now": {"de": "Jetzt sägen →", "en": "Cut now →", "fr": "Couper maintenant →", "it": "Taglia ora →"},
+    "parts.list_default": {"de": "Sägeauftrag {datum}", "en": "Cut job {datum}", "fr": "Ordre de coupe {datum}", "it": "Ordine di taglio {datum}"},
+    "parts.list_created": {"de": "Sägeauftrag „{name}“ angelegt", "en": "Cut job “{name}” created", "fr": "Ordre de coupe « {name} » créé", "it": "Ordine di taglio «{name}» creato"},
     "parts.list_done": {
-        "de": "Die Schnittliste „{name}“ ist komplett gesägt, alle Teile liegen im Regal ihrer Projekte.\n\nListe jetzt löschen?",
-        "en": "Cut list “{name}” is fully cut; all parts are on the shelf of their projects.\n\nDelete the list now?",
-        "fr": "La liste de coupe « {name} » est entièrement découpée ; toutes les pièces sont sur l’étagère de leurs projets.\n\nSupprimer la liste maintenant ?",
-        "it": "La lista di taglio «{name}» è tutta tagliata; tutti i pezzi sono sullo scaffale dei loro progetti.\n\nEliminare ora la lista?",
+        "de": "Der Sägeauftrag „{name}“ ist komplett gesägt, alle Teile sind bei ihren Projekten verbucht.\n\nAuftrag jetzt löschen?",
+        "en": "Cut job “{name}” is fully cut; all parts are booked to their projects.\n\nDelete the job now?",
+        "fr": "L’ordre de coupe « {name} » est entièrement coupé ; toutes les pièces sont comptées dans leurs projets.\n\nSupprimer l’ordre maintenant ?",
+        "it": "L’ordine di taglio «{name}» è tutto tagliato; tutti i pezzi sono contati nei loro progetti.\n\nEliminare ora l’ordine?",
     },
-    "parts.as_fill": {"de": "Als Füllteile…", "en": "As filler parts…", "fr": "Comme pièces de remplissage…", "it": "Come pezzi di riempimento…"},
-    "parts.fill_target": {"de": "In den Plan von Projekt", "en": "Into the plan of project", "fr": "Dans le plan du projet", "it": "Nel piano del progetto"},
+    "parts.as_fill": {"de": "In Reste von … mitsägen", "en": "Cut into remnants of …", "fr": "Couper dans les chutes de …", "it": "Taglia negli sfridi di …"},
+    "parts.fill_go": {"de": "Mitsägen", "en": "Add and cut", "fr": "Ajouter", "it": "Aggiungi"},
+    "parts.fill_target": {"de": "In den Resten von Projekt", "en": "Into the remnants of project", "fr": "Dans les chutes du projet", "it": "Negli sfridi del progetto"},
     "parts.fill_hint": {
-        "de": "Der Plan des Projekts wird gleich neu berechnet: Die Teile kommen in den Abfall der Stangen bzw. Platten (die Menge ist Obergrenze und hat Vorrang). Gesägt kommen sie ins Regal ihres Projekts.",
-        "en": "The project's plan is recalculated right away: the parts go into the waste of the bars or panels (the quantity is a maximum and takes priority). Once cut they go to the shelf of their project.",
-        "fr": "Le plan du projet est recalculé tout de suite : les pièces vont dans les chutes des barres ou panneaux (la quantité est un maximum et prioritaire). Découpées, elles vont sur l’étagère de leur projet.",
-        "it": "Il piano del progetto viene ricalcolato subito: i pezzi vanno negli scarti di barre o pannelli (la quantità è un massimo e ha la precedenza). Tagliati, vanno sullo scaffale del loro progetto.",
+        "de": "Der Plan dieses Projekts wird gleich neu berechnet: Die Teile kommen in den Abfall seiner Stangen bzw. Platten (die Menge ist Obergrenze und hat Vorrang). Gesägt zählen sie bei ihrem eigenen Projekt, Überzählige kommen zu den Fertigteilen.",
+        "en": "This project's plan is recalculated right away: the parts go into the waste of its bars or panels (the quantity is a maximum and takes priority). Once cut they count for their own project; any extra go to the finished parts.",
+        "fr": "Le plan de ce projet est recalculé tout de suite : les pièces vont dans les chutes de ses barres ou panneaux (la quantité est un maximum prioritaire). Une fois coupées, elles comptent pour leur propre projet ; le surplus va aux pièces finies.",
+        "it": "Il piano di questo progetto viene ricalcolato subito: i pezzi vanno negli scarti delle sue barre o pannelli (la quantità è un massimo con precedenza). Una volta tagliati contano per il loro progetto; quelli in più vanno ai pezzi finiti.",
     },
-    "parts.fill_one_material": {"de": "Füllteile müssen alle aus einem Material sein.", "en": "Filler parts must all be of one material.", "fr": "Les pièces de remplissage doivent être du même matériau.", "it": "I pezzi di riempimento devono essere tutti dello stesso materiale."},
-    "parts.fill_no_target": {"de": "Kein anderes Projekt braucht dieses Material.", "en": "No other project uses this material.", "fr": "Aucun autre projet n’utilise ce matériau.", "it": "Nessun altro progetto usa questo materiale."},
-    "parts.list_badge": {"de": "Schnittliste", "en": "Cut list", "fr": "Liste de coupe", "it": "Lista di taglio"},
-    "parts.list_hint": {
-        "de": "Schnittliste: Gesägte Teile kommen ins Regal ihres Herkunftsprojekts. Ist alles gesägt, kannst du die Liste löschen.",
-        "en": "Cut list: cut parts go to the shelf of the project they come from. Once everything is cut, you can delete the list.",
-        "fr": "Liste de coupe : les pièces découpées vont sur l’étagère de leur projet d’origine. Une fois tout découpé, vous pouvez supprimer la liste.",
-        "it": "Lista di taglio: i pezzi tagliati vanno sullo scaffale del progetto d’origine. Quando è tutto tagliato puoi eliminare la lista.",
+    "parts.fill_one_material": {"de": "Mitsägen geht nur mit Teilen aus einem Material.", "en": "Only parts of one material can be cut into remnants.", "fr": "Seules des pièces d’un même matériau peuvent être coupées dans les chutes.", "it": "Solo pezzi di un unico materiale possono essere tagliati negli sfridi."},
+    "parts.fill_no_target": {"de": "Kein anderes Projekt mit offenen Teilen braucht dieses Material.", "en": "No other project with open parts uses this material.", "fr": "Aucun autre projet avec des pièces ouvertes n’utilise ce matériau.", "it": "Nessun altro progetto con pezzi aperti usa questo materiale."},
+    "jobs.title": {"de": "Sägeaufträge", "en": "Cut jobs", "fr": "Ordres de coupe", "it": "Ordini di taglio"},
+    "jobs.progress": {"de": "{done} von {total} gesägt", "en": "{done} of {total} cut", "fr": "{done} sur {total} coupées", "it": "{done} di {total} tagliati"},
+    "jobs.continue": {"de": "Weitersägen", "en": "Continue cutting", "fr": "Continuer", "it": "Continua"},
+    "jobs.show": {"de": "Ansehen", "en": "View", "fr": "Voir", "it": "Vedi"},
+    "jobs.delete_confirm": {
+        "de": "Sägeauftrag „{name}“ löschen? Bereits Gesägtes bleibt bei den Projekten verbucht.",
+        "en": "Delete cut job “{name}”? Anything already cut stays booked to the projects.",
+        "fr": "Supprimer l’ordre de coupe « {name} » ? Ce qui est déjà coupé reste compté dans les projets.",
+        "it": "Eliminare l’ordine di taglio «{name}»? Quanto già tagliato resta contato nei progetti.",
     },
     "sammel.badge": {"de": "Sammelplan", "en": "Combined plan", "fr": "Plan groupé", "it": "Piano combinato"},
     "sammel.open": {"de": "Sammelplan öffnen", "en": "Open combined plan", "fr": "Ouvrir le plan groupé", "it": "Apri piano combinato"},

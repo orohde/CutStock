@@ -993,7 +993,6 @@ td.expand-toggle:hover { background: rgba(255,255,255,0.05); }
 /* Reiter „Teile“ */
 .parts-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; margin: 0.5rem 0 0.75rem; }
 .parts-filter .cs-select { min-width: 10rem; }
-.parts-selected { color: var(--sapContent_LabelColor); margin-right: 0.5rem; }
 
 /* Erläuterung unter einem Formularfeld */
 .form-hint { display: block; margin-top: 0.25rem; font-size: 0.8rem; color: var(--sapContent_LabelColor); line-height: 1.3; }
@@ -1198,3 +1197,29 @@ td.expand-toggle:hover { background: rgba(255,255,255,0.05); }
 .lbl-start input {
   width: 5rem;
 }
+
+/* Reiter „Teile“: Gruppen je Material, Auswahl-Leiste, Sägeaufträge */
+.parts-summary { font-weight: normal; font-size: 0.85em; color: var(--sapContent_LabelColor, #556b82); margin-left: 0.5rem; }
+.parts-sub { color: var(--sapContent_LabelColor, #556b82); font-size: 0.85em; margin-left: 0.35rem; }
+.parts-group { margin-bottom: 0.75rem; border: 1px solid var(--sapList_BorderColor, #e5e5e5); border-radius: 0.5rem; overflow: hidden; }
+.parts-group-head { display: flex; align-items: center; flex-wrap: wrap; gap: 0.25rem 0.5rem; padding: 0.5rem 0.75rem;
+  background: var(--sapList_GroupHeaderBackground, #f5f6f7); cursor: pointer; user-select: none; }
+.parts-group-head:focus-visible { outline: 2px solid var(--sapContent_FocusColor, #0070f2); outline-offset: -2px; }
+.parts-toggle { width: 1rem; color: var(--sapContent_LabelColor, #556b82); }
+.parts-group .table-wrap { margin: 0; border: 0; border-radius: 0; }
+.parts-ampel { margin-left: auto; padding: 0 0.5rem; border-radius: 0.5rem; font-size: 0.75rem; white-space: nowrap; }
+.parts-ampel--ok { background: var(--sapSuccessBackground, #f5fae5); color: var(--sapPositiveTextColor, #256f3a); }
+.parts-ampel--low { background: var(--sapWarningBackground, #fff8d6); color: var(--sapCriticalTextColor, #b44f00); }
+.parts-col-check { width: 2rem; }
+.parts-table .parts-qty { width: 5rem; }
+.part-status-line { display: flex; flex-wrap: wrap; gap: 0.25rem 0.5rem; margin-top: 0.15rem; font-size: 0.8rem; }
+.part-status { color: var(--sapContent_LabelColor, #556b82); }
+.parts-table tr.part-ausgelagert .cs-link.part-goto-project { color: inherit; }
+.parts-bar { position: sticky; bottom: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem;
+  margin-top: 0.75rem; padding: 0.6rem 0.9rem; border: 1px solid var(--sapList_BorderColor, #d9d9d9); border-radius: 0.5rem;
+  background: var(--sapGroup_ContentBackground, #fff); box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.08); }
+.parts-bar .toolbar { margin-left: auto; }
+.parts-selected { font-weight: 600; color: var(--sapTextColor, #1d2d3e); }
+.parts-bar-note { color: var(--sapCriticalTextColor, #b44f00); font-size: 0.85rem; }
+#jobs-table .jobs-actions { text-align: right; white-space: nowrap; }
+#jobs-table .jobs-actions .fd-button { margin-left: 0.35rem; }

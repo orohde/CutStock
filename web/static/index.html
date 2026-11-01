@@ -236,14 +236,20 @@
     </section>
 
     <section id="tab-parts" class="tab-content">
+      <div class="panel hidden" id="jobs-panel">
+        <div class="panel-header">
+          <h2 class="fd-title fd-title--h5" data-i18n="jobs.title">Sägeaufträge</h2>
+        </div>
+        <div class="table-wrap">
+          <table id="jobs-table" class="fd-table">
+            <tbody class="fd-table__body"></tbody>
+          </table>
+        </div>
+      </div>
       <div class="panel">
         <div class="panel-header">
-          <h2 class="fd-title fd-title--h5" data-i18n="parts.title">Teile aller Projekte</h2>
-          <div class="toolbar">
-            <span id="parts-selected" class="parts-selected"></span>
-            <button id="btn-parts-fill" class="fd-button" type="button" data-i18n="parts.as_fill" disabled>Als Füllteile…</button>
-            <button id="btn-create-cutlist" class="fd-button fd-button--emphasized" type="button" data-i18n="parts.create_list" disabled>Schnittliste erstellen</button>
-          </div>
+          <h2 class="fd-title fd-title--h5"><span data-i18n="parts.title">Offene Teile</span>
+            <span id="parts-summary" class="parts-summary"></span></h2>
         </div>
         <p class="saw-hint" data-i18n="parts.hint"></p>
         <div class="parts-filter">
@@ -251,25 +257,18 @@
           <select id="parts-material" class="cs-select"></select>
           <label class="fd-form-label" for="parts-project" data-i18n="parts.filter_project">Projekt</label>
           <select id="parts-project" class="cs-select"></select>
-          <label class="opt-check"><input type="checkbox" id="parts-only-open" class="cs-checkbox">
-            <span data-i18n="parts.only_open">nur offene</span></label>
+          <label class="opt-check"><input type="checkbox" id="parts-show-done" class="cs-checkbox">
+            <span data-i18n="parts.show_done">auch fertige zeigen</span></label>
         </div>
-        <div class="table-wrap">
-          <table id="all-parts-table" class="fd-table">
-            <thead class="fd-table__header">
-              <tr class="fd-table__row">
-                <th class="fd-table__cell"></th>
-                <th class="fd-table__cell" data-i18n="parts.col_part">Teil</th>
-                <th class="fd-table__cell" data-i18n="parts.filter_project">Projekt</th>
-                <th class="fd-table__cell" data-i18n="parts.filter_material">Material</th>
-                <th class="fd-table__cell" data-i18n="parts.col_size">Maße</th>
-                <th class="fd-table__cell num" data-i18n="parts.col_open">offen</th>
-                <th class="fd-table__cell num" data-i18n="parts.col_stock">Regal</th>
-                <th class="fd-table__cell" data-i18n="parts.col_qty">Menge</th>
-              </tr>
-            </thead>
-            <tbody class="fd-table__body"></tbody>
-          </table>
+        <div id="parts-groups"></div>
+      </div>
+      <div id="parts-bar" class="parts-bar hidden">
+        <span id="parts-selected" class="parts-selected"></span>
+        <span id="parts-bar-note" class="parts-bar-note"></span>
+        <div class="toolbar">
+          <button id="btn-parts-clear" class="fd-button fd-button--transparent" type="button" data-i18n="parts.clear">Auswahl aufheben</button>
+          <button id="btn-parts-fill" class="fd-button" type="button" data-i18n="parts.as_fill">In Reste von … mitsägen</button>
+          <button id="btn-create-cutlist" class="fd-button fd-button--emphasized" type="button" data-i18n="parts.saw_now">Jetzt sägen →</button>
         </div>
       </div>
     </section>

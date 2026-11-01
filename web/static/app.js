@@ -265,6 +265,8 @@ const Api = {
         fetchJSON(`/api/projects/${projectId}/fill-candidates/${materialId}`),
     getAllParts: () => fetchJSON('/api/parts'),
     createCutList: (data) => fetchJSON('/api/cut-lists', 'POST', data),
+    getPartsByMaterial: () => fetchJSON('/api/parts/materials'),
+    takeStockOfPart: (id, anzahl = 0) => fetchJSON(`/api/parts/${id}/take-stock`, 'POST', { anzahl }),
     setFillChoice: (planId, data) => fetchJSON(`/api/plans/${planId}/fill-choice`, 'POST', data),
     takePartStock: (projectId, materialId) =>
         fetchJSON(`/api/projects/${projectId}/take-stock/${materialId}`, 'POST'),
@@ -1021,17 +1023,19 @@ async function renderProjects() {
     const tbody = document.querySelector('#project-list tbody');
     if (!tbody) return;
 
-    if (State.projects.length === 0) {
+    // Sägeaufträge stehen im Reiter Teile (State.projects behält sie für die Optimierung)
+    const liste = State.projects.filter(p => p.art !== 'liste');
+    if (liste.length === 0) {
         tbody.innerHTML = `<tr><td class="empty-state">${t('proj.empty')}</td></tr>`;
         if (!selectedSammel()) State.selectedProjectId = null;
         renderParts();
         return;
     }
 
-    tbody.innerHTML = State.projects.map(p => {
+    tbody.innerHTML = liste.map(p => {
         const selected = p.id === State.selectedProjectId ? ' selected' : '';
         const copies = p.anzahl > 1 ? ` <span class="proj-copies">×${p.anzahl}</span>` : '';
-        return `<tr class="fd-table__row ${selected}" data-id="${p.id}"><td class="fd-table__cell">${escHtml(p.name)}${copies}${planBadge(p)}${sammelBadge(p)}${cutListBadge(p)}</td></tr>`;
+        return `<tr class="fd-table__row ${selected}" data-id="${p.id}"><td class="fd-table__cell">${escHtml(p.name)}${copies}${planBadge(p)}${sammelBadge(p)}</td></tr>`;
     }).join('');
 
     tbody.querySelectorAll('tr[data-id]').forEach(row => {
@@ -1096,12 +1100,6 @@ function selectSammelOfMaterial(matId) {
     if (!s) return;
     selectProjectRow(s.id);
     document.querySelector(`#sammel-list tr[data-id="${s.id}"]`)?.scrollIntoView({ block: 'nearest' });
-}
-
-// Schnittliste: gesägte Teile gehen ins Regal ihres Herkunftsprojekts
-function cutListBadge(project) {
-    if (project.art !== 'liste') return '';
-    return ` <span class="plan-badge sammel-badge" title="${escAttr(t('parts.list_hint'))}">&#128203; ${escHtml(t('parts.list_badge'))}</span>`;
 }
 
 function selectProjectRow(id) {
@@ -2334,8 +2332,8 @@ async function refreshAfterSawing() {
     if (!sawModeActive()) offerCutListDelete();
 }
 
-// Fertig gesägte Schnittliste: einmal anbieten, sie zu löschen (die Teile
-// liegen ja schon im Regal ihrer Projekte).
+// Fertig gesägter Sägeauftrag: einmal anbieten, ihn zu löschen (die Teile
+// sind schon bei ihren Projekten verbucht).
 function offerCutListDelete() {
     const projId = parseInt(document.getElementById('opt-project')?.value);
     const liste = State.projects.find(p => p.id === projId && p.art === 'liste');
@@ -2388,107 +2386,262 @@ function updateFillButton() {
 }
 
 // ---------------------------------------------------------------------------
-// Reiter „Teile“: Teile aller Projekte, daraus eine Schnittliste erstellen
+// Reiter „Teile“: offene Teile aller Projekte nach Material, Sägeaufträge
 // ---------------------------------------------------------------------------
 
 // Auswahl bleibt beim Filtern erhalten: teil_id -> Menge
 const PartsSel = new Map();
+// Zugeklappte Materialgruppen (material_id)
+const PartsCollapsed = new Set();
+let partsCollapseInit = false;
 
 async function renderAllParts() {
-    let teile;
+    let teile, uebersicht, projekte;
     try {
-        teile = await Api.getAllParts();
+        [teile, uebersicht, projekte] = await Promise.all([
+            Api.getAllParts(), Api.getPartsByMaterial(), Api.getProjects()]);
         if (!State.materials.length) State.materials = await Api.getMaterials();
     } catch { return; }
     State.allParts = teile;
+    State.partsMaterials = new Map(uebersicht.map(m => [m.material_id, m]));
+    State.projects = projekte;
+    renderCutJobs();
 
     const matSel = document.getElementById('parts-material');
     const projSel = document.getElementById('parts-project');
-    const keep = (sel) => sel.value;
-    const matVal = keep(matSel), projVal = keep(projSel);
+    const matVal = matSel.value, projVal = projSel.value;
     const matIds = new Set(teile.map(x => x.material_id));
     matSel.innerHTML = `<option value="">${escHtml(t('parts.all'))}</option>` +
         State.materials.filter(m => matIds.has(m.id))
             .map(m => `<option value="${m.id}">${escHtml(m.name)}</option>`).join('');
-    const projekte = [...new Map(teile.map(x => [x.projekt_id, x.projekt])).entries()];
+    const projListe = [...new Map(teile.map(x => [x.projekt_id, x.projekt])).entries()];
     projSel.innerHTML = `<option value="">${escHtml(t('parts.all'))}</option>` +
-        projekte.map(([id, name]) => `<option value="${id}">${escHtml(name)}</option>`).join('');
+        projListe.map(([id, name]) => `<option value="${id}">${escHtml(name)}</option>`).join('');
     matSel.value = matIds.has(parseInt(matVal)) ? matVal : '';
-    projSel.value = projekte.some(([id]) => String(id) === projVal) ? projVal : '';
-    // Teile, die es nicht mehr gibt, aus der Auswahl nehmen
-    const ids = new Set(teile.map(x => x.teil_id));
-    [...PartsSel.keys()].forEach(id => { if (!ids.has(id)) PartsSel.delete(id); });
+    projSel.value = projListe.some(([id]) => String(id) === projVal) ? projVal : '';
+    // Teile, die es nicht mehr gibt oder die nicht mehr verfügbar sind, aus der Auswahl nehmen
+    const verfuegbar = new Map(teile.map(x => [x.teil_id, x.verfuegbar]));
+    [...PartsSel.keys()].forEach(id => { if (!verfuegbar.get(id)) PartsSel.delete(id); });
+    // Bei vielen Materialien startet die Liste zugeklappt (Überblick zuerst)
+    if (!partsCollapseInit) {
+        partsCollapseInit = true;
+        if (uebersicht.length > 4) uebersicht.forEach(m => PartsCollapsed.add(m.material_id));
+    }
+    const offen = teile.reduce((s, x) => s + x.offen, 0);
+    const nProj = new Set(teile.filter(x => x.offen > 0).map(x => x.projekt_id)).size;
+    document.getElementById('parts-summary').textContent =
+        offen ? t('parts.summary', { p: nProj, n: offen }) : '';
     renderAllPartsTable();
 }
 
-function renderAllPartsTable() {
-    const tbody = document.querySelector('#all-parts-table tbody');
-    if (!tbody) return;
+// Kasten „Sägeaufträge“: laufende Aufträge mit Fortschritt
+function renderCutJobs() {
+    const panel = document.getElementById('jobs-panel');
+    const tbody = document.querySelector('#jobs-table tbody');
+    if (!panel || !tbody) return;
+    const jobs = State.projects.filter(p => p.art === 'liste');
+    panel.classList.toggle('hidden', !jobs.length);
+    tbody.innerHTML = jobs.map(j => {
+        const gesamt = j.teile.reduce((s, x) => s + x.gesamt_anzahl, 0);
+        const gesaegt = j.teile.reduce((s, x) => s + Math.min(x.gesaegt_anzahl, x.gesamt_anzahl), 0);
+        const fertig = gesamt > 0 && gesaegt >= gesamt;
+        const mats = [...new Set(j.teile.map(x => x.material_id))]
+            .map(id => State.materials.find(m => m.id === id)?.name).filter(Boolean).join(', ');
+        return `<tr class="fd-table__row" data-id="${j.id}">
+            <td class="fd-table__cell"><strong>${escHtml(j.name)}</strong>
+                <span class="parts-sub">${escHtml(mats)}</span></td>
+            <td class="fd-table__cell"><span class="plan-badge${fertig ? ' plan-badge--done' : ''}">${escHtml(t('jobs.progress', { done: gesaegt, total: gesamt }))}</span></td>
+            <td class="fd-table__cell jobs-actions">
+                <button class="fd-button job-saw" type="button">${escHtml(t(fertig ? 'jobs.show' : 'jobs.continue'))}</button>
+                <button class="fd-button fd-button--transparent job-delete" type="button">${escHtml(t('btn.delete'))}</button>
+            </td></tr>`;
+    }).join('');
+    tbody.querySelectorAll('tr[data-id]').forEach(tr => {
+        const job = jobs.find(j => j.id === parseInt(tr.dataset.id));
+        tr.querySelector('.job-saw').addEventListener('click', () => {
+            const offen = job.teile.find(x => x.offen_anzahl > 0) || job.teile[0];
+            openInOptimization(job.id, offen?.material_id, false);
+        });
+        tr.querySelector('.job-delete').addEventListener('click', () =>
+            openConfirmDialog(t('jobs.delete_confirm', { name: job.name }), async () => {
+                try { await Api.deleteProject(job.id); } catch { return; }
+                renderAllParts();
+            }));
+    });
+}
+
+function partsFiltered() {
     const matId = parseInt(document.getElementById('parts-material').value) || 0;
     const projId = parseInt(document.getElementById('parts-project').value) || 0;
-    const onlyOpen = document.getElementById('parts-only-open').checked;
-    const matName = (id) => State.materials.find(m => m.id === id)?.name || '';
-    const rows = (State.allParts || []).filter(x =>
+    const showDone = document.getElementById('parts-show-done').checked;
+    return (State.allParts || []).filter(x =>
         (!matId || x.material_id === matId) && (!projId || x.projekt_id === projId)
-        && (!onlyOpen || x.offen > 0));
-    tbody.innerHTML = rows.length ? rows.map(x => {
-        const menge = PartsSel.get(x.teil_id);
-        return `<tr class="fd-table__row" data-teil="${x.teil_id}">
-            <td class="fd-table__cell"><input type="checkbox" class="cs-checkbox parts-check"${menge ? ' checked' : ''}></td>
-            <td class="fd-table__cell">${escHtml(x.label)}</td>
-            <td class="fd-table__cell">${escHtml(x.projekt)}</td>
-            <td class="fd-table__cell">${escHtml(matName(x.material_id))}</td>
-            <td class="fd-table__cell num">${dimText(x.laenge, x.breite)}</td>
-            <td class="fd-table__cell num">${x.offen}</td>
-            <td class="fd-table__cell num">${x.vorrat || ''}</td>
-            <td class="fd-table__cell"><input type="number" class="parts-qty" min="1" step="1" style="width:5rem"
-                value="${menge || ''}" placeholder="${x.offen || 1}"></td>
-        </tr>`;
-    }).join('') : `<tr><td class="empty-state" colspan="8">${escHtml(t('parts.none'))}</td></tr>`;
+        && (showDone || x.offen > 0));
+}
 
-    tbody.querySelectorAll('tr[data-teil]').forEach(tr => {
+// Hinweise je Zeile: was von dem Teil schon anderswo läuft
+function partStatusHtml(x) {
+    const out = [];
+    if (x.sammelplan_id) {
+        out.push(`<button class="cs-link part-status part-goto-sammel" type="button" data-id="${x.sammelplan_id}">${escHtml(t('parts.in_sammel', { name: x.sammelplan }))}</button>`);
+    }
+    (x.auftraege || []).forEach(a => out.push(
+        `<span class="part-status">${escHtml(t('parts.in_job', { n: a.anzahl, name: a.name }))}</span>`));
+    if (x.verplant) out.push(`<span class="part-status">${escHtml(t('parts.as_filler_planned', { n: x.verplant }))}</span>`);
+    if (x.vorrat > 0) {
+        const nimm = Math.min(x.vorrat, x.offen);
+        out.push(`<span class="stock-badge" title="${escAttr(t('fill.stock_hint'))}">${escHtml(t('parts.finished', { n: x.vorrat }))}${nimm > 0
+            ? ` · <button class="cs-link part-take" type="button">${escHtml(t('parts.take', { n: nimm }))}</button>` : ''}</span>`);
+    }
+    return out.length ? `<div class="part-status-line">${out.join(' ')}</div>` : '';
+}
+
+function partsMaterialHead(mid, rows) {
+    const m = State.partsMaterials?.get(mid);
+    const name = State.materials.find(x => x.id === mid)?.name || '';
+    const frei = rows.filter(x => x.verfuegbar > 0);
+    const stueck = frei.reduce((s, x) => s + x.verfuegbar, 0);
+    let ampel = '';
+    if (m) {
+        const stange = m.typ === 'Stange';
+        ampel = m.reicht
+            ? `<span class="parts-ampel parts-ampel--ok" title="${escAttr(t('parts.estimate_hint'))}">${escHtml(t('parts.stock_ok'))}</span>`
+            : `<span class="parts-ampel parts-ampel--low" title="${escAttr(t('parts.estimate_hint'))}">${escHtml(t(stange ? 'parts.stock_low_bars' : 'parts.stock_low_panels', { n: m.fehlt_stueck }))}</span>`;
+    }
+    const zu = PartsCollapsed.has(mid);
+    return `<div class="parts-group-head" data-mat="${mid}" role="button" tabindex="0" aria-expanded="${!zu}">
+        <span class="parts-toggle">${zu ? '&#9656;' : '&#9662;'}</span>
+        <strong>${escHtml(name)}</strong>
+        <span class="parts-sub">${escHtml(t(frei.length === 1 ? 'parts.group_info_one' : 'parts.group_info', { teile: frei.length, n: stueck }))}</span>
+        ${ampel}</div>`;
+}
+
+function renderAllPartsTable() {
+    const box = document.getElementById('parts-groups');
+    if (!box) return;
+    const rows = partsFiltered();
+    if (!rows.length) {
+        box.innerHTML = `<p class="empty-state">${escHtml(t((State.allParts || []).length ? 'parts.none' : 'parts.empty_all'))}</p>`;
+        updatePartsSelection();
+        return;
+    }
+    const gruppen = new Map();
+    rows.forEach(x => {
+        if (!gruppen.has(x.material_id)) gruppen.set(x.material_id, []);
+        gruppen.get(x.material_id).push(x);
+    });
+    const matName = id => State.materials.find(m => m.id === id)?.name || '';
+    const sortiert = [...gruppen.entries()].sort((a, b) => matName(a[0]).localeCompare(matName(b[0])));
+    box.innerHTML = sortiert.map(([mid, teile]) => `<div class="parts-group">
+        ${partsMaterialHead(mid, teile)}
+        ${PartsCollapsed.has(mid) ? '' : `<div class="table-wrap"><table class="fd-table parts-table">
+          <thead class="fd-table__header"><tr class="fd-table__row">
+            <th class="fd-table__cell parts-col-check"></th>
+            <th class="fd-table__cell">${escHtml(t('parts.col_part'))}</th>
+            <th class="fd-table__cell">${escHtml(t('parts.filter_project'))}</th>
+            <th class="fd-table__cell num">${escHtml(t('parts.col_size'))}</th>
+            <th class="fd-table__cell num">${escHtml(t('parts.col_open'))}</th>
+            <th class="fd-table__cell">${escHtml(t('parts.col_qty'))}</th>
+          </tr></thead>
+          <tbody class="fd-table__body">${teile.map(x => {
+            const menge = PartsSel.get(x.teil_id);
+            const frei = x.verfuegbar > 0;
+            const offenTxt = x.verfuegbar < x.offen && x.offen > 0
+                ? `${x.offen} <span class="parts-sub">${escHtml(t('parts.free', { n: x.verfuegbar }))}</span>` : `${x.offen}`;
+            return `<tr class="fd-table__row${frei ? '' : ' part-ausgelagert'}" data-teil="${x.teil_id}">
+              <td class="fd-table__cell parts-col-check"><input type="checkbox" class="cs-checkbox parts-check"
+                  aria-label="${escAttr(x.label)}"${menge ? ' checked' : ''}${frei ? '' : ' disabled'}></td>
+              <td class="fd-table__cell">${escHtml(x.label)}</td>
+              <td class="fd-table__cell"><button class="cs-link part-goto-project" type="button">${escHtml(x.projekt)}</button>${partStatusHtml(x)}</td>
+              <td class="fd-table__cell num">${dimText(x.laenge, x.breite)}</td>
+              <td class="fd-table__cell num">${offenTxt}</td>
+              <td class="fd-table__cell">${menge ? `<input type="number" class="fd-input parts-qty" min="1" step="1" value="${menge}" aria-label="${escAttr(t('parts.col_qty'))}">` : ''}</td>
+            </tr>`;
+          }).join('')}</tbody></table></div>`}
+      </div>`).join('');
+
+    box.querySelectorAll('.parts-group-head').forEach(head => {
+        const toggle = () => {
+            const mid = parseInt(head.dataset.mat);
+            if (PartsCollapsed.has(mid)) PartsCollapsed.delete(mid); else PartsCollapsed.add(mid);
+            renderAllPartsTable();
+        };
+        head.addEventListener('click', toggle);
+        head.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+    });
+    box.querySelectorAll('tr[data-teil]').forEach(tr => {
         const id = parseInt(tr.dataset.teil);
         const teil = State.allParts.find(x => x.teil_id === id);
-        const check = tr.querySelector('.parts-check');
-        const qty = tr.querySelector('.parts-qty');
-        // Ohne eigene Angabe: so viele wie offen, bei fertigen Teilen eins
-        check.addEventListener('change', () => {
-            if (check.checked) {
-                const n = parseInt(qty.value) || teil.offen || 1;
-                qty.value = n;
-                PartsSel.set(id, n);
-            } else {
-                PartsSel.delete(id);
-            }
+        // Ohne eigene Angabe: alles, was noch verfügbar ist
+        tr.querySelector('.parts-check').addEventListener('change', e => {
+            if (e.target.checked) PartsSel.set(id, teil.verfuegbar || 1); else PartsSel.delete(id);
+            renderAllPartsTable();
+        });
+        tr.querySelector('.parts-qty')?.addEventListener('input', e => {
+            const n = parseInt(e.target.value) || 0;
+            if (n > 0) PartsSel.set(id, n);
             updatePartsSelection();
         });
-        qty.addEventListener('input', () => {
-            const n = parseInt(qty.value) || 0;
-            check.checked = n > 0;
-            if (n > 0) PartsSel.set(id, n); else PartsSel.delete(id);
-            updatePartsSelection();
+        tr.querySelector('.part-goto-project').addEventListener('click', () => {
+            State.selectedProjectId = teil.projekt_id;
+            document.querySelector('.tab-btn[data-tab="projects"]')?.click();
+        });
+        tr.querySelector('.part-goto-sammel')?.addEventListener('click', () => {
+            State.selectedProjectId = teil.sammelplan_id;
+            document.querySelector('.tab-btn[data-tab="projects"]')?.click();
+        });
+        tr.querySelector('.part-take')?.addEventListener('click', async () => {
+            try { await Api.takeStockOfPart(id); } catch { return; }
+            showToast(t('parts.taken', { label: teil.label }), 'success');
+            renderAllParts();
         });
     });
     updatePartsSelection();
 }
 
+function partsSelection() {
+    return [...PartsSel.entries()].map(([id, menge]) =>
+        ({ teil: State.allParts.find(x => x.teil_id === id), menge })).filter(g => g.teil);
+}
+
 function updatePartsSelection() {
-    const n = PartsSel.size;
-    document.getElementById('parts-selected').textContent = n ? t('parts.selected', { n }) : '';
-    document.getElementById('btn-create-cutlist').disabled = n === 0;
-    document.getElementById('btn-parts-fill').disabled = n === 0;
+    const gewaehlt = partsSelection();
+    const bar = document.getElementById('parts-bar');
+    bar.classList.toggle('hidden', !gewaehlt.length);
+    if (!gewaehlt.length) return;
+    const stueck = gewaehlt.reduce((s, g) => s + g.menge, 0);
+    const mats = [...new Set(gewaehlt.map(g => g.teil.material_id))];
+    const matName = State.materials.find(m => m.id === mats[0])?.name || '';
+    document.getElementById('parts-selected').textContent = mats.length === 1
+        ? t('parts.selected_one', { teile: gewaehlt.length, n: stueck, material: matName })
+        : t('parts.selected_many', { teile: gewaehlt.length, n: stueck, m: mats.length });
+    document.getElementById('btn-parts-fill').disabled = mats.length !== 1;
+    document.getElementById('parts-bar-note').textContent = mats.length === 1 ? '' : t('parts.fill_one_material');
+}
+
+// Optimierung für ein Projekt/einen Sägeauftrag öffnen, optional gleich rechnen
+async function openInOptimization(projId, matId, optimize) {
+    document.querySelector('.tab-btn[data-tab="optimization"]')?.click();
+    if (State.optMode !== 'project') setOptMode('project');
+    renderOptDropdowns();
+    document.getElementById('opt-project').value = String(projId);
+    updateOptMaterialDropdown();
+    const matSel = document.getElementById('opt-material');
+    if (matId && matSel.querySelector(`option[value="${matId}"]`)) matSel.value = String(matId);
+    updateFillButton();
+    await loadSavedPlan();
+    if (optimize && !State.optimizationResult?.plan_id) document.getElementById('btn-optimize')?.click();
 }
 
 // Ausgewählte Teile als Füllteile in den Plan eines anderen Projekts übernehmen
 function partsAsFillers() {
-    const gewaehlt = [...PartsSel.entries()].map(([id, menge]) =>
-        ({ teil: State.allParts.find(x => x.teil_id === id), menge })).filter(g => g.teil);
+    const gewaehlt = partsSelection();
     const mats = new Set(gewaehlt.map(g => g.teil.material_id));
     if (mats.size !== 1) { showToast(t('parts.fill_one_material'), 'error'); return; }
     const matId = [...mats][0];
     const herkunft = new Set(gewaehlt.map(g => g.teil.projekt_id));
     const ziele = State.projects.filter(p => p.art !== 'liste' && !herkunft.has(p.id)
-        && (p.teile || []).some(x => x.material_id === matId));
+        && (p.teile || []).some(x => x.material_id === matId && x.offen_anzahl > 0));
     if (!ziele.length) { showToast(t('parts.fill_no_target'), 'error'); return; }
 
     const overlay = document.getElementById('modal-overlay');
@@ -2496,7 +2649,7 @@ function partsAsFillers() {
     const saveBtn = document.getElementById('modal-save');
     document.getElementById('modal-title').textContent = t('parts.as_fill');
     saveBtn.style.display = '';
-    saveBtn.textContent = t('btn.save');
+    saveBtn.textContent = t('parts.fill_go');
     body.innerHTML = `<div class="form-group">
         <label class="fd-form-label" for="pf-target">${escHtml(t('parts.fill_target'))}</label>
         <select id="pf-target" class="cs-select">${ziele.map(p =>
@@ -2508,13 +2661,9 @@ function partsAsFillers() {
     saveBtn.onclick = async () => {
         const projId = parseInt(document.getElementById('pf-target').value);
         closeModal();
-        // Zum Plan dieses Projekts wechseln; dessen bisherige Füllteile bleiben erhalten
-        document.querySelector('.tab-btn[data-tab="optimization"]')?.click();
-        if (State.optMode !== 'project') setOptMode('project', matId);
-        document.getElementById('opt-project').value = String(projId);
-        updateOptMaterialDropdown();
-        document.getElementById('opt-material').value = String(matId);
-        await loadSavedPlan();
+        PartsSel.clear();
+        await openInOptimization(projId, matId, false);
+        // Bisherige Füllteile dieses Plans bleiben erhalten
         const key = `${projId}:${matId}`;
         const alt = State.fillSel?.key === key ? State.fillSel : { key, items: [], alle: false };
         const items = new Map(alt.items.map(f => [f.teil_id, f]));
@@ -2526,44 +2675,20 @@ function partsAsFillers() {
     };
 }
 
-function createCutList() {
-    if (!PartsSel.size) return;
-    const overlay = document.getElementById('modal-overlay');
-    const body = document.getElementById('modal-body');
-    const saveBtn = document.getElementById('modal-save');
-    document.getElementById('modal-title').textContent = t('parts.create_list');
-    saveBtn.style.display = '';
-    saveBtn.textContent = t('btn.save');
-    const datum = new Date().toLocaleDateString(State.settings?.language || undefined);
-    body.innerHTML = `<div class="form-group">
-        <label class="fd-form-label" for="cutlist-name">${escHtml(t('parts.list_name'))}</label>
-        <input id="cutlist-name" class="fd-input" type="text" maxlength="200"
-            value="${escAttr(t('parts.list_default', { datum }))}">
-    </div>
-    <p class="saw-hint">${escHtml(t('parts.list_hint'))}</p>`;
-    overlay.classList.remove('hidden');
-    overlay.classList.add('active');
-    const input = document.getElementById('cutlist-name');
-    input.focus();
-    input.select();
-    saveBtn.onclick = async () => {
-        const name = input.value.trim();
-        if (!name) { input.focus(); return; }
-        try {
-            const liste = await Api.createCutList({
-                name,
-                eintraege: [...PartsSel.entries()].map(([teil_id, menge]) => ({ teil_id, menge })),
-            });
-            closeModal();
-            PartsSel.clear();
-            showToast(t('parts.list_created', { name: liste.name }), 'success');
-            // Direkt zur neuen Liste im Projekte-Reiter
-            State.selectedProjectId = liste.id;
-            document.querySelector('.tab-btn[data-tab="projects"]')?.click();
-        } catch (e) {
-            showToast(e.message, 'error');
-        }
-    };
+// „Jetzt sägen“: Sägeauftrag anlegen und gleich in der Optimierung rechnen
+async function createCutList() {
+    const gewaehlt = partsSelection();
+    if (!gewaehlt.length) return;
+    let auftrag;
+    try {
+        auftrag = await Api.createCutList({
+            eintraege: gewaehlt.map(g => ({ teil_id: g.teil.teil_id, menge: g.menge })),
+        });
+    } catch (e) { showToast(e.message, 'error'); return; }
+    PartsSel.clear();
+    showToast(t('parts.list_created', { name: auftrag.name }), 'success');
+    try { State.projects = await Api.getProjects(); } catch { /* ignore */ }
+    await openInOptimization(auftrag.id, gewaehlt[0].teil.material_id, true);
 }
 
 async function openFillDialog() {
@@ -3004,7 +3129,7 @@ function renderSawPieceList(plan, canvas) {
     });
 }
 
-// Schraffur für Füllteile (Teile anderer Projekte, die ins Regal gehen)
+// Schraffur für Füllteile (Teile anderer Projekte, gesägt zählen sie dort)
 function drawFillerHatch(ctx, x, y, w, h) {
     ctx.save();
     ctx.beginPath();
@@ -4444,7 +4569,7 @@ function openPartDialog(part = null) {
     // Beim Bearbeiten den Gesägt-Fortschritt editierbar machen
     if (isEdit) {
         fields.push({ key: 'gesaegt_anzahl', label: t('part.sawn_count'), type: 'number', min: 0, step: 1 });
-        // Schnittlisten-Kopien haben kein eigenes Regal (gesägt geht ins Ursprungsteil)
+        // Sägeauftrags-Kopien haben keine eigenen Fertigteile (gesägt zählt beim Ursprungsteil)
         if (!part.herkunft_teil_id) {
             fields.push({ key: 'vorrat', label: t('part.shelf_count'), type: 'number', min: 0, step: 1,
                           hint: t('part.shelf_hint') });
@@ -5315,8 +5440,12 @@ function initEvents() {
     onBackdropClick(document.getElementById('zoom-overlay'), () => closePlanZoom());
 
     // ----- Reiter „Teile“ -----
-    ['parts-material', 'parts-project', 'parts-only-open'].forEach(id =>
+    ['parts-material', 'parts-project', 'parts-show-done'].forEach(id =>
         document.getElementById(id)?.addEventListener('change', () => renderAllPartsTable()));
+    document.getElementById('btn-parts-clear')?.addEventListener('click', () => {
+        PartsSel.clear();
+        renderAllPartsTable();
+    });
     document.getElementById('btn-create-cutlist')?.addEventListener('click', () => createCutList());
     document.getElementById('btn-parts-fill')?.addEventListener('click', () => partsAsFillers());
 

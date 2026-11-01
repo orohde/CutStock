@@ -255,7 +255,7 @@ def _draw_stueckliste(c: canvas.Canvas, cur: _PageCursor,
         cur.need(40)
         c.setFont("Helvetica-Bold", 10)
         c.drawString(MARGIN, cur.y,
-                     f"Füllteile ({sum(fuell.values())}) – kommen ins Regal ihres Projekts")
+                     f"Füllteile ({sum(fuell.values())}) – zählen bei ihrem eigenen Projekt")
         cur.advance(14)
         _draw_teile_tabelle(c, cur, fuell, farb_map, is_1d, projekt_name)
 

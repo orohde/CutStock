@@ -775,16 +775,31 @@ class TestFuellteile:
         assert self._fuell(self._opt(client, haupt, mid, bid, fuellteile=f,
                                      fuell_alle_reste=True))
 
-    def test_gesaegtes_fuellteil_geht_in_vorrat_und_wird_uebernommen(self, client):
+    def test_gesaegtes_fuellteil_zaehlt_erst_beim_projekt_dann_fertigteile(self, client):
         mid, bid, haupt, anderes, fid = self._setup(client)
         plan = self._opt(client, haupt, mid, bid,
-                         fuellteile=[{"teil_id": fid, "modus": "auffuellen", "menge": 1}])
-        st = self._fuell(plan)[0]
-        res = client.post(f"/api/plan-pieces/{st['id']}", json={"gesaegt": True}).json()
-        assert res["teil"]["vorrat"] == 1 and res["teil"]["gesaegt_anzahl"] == 0
+                         fuellteile=[{"teil_id": fid, "modus": "auffuellen", "menge": 3}])
+        st = self._fuell(plan)
+        assert len(st) == 3                                       # 2 offen + 1 Überschuss
+        stand = []
+        for s in st:
+            t = client.post(f"/api/plan-pieces/{s['id']}", json={"gesaegt": True}).json()["teil"]
+            stand.append((t["gesaegt_anzahl"], t["vorrat"]))
+        assert stand == [(1, 0), (2, 0), (2, 1)]
         haupt_teil = client.get(f"/api/projects/{haupt}").json()["teile"][0]
         assert haupt_teil["gesaegt_anzahl"] == 0                  # Hauptprojekt unberührt
-        # Das andere Projekt sieht den Vorrat im Plan und übernimmt ihn
+        # Zurücknehmen bucht genau das zurück, was beim Sägen passiert ist
+        t = client.post(f"/api/plan-pieces/{st[0]['id']}", json={"gesaegt": False}).json()["teil"]
+        assert (t["gesaegt_anzahl"], t["vorrat"]) == (1, 1)
+        t = client.post(f"/api/plan-pieces/{st[2]['id']}", json={"gesaegt": False}).json()["teil"]
+        assert (t["gesaegt_anzahl"], t["vorrat"]) == (1, 0)
+
+    def test_fertigteile_uebernehmen(self, client):
+        mid, bid, haupt, anderes, fid = self._setup(client)
+        r = client.put(f"/api/parts/{fid}", json={"label": "K200", "typ": "Stange",
+                                                  "material_id": mid, "laenge": 200,
+                                                  "stueckzahl": 2, "vorrat": 1})
+        assert r.status_code == 200, r.text
         plan_b = self._opt(client, anderes, mid, bid)
         assert plan_b["vorrat_verfuegbar"] == [{"teil_id": fid, "label": "K200", "anzahl": 1}]
         teil = client.post(f"/api/projects/{anderes}/take-stock/{mid}").json()["teile"][0]
@@ -1177,7 +1192,7 @@ class TestSchnittliste:
                                                 "eintraege": [{"teil_id": 999, "menge": 1}]})
         assert r.status_code == 404
 
-    def test_gesaegt_geht_ins_regal(self, client):
+    def test_gesaegt_zaehlt_beim_herkunftsprojekt(self, client):
         mid, bid, teile = self._setup(client)
         liste = self._liste(client, [{"teil_id": teile["A"]["id"], "menge": 2}])
         plan = client.post("/api/optimize", json={
@@ -1186,11 +1201,33 @@ class TestSchnittliste:
         client.post(f"/api/plan-pieces/{stueck['id']}", json={"gesaegt": True})
         a = client.get(f"/api/projects/{teile['A']['projekt_id']}").json()["teile"][0]
         kopie = client.get(f"/api/projects/{liste['id']}").json()["teile"][0]
-        assert (a["vorrat"], a["gesaegt_anzahl"]) == (1, 0)   # Regal, kein Fortschritt
+        assert (a["vorrat"], a["gesaegt_anzahl"]) == (0, 1)   # direkt beim Projekt
         assert kopie["gesaegt_anzahl"] == 1
         client.post(f"/api/plan-pieces/{stueck['id']}", json={"gesaegt": False})
         a = client.get(f"/api/projects/{teile['A']['projekt_id']}").json()["teile"][0]
-        assert a["vorrat"] == 0
+        assert (a["vorrat"], a["gesaegt_anzahl"]) == (0, 0)
+
+    def test_ueberschuss_geht_zu_den_fertigteilen(self, client):
+        mid, bid, teile = self._setup(client)
+        liste = self._liste(client, [{"teil_id": teile["A"]["id"], "menge": 6}])  # 4 offen
+        plan = client.post("/api/optimize", json={
+            "project_id": liste["id"], "material_id": mid, "blade_id": bid}).json()
+        client.post(f"/api/plans/{plan['plan_id']}/confirm-all")
+        a = client.get(f"/api/projects/{teile['A']['projekt_id']}").json()["teile"][0]
+        assert (a["gesaegt_anzahl"], a["vorrat"]) == (4, 2)
+
+    def test_plan_des_herkunftsprojekts_wird_veraltet(self, client):
+        mid, bid, teile = self._setup(client)
+        pid_a = teile["A"]["projekt_id"]
+        plan_a = client.post("/api/optimize", json={
+            "project_id": pid_a, "material_id": mid, "blade_id": bid}).json()
+        assert not plan_a["veraltet"]
+        # Danach im Sägeauftrag gesägt → der Plan von A enthält jetzt zu viele Stücke
+        liste = self._liste(client, [{"teil_id": teile["A"]["id"], "menge": 1}])
+        plan = client.post("/api/optimize", json={
+            "project_id": liste["id"], "material_id": mid, "blade_id": bid}).json()
+        client.post(f"/api/plans/{plan['plan_id']}/confirm-all")
+        assert client.get(f"/api/projects/{pid_a}/plans/{mid}").json()["veraltet"]
 
     def test_herkunftsprojekt_plant_listenteile_nicht_doppelt(self, client):
         mid, bid, teile = self._setup(client)
@@ -1201,6 +1238,13 @@ class TestSchnittliste:
             "project_id": teile["A"]["projekt_id"], "material_id": mid, "blade_id": bid}).json()
         n = sum(len(sp["platzierungen"]) for sp in plan["schnittplaene"])
         assert n == 1   # 4 offen − 3 ungesägt in der Schnittliste
+
+    def test_beauftragt_zaehlt_schon_ohne_plan(self, client):
+        mid, bid, teile = self._setup(client)
+        self._liste(client, [{"teil_id": teile["A"]["id"], "menge": 3}])
+        plan = client.post("/api/optimize", json={
+            "project_id": teile["A"]["projekt_id"], "material_id": mid, "blade_id": bid}).json()
+        assert sum(len(sp["platzierungen"]) for sp in plan["schnittplaene"]) == 1
 
     def test_duplizieren_bleibt_schnittliste(self, client):
         _, _, teile = self._setup(client)

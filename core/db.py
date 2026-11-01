@@ -265,7 +265,8 @@ CREATE TABLE IF NOT EXISTS schnittplan_stueck (
     y          REAL    NOT NULL DEFAULT 0,
     gedreht    INTEGER NOT NULL DEFAULT 0,
     gesaegt    INTEGER NOT NULL DEFAULT 0,
-    ist_fuellteil INTEGER NOT NULL DEFAULT 0
+    ist_fuellteil INTEGER NOT NULL DEFAULT 0,
+    buchung    TEXT    NOT NULL DEFAULT ''
 );
 
 -- Füllteile eines Plans: Teile anderer Projekte, die in diesem Plan mitgesägt werden
@@ -319,7 +320,7 @@ class Database:
         "teil": {"vorrat", "herkunft_teil_id"},
         "schnittplan": {"fuell_alle_reste", "max_pro_stange", "fuell_wahl_json",
                         "fuell_vorschlaege_json"},
-        "schnittplan_stueck": {"ist_fuellteil"},
+        "schnittplan_stueck": {"ist_fuellteil", "buchung"},
         "material": {"kuerzel", "lagerort", "lagerort_reste"},
         "einzelstueck": {"lagerort"},
         "schnittplan_brett": {"abfall_json"},
@@ -457,6 +458,9 @@ class Database:
         if "ist_fuellteil" not in st_cols:
             self.conn.execute(
                 "ALTER TABLE schnittplan_stueck ADD COLUMN ist_fuellteil INTEGER NOT NULL DEFAULT 0")
+        if "buchung" not in st_cols:
+            self.conn.execute(
+                "ALTER TABLE schnittplan_stueck ADD COLUMN buchung TEXT NOT NULL DEFAULT ''")
         if "gesaegt_anzahl" not in teil_cols:
             self.conn.execute(
                 "ALTER TABLE teil ADD COLUMN gesaegt_anzahl INTEGER NOT NULL DEFAULT 0")
@@ -1114,28 +1118,81 @@ class Database:
 
     def ungesaegt_in_plaenen(self, material_id: int, ausser_projekt: int = 0
                              ) -> dict[int, int]:
-        """Je Teil: wie oft es ungesägt in gespeicherten Plänen ANDERER Projekte liegt.
+        """Je Teil: wie oft es schon anderswo verplant ist und noch nicht gesägt wurde.
 
-        Diese Stücke sind schon verplant und dürfen in keinem zweiten Plan auftauchen
-        (Einzelplan, Sammelplan, Füllteil mit fester Menge), sonst wird doppelt gesägt.
+        Das sind ungesägte Stücke in gespeicherten Plänen ANDERER Projekte (Sammelplan,
+        Füllteil) und offene Mengen in Sägeaufträgen. Sie dürfen in keinem zweiten Plan
+        auftauchen, sonst wird doppelt gesägt.
         """
-        # Teile einer Schnittliste zählen auch für ihr Herkunftsteil: Sie landen in
-        # dessen Vorrat und würden sonst im Plan des Herkunftsprojekts nochmal gesägt.
         rows = self.conn.execute(
-            """SELECT s.teil_id, t.herkunft_teil_id AS herkunft, COUNT(*) AS n
+            """SELECT s.teil_id, COUNT(*) AS n
                FROM schnittplan_stueck s
                JOIN schnittplan_brett b ON b.id = s.brett_id
                JOIN schnittplan p ON p.id = b.schnittplan_id
-               LEFT JOIN teil t ON t.id = s.teil_id
                WHERE p.material_id=? AND p.projekt_id != ? AND s.gesaegt=0
                      AND s.teil_id IS NOT NULL
                GROUP BY s.teil_id""", (material_id, ausser_projekt)).fetchall()
-        anzahl: dict[int, int] = {}
-        for r in rows:
-            anzahl[r["teil_id"]] = anzahl.get(r["teil_id"], 0) + r["n"]
-            if r["herkunft"]:
-                anzahl[r["herkunft"]] = anzahl.get(r["herkunft"], 0) + r["n"]
+        anzahl = {r["teil_id"]: r["n"] for r in rows}
+        # Sägeaufträge zählen schon ab dem Anlegen, nicht erst mit ihrem Plan
+        for herkunft, auftraege in self.beauftragt(material_id).items():
+            n = sum(a["anzahl"] for a in auftraege if a["projekt_id"] != ausser_projekt)
+            if n:
+                anzahl[herkunft] = anzahl.get(herkunft, 0) + n
         return anzahl
+
+    def beauftragt(self, material_id: int = 0) -> dict[int, list[dict]]:
+        """Offene Mengen in Sägeaufträgen je Herkunftsteil:
+        {teil_id: [{projekt_id, name, anzahl}]} (Sägeauftrag = Projekt mit art='liste')."""
+        rows = self.conn.execute(
+            f"""SELECT t.herkunft_teil_id AS herkunft, p.id AS pid, p.name,
+                       t.stueckzahl * p.anzahl - t.gesaegt_anzahl AS n
+                FROM teil t JOIN projekt p ON p.id = t.projekt_id
+                WHERE p.art = 'liste' AND t.herkunft_teil_id != 0
+                      {'AND t.material_id=?' if material_id else ''}
+                ORDER BY p.name""", (material_id,) if material_id else ()).fetchall()
+        erg: dict[int, list[dict]] = {}
+        for r in rows:
+            if r["n"] > 0:
+                erg.setdefault(r["herkunft"], []).append(
+                    {"projekt_id": r["pid"], "name": r["name"], "anzahl": r["n"]})
+        return erg
+
+    def teile_verplanung(self) -> dict:
+        """Für den Reiter Teile: was von jedem Teil schon anderswo verplant ist.
+
+        in_plaenen: {teil_id: n} ungesägt in Plänen anderer Projekte (Sammelplan, Füllteil);
+        sammel: {(projekt_id, material_id): (sammel_id, name)}; beauftragt wie beauftragt().
+        """
+        in_plaenen: dict[int, int] = {}
+        for r in self.conn.execute(
+                """SELECT s.teil_id, COUNT(*) AS n
+                   FROM schnittplan_stueck s
+                   JOIN schnittplan_brett b ON b.id = s.brett_id
+                   JOIN schnittplan p ON p.id = b.schnittplan_id
+                   JOIN teil t ON t.id = s.teil_id
+                   WHERE s.gesaegt=0 AND p.projekt_id != t.projekt_id
+                   GROUP BY s.teil_id"""):
+            in_plaenen[r["teil_id"]] = r["n"]
+        sammel = {(r["projekt_id"], r["sammel_material_id"]): (r["id"], r["name"])
+                  for r in self.conn.execute(
+                      """SELECT m.projekt_id, p.sammel_material_id, p.id, p.name
+                         FROM sammel_mitglied m JOIN projekt p ON p.id = m.sammel_id""")}
+        return {"in_plaenen": in_plaenen, "sammel": sammel, "beauftragt": self.beauftragt()}
+
+    def vorrat_uebernehmen_teil(self, teil_id: int, anzahl: int = 0) -> int:
+        """Fertigteile eines einzelnen Teils als gesägt übernehmen (anzahl 0 = so viele
+        wie möglich, höchstens so viele wie offen). Liefert die übernommene Anzahl."""
+        t = self.get_teil(teil_id)
+        if not t:
+            return 0
+        n = min(t.vorrat, t.offen_anzahl)
+        if anzahl > 0:
+            n = min(n, anzahl)
+        if n <= 0:
+            return 0
+        self.conn.execute("UPDATE teil SET vorrat = vorrat - ? WHERE id=?", (n, teil_id))
+        self.teil_gesaegt_aendern(teil_id, n)
+        return n
 
     def delete_projekt(self, pid: int):
         self.conn.execute("DELETE FROM schnittplan WHERE projekt_id=?", (pid,))
@@ -1266,10 +1323,11 @@ class Database:
                 st.brett_id = b.id
                 cur = self.conn.execute(
                     """INSERT INTO schnittplan_stueck (brett_id, teil_id, teil_label,
-                       laenge, breite, x, y, gedreht, gesaegt, ist_fuellteil)
-                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                       laenge, breite, x, y, gedreht, gesaegt, ist_fuellteil, buchung)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                     (st.brett_id, st.teil_id, st.teil_label, st.laenge, st.breite,
-                     st.x, st.y, int(st.gedreht), int(st.gesaegt), int(st.ist_fuellteil)),
+                     st.x, st.y, int(st.gedreht), int(st.gesaegt), int(st.ist_fuellteil),
+                     st.buchung),
                 )
                 st.id = cur.lastrowid
         self.conn.commit()
@@ -1338,7 +1396,8 @@ class Database:
                            teil_label=s["teil_label"], laenge=s["laenge"],
                            breite=s["breite"], x=s["x"], y=s["y"],
                            gedreht=bool(s["gedreht"]), gesaegt=bool(s["gesaegt"]),
-                           ist_fuellteil=bool(s["ist_fuellteil"]))
+                           ist_fuellteil=bool(s["ist_fuellteil"]),
+                           buchung=s["buchung"] if "buchung" in s.keys() else "")
                 for s in self.conn.execute(
                     "SELECT * FROM schnittplan_stueck WHERE brett_id=? ORDER BY id",
                     (brett.id,)).fetchall()
@@ -1383,9 +1442,9 @@ class Database:
         self.conn.execute("DELETE FROM schnittplan WHERE id=?", (plan_id,))
         self.conn.commit()
 
-    def set_stueck_gesaegt(self, stueck_id: int, gesaegt: bool):
-        self.conn.execute("UPDATE schnittplan_stueck SET gesaegt=? WHERE id=?",
-                          (int(gesaegt), stueck_id))
+    def set_stueck_gesaegt(self, stueck_id: int, gesaegt: bool, buchung: str = ""):
+        self.conn.execute("UPDATE schnittplan_stueck SET gesaegt=?, buchung=? WHERE id=?",
+                          (int(gesaegt), buchung, stueck_id))
         self.conn.commit()
 
     def save_brett_zustand(self, b: PlanBrett):
