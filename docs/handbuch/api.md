@@ -131,7 +131,7 @@ POST /api/optimize
 
 Algorithmus-Optionen: `greedy`, `nested`, `ga`. `reste_zuerst`, `fuellteile` und `fuell_alle_reste` sind optional (Füllteil-Modus `auffuellen` oder `fest`; ohne `fuellteile` bleibt die Auswahl des gespeicherten Plans).
 
-Die Antwort ist der gespeicherte Plan: `plan_id`, `schnittplaene` (je Brett u. a. `stueck_code`, `lagerort`, `platzierungen` mit `id` und `gesaegt`), `fehlende_teile`, `gesamt_verschnitt_prozent`, `materialbedarf` (zusätzlich benötigtes Material -- leer wenn alles passt) sowie Hinweise `veraltet` (mit `veraltet_grund`: `teile` = Teile/Material geändert, `anderswo` = Teile inzwischen anderswo gesägt) und `lager_fehlt`.
+Die Antwort ist der gespeicherte Plan: `plan_id`, `schnittplaene` (je Brett u. a. `stueck_code`, `lagerort`, `platzierungen` mit `id` und `gesaegt`), `fehlende_teile`, `gesamt_verschnitt_prozent`, `materialbedarf` (zusätzlich benötigtes Material -- leer wenn alles passt), `zu_lang` (fehlende Teile, die größer als jedes Stück im Lager sind -- nicht im Materialbedarf) sowie Hinweise `veraltet` (mit `veraltet_grund`: `teile` = Teile/Material geändert, `anderswo` = Teile inzwischen anderswo gesägt) und `lager_fehlt`.
 
 Das verwendete Sägeblatt wird zum Standard-Sägeblatt des Materials (`saegeblatt_id` in `/api/materials`); dasselbe gilt für `/api/sammel/optimize`.
 

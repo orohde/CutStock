@@ -293,6 +293,17 @@ class TestGespeichertePlaene:
     def _stock_total(self, client, mid):
         return sum(s["stueckzahl"] for s in client.get(f"/api/stock?material_id={mid}").json())
 
+    def test_zu_lange_teile_getrennt_vom_materialbedarf(self, client):
+        mid, pid, bid = self._setup(client, typ="Stange", stock=[(2000, 0, 1)],
+                                    teile=[("Lang", 3000, 0, 1), ("Kurz", 1500, 0, 2)])
+        plan = self._optimize(client, mid, pid, bid)
+        assert sorted(plan["fehlende_teile"]) == ["Kurz", "Lang"]
+        assert plan["zu_lang"] == ["Lang"]
+        # Nachkaufen nur für das Teil, das auf eine Stange passt
+        assert plan["materialbedarf"] == [{"laenge": 2000, "breite": 0, "anzahl": 1}]
+        geladen = client.get(f"/api/projects/{pid}/plans/{mid}").json()
+        assert geladen["zu_lang"] == ["Lang"]
+
     def test_berechnung_wird_gespeichert_und_geladen(self, client):
         mid, pid, bid = self._setup(client)
         plan = self._optimize(client, mid, pid, bid)

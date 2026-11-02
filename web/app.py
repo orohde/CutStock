@@ -525,6 +525,8 @@ class OptimizeResult(BaseModel):
     fehlende_teile: list[str]
     gesamt_verschnitt_prozent: float
     materialbedarf: list[MaterialBedarfOut] = []
+    # Fehlende Teile, die größer als jedes Stück im Lager sind
+    zu_lang: list[str] = []
     # Gespeicherter Plan (0/leer bei reinen Berechnungsergebnissen, z.B. im PDF)
     plan_id: int = 0
     projekt_id: int = 0
@@ -791,8 +793,31 @@ def _out_to_ergebnis(data: OptimizeResult) -> OptimierungsErgebnis:
 # ---------------------------------------------------------------------------
 
 
+def _zu_lange_teile(fehlende_labels, teile, vorrat, material) -> list[str]:
+    """Fehlende Teile, die auch auf das größte Stück im Lager nicht passen (je Stück ein Label)."""
+    if not fehlende_labels or not vorrat:
+        return []
+    is_1d = material.typ == MaterialTyp.STANGE
+    rand = 2 * material.besaeumung
+    teil_map = {t.label: t for t in teile}
+
+    def passt(t) -> bool:
+        if is_1d:
+            return any(t.laenge <= ls.laenge - rand for ls in vorrat)
+        normal_ok, gedreht_ok = drehung_fuer_teil(material.maserung, t.maserung)
+        if material.maserung == Maserung.KEINE:
+            normal_ok = gedreht_ok = True
+        return any((normal_ok and t.laenge <= ls.laenge - rand and t.breite <= ls.breite - rand)
+                   or (gedreht_ok and t.breite <= ls.laenge - rand and t.laenge <= ls.breite - rand)
+                   for ls in vorrat)
+
+    return [lbl for lbl in fehlende_labels if lbl in teil_map and not passt(teil_map[lbl])]
+
+
 def _berechne_materialbedarf(fehlende_labels, teile, vorrat, material, kerf):
     """Estimate additional stock needed for parts that couldn't be placed."""
+    zu_lang = set(_zu_lange_teile(fehlende_labels, teile, vorrat, material))
+    fehlende_labels = [lbl for lbl in fehlende_labels if lbl not in zu_lang]
     if not fehlende_labels:
         return []
 
@@ -2117,12 +2142,13 @@ def run_optimization(req: OptimizeRequest):
         vorschlaege = _reste_auffuellen(neue, fuell_auf, kerf, material, fuell_alle,
                                         fuell_wahl)
     bedarf = []
+    zu_lang = _zu_lange_teile(ergebnis.fehlende_teile, teile, lage.vorrat_alle, material)
     if ergebnis.fehlende_teile:
         bedarf = [m.model_dump() for m in _berechne_materialbedarf(
             ergebnis.fehlende_teile, teile, lage.vorrat_alle, material, kerf)]
     return _plan_speichern(projekt, material, blade, req.algorithm, behalten + neue,
                            ergebnis.fehlende_teile, bedarf, fuell_auswahl, fuell_alle,
-                           max_pro_stange, fuell_wahl, vorschlaege)
+                           max_pro_stange, fuell_wahl, vorschlaege, zu_lang)
 
 
 def _fuellteile_laden(db: Database, projekt: Projekt, material: Material, auswahl: list[dict]
@@ -2416,11 +2442,12 @@ def optimize_sammel(req: SammelRequest):
                           dict(offen), lage)
     neue = _ergebnis_to_bretter(ergebnis, lage.defekte_map, teile, offen)
     bedarf = []
+    zu_lang = _zu_lange_teile(ergebnis.fehlende_teile, teile, lage.vorrat_alle, material)
     if ergebnis.fehlende_teile:
         bedarf = [m.model_dump() for m in _berechne_materialbedarf(
             ergebnis.fehlende_teile, teile, lage.vorrat_alle, material, kerf)]
     return _plan_speichern(sammel, material, blade, req.algorithm, behalten + neue,
-                           ergebnis.fehlende_teile, bedarf)
+                           ergebnis.fehlende_teile, bedarf, zu_lang=zu_lang)
 
 
 @app.post("/api/sammel/compare", response_model=VergleichOut)
@@ -2577,7 +2604,7 @@ def _eingabe_hash(projekt: Projekt, material: Material, kerf: float) -> str:
 
 def _plan_speichern(projekt, material, blade, algorithmus, bretter, fehlende, bedarf,
                     fuellteile=(), fuell_alle_reste=False, max_pro_stange=0,
-                    fuell_wahl=None, fuell_vorschlaege=()) -> OptimizeResult:
+                    fuell_wahl=None, fuell_vorschlaege=(), zu_lang=()) -> OptimizeResult:
     db = get_db()
     plan = GespeicherterPlan(
         projekt_id=projekt.id, material_id=material.id, saegeblatt_id=blade.id,
@@ -2586,6 +2613,7 @@ def _plan_speichern(projekt, material, blade, algorithmus, bretter, fehlende, be
         fehlende_teile=list(fehlende), materialbedarf=list(bedarf), bretter=bretter,
         fuellteile=list(fuellteile), fuell_alle_reste=bool(fuell_alle_reste),
         max_pro_stange=int(max_pro_stange or 0), fuell_vorschlaege=list(fuell_vorschlaege),
+        zu_lang=list(zu_lang),
     )
     # Nur Wahlen für Gruppen, die es im neuen Plan gibt
     gruppen = {g["gruppe"] for g in plan.fuell_vorschlaege}
@@ -2853,6 +2881,7 @@ def _plan_to_out(plan: GespeicherterPlan) -> OptimizeResult:
         fehlende_teile=plan.fehlende_teile,
         gesamt_verschnitt_prozent=round((1 - genutzt / gesamt) * 100, 1) if gesamt else 0.0,
         materialbedarf=[MaterialBedarfOut(**m) for m in plan.materialbedarf],
+        zu_lang=plan.zu_lang,
         plan_id=plan.id, projekt_id=plan.projekt_id, material_id=plan.material_id,
         saegeblatt_id=plan.saegeblatt_id, algorithmus=plan.algorithmus,
         erstellt=plan.erstellt, version=plan.version,
@@ -4118,12 +4147,36 @@ WEB_EXTRA_TRANSLATIONS = {
     "stat.line_used": {"de": "{p} % genutzt", "en": "{p} % used", "fr": "{p} % utilisé", "it": "{p} % usato"},
     "stat.line_waste": {"de": "Abfall {p} %", "en": "waste {p} %", "fr": "déchet {p} %", "it": "scarto {p} %"},
     "stat.missing_box": {
-        "de": "{n} Teile passen nicht ins Lager: {labels}",
-        "en": "{n} parts don’t fit the stock: {labels}",
-        "fr": "{n} pièces ne tiennent pas dans le stock : {labels}",
-        "it": "{n} pezzi non entrano nel magazzino: {labels}",
+        "de": "Material reicht nicht – {n} Teile können nicht gesägt werden: {labels}",
+        "en": "Not enough material – {n} parts can’t be cut: {labels}",
+        "fr": "Matériau insuffisant – {n} pièces ne peuvent pas être découpées : {labels}",
+        "it": "Materiale insufficiente – {n} pezzi non possono essere tagliati: {labels}",
     },
-    "stat.buy": {"de": "Dafür fehlt: {list}", "en": "Missing for this: {list}", "fr": "Il manque : {list}", "it": "Manca: {list}"},
+    "stat.missing_box_one": {
+        "de": "Material reicht nicht – 1 Teil kann nicht gesägt werden: {labels}",
+        "en": "Not enough material – 1 part can’t be cut: {labels}",
+        "fr": "Matériau insuffisant – 1 pièce ne peut pas être découpée : {labels}",
+        "it": "Materiale insufficiente – 1 pezzo non può essere tagliato: {labels}",
+    },
+    "stat.too_long": {
+        "de": "Länger als jede Stange im Lager: {labels}",
+        "en": "Longer than any bar in stock: {labels}",
+        "fr": "Plus long que toute barre en stock : {labels}",
+        "it": "Più lungo di ogni barra in magazzino: {labels}",
+    },
+    "stat.too_big": {
+        "de": "Größer als jede Platte im Lager: {labels}",
+        "en": "Larger than any panel in stock: {labels}",
+        "fr": "Plus grand que tout panneau en stock : {labels}",
+        "it": "Più grande di ogni pannello in magazzino: {labels}",
+    },
+    "stat.buy": {"de": "Nachkaufen: {list}", "en": "To buy: {list}", "fr": "À acheter : {list}", "it": "Da acquistare: {list}"},
+    "opt.max_hint": {
+        "de": "Max. je Stange: höchstens so viele Teile auf eine Stange, auch wenn mehr passen – lässt Platz für Füllteile. Leer = keine Grenze.",
+        "en": "Max. per bar: at most this many parts per bar, even if more would fit – leaves room for filler parts. Empty = no limit.",
+        "fr": "Max. par barre : au plus ce nombre de pièces par barre, même si davantage tiendrait – laisse de la place pour les pièces de remplissage. Vide = sans limite.",
+        "it": "Max. per barra: al massimo questo numero di pezzi per barra, anche se ne entrerebbero di più – lascia spazio per i pezzi di riempimento. Vuoto = nessun limite.",
+    },
     "proj.restart_hint": {
         "de": "Fortschritt auf 0 und Pläne löschen, um das Projekt noch einmal zu sägen",
         "en": "Reset progress and delete plans to cut the project once more",

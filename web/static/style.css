@@ -251,6 +251,8 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .opt-controls .form-group { margin-bottom: 0; min-width: 160px; }
 
 .opt-controls-panel { margin-bottom: 1rem; overflow: visible; }
+.opt-controls-hint { margin: 0.5rem 0 0; color: var(--sapContent_LabelColor, #556b82);
+  font-size: 0.8125rem; line-height: 1.4; }
 
 .hidden { display: none !important; }
 

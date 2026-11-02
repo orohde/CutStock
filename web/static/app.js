@@ -1453,8 +1453,9 @@ function applyOptMode() {
 function updateMaxPerBar() {
     const matId = parseInt(document.getElementById('opt-material')?.value);
     const is1D = State.materials.find(m => m.id === matId)?.typ === 'Stange';
-    document.getElementById('opt-max-group')?.classList.toggle('hidden',
-        State.optMode === 'material' || !is1D);
+    const ohne = State.optMode === 'material' || !is1D;
+    document.getElementById('opt-max-group')?.classList.toggle('hidden', ohne);
+    document.getElementById('opt-max-hint')?.classList.toggle('hidden', ohne);
 }
 
 function setMaxPerBar(n) {
@@ -1704,8 +1705,20 @@ function renderOptResults({ quiet = false } = {}) {
         const materialbedarf = result.materialbedarf || [];
         const bedarfTxt = materialbedarf.map(m => m.anzahl + '× ' + (m.breite > 0
             ? formatDim(m.laenge) + ' × ' + formatDim(m.breite) : formatDim(m.laenge))).join(', ');
+        // Zu große Teile getrennt: Nachkaufen derselben Größe hilft dort nicht
+        const zuLang = [...(result.zu_lang || [])];
+        const fehlt = missing.filter(l => {
+            const i = zuLang.indexOf(l);
+            if (i < 0) return true;
+            zuLang.splice(i, 1);
+            return false;
+        });
+        const zuGross = result.zu_lang || [];
         const missingBox = missing.length ? `<div class="opt-missing">
-            <div>&#9888; ${escHtml(t('stat.missing_box', { n: missing.length, labels: summarizeLabels(missing) }))}</div>
+            ${fehlt.length ? `<div>&#9888; ${escHtml(t(fehlt.length === 1 ? 'stat.missing_box_one' : 'stat.missing_box',
+                { n: fehlt.length, labels: summarizeLabels(fehlt) }))}</div>` : ''}
+            ${zuGross.length ? `<div>&#9888; ${escHtml(t(is1D ? 'stat.too_long' : 'stat.too_big',
+                { labels: summarizeLabels(zuGross) }))}</div>` : ''}
             ${materialbedarf.length ? `<div>&#128722; ${escHtml(t('stat.buy', { list: bedarfTxt }))}
                 <button class="fd-button fd-button--compact btn-add-bedarf" type="button">${t('stat.add_to_stock')}</button></div>` : ''}
         </div>` : '';

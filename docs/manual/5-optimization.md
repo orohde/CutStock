@@ -65,7 +65,10 @@ When you select an entry, the settings are expanded; collapsed, one line sums th
 - **Calculation** – for bars **Standard** or **Thorough**, for panels **Fast**, **Standard**
   (guillotine with smart split direction) or **Thorough** (genetic algorithm, takes longer).
 - **Remnants first** – plan offcuts first, then full bars/panels.
-- **Max. per bar** – at most this many parts per bar, leaves room for filler parts.
+- **Max. per bar** – sets how many parts go on one bar at most, even if more would fit. Empty
+  ("–") means no limit. Example: with 2, room is left at the end of every bar that
+  **Fill remnants…** can fill with parts from other projects (see [Filler parts](#filler-parts)).
+  Only for bars, not for panels.
 
 Every calculation is saved as a **plan**. The plan reserves its pieces that haven't been started
 yet, so other projects don't plan them (can be switched off under Settings → Stock).
@@ -74,8 +77,8 @@ longer in stock (with its code, e.g. "No longer in stock: AP40-07").
 
 ### Key figures
 
-One line above the plan: "6 full bars + 2 offcuts · 24 parts · 95 % used · waste 2 %". If parts
-don't fit the stock, a red box below lists the missing parts and the shopping list (see
+One line above the plan: "6 full bars + 2 offcuts · 24 parts · 95 % used · waste 2 %". If there isn't
+enough material, a red box below lists the parts that can't be cut and the shopping list (see
 [Material requirements](#material-requirements)).
 
 ## The plan
@@ -126,8 +129,13 @@ tab, box "Combined plans".
 
 ## Material requirements
 
-If the stock isn't enough, CutStock shows a shopping list in the red box; **Add to stock** adds it
-right away.
+If the stock isn't enough, the red box says "Not enough material – 2 parts can't be cut: …" with
+the parts concerned and below it **To buy**, e.g. "2× 6000 mm" (in the size of the largest piece in
+stock). **Add to stock** books it as stock right away.
+
+If a part is longer than any bar (or larger than any panel) in stock, it gets its own line
+"Longer than any bar in stock: …" – more bars of the same length won't help, you need longer
+material. Such parts are not counted in the shopping list.
 
 ## Workshop mode
 

@@ -234,6 +234,7 @@ CREATE TABLE IF NOT EXISTS schnittplan (
     max_pro_stange INTEGER NOT NULL DEFAULT 0,
     fuell_wahl_json TEXT NOT NULL DEFAULT '{}',
     fuell_vorschlaege_json TEXT NOT NULL DEFAULT '[]',
+    zu_lang_json   TEXT    NOT NULL DEFAULT '[]',
     UNIQUE(projekt_id, material_id)
 );
 
@@ -320,7 +321,7 @@ class Database:
         "lagerstueck": {"ist_rest"},
         "teil": {"vorrat", "herkunft_teil_id"},
         "schnittplan": {"fuell_alle_reste", "max_pro_stange", "fuell_wahl_json",
-                        "fuell_vorschlaege_json"},
+                        "fuell_vorschlaege_json", "zu_lang_json"},
         "schnittplan_stueck": {"ist_fuellteil", "buchung"},
         "material": {"kuerzel", "lagerort", "lagerort_reste", "saegeblatt_id"},
         "einzelstueck": {"lagerort"},
@@ -449,7 +450,8 @@ class Database:
                 "ALTER TABLE schnittplan ADD COLUMN fuell_alle_reste INTEGER NOT NULL DEFAULT 0")
         for spalte, typ in (("max_pro_stange", "INTEGER NOT NULL DEFAULT 0"),
                             ("fuell_wahl_json", "TEXT NOT NULL DEFAULT '{}'"),
-                            ("fuell_vorschlaege_json", "TEXT NOT NULL DEFAULT '[]'")):
+                            ("fuell_vorschlaege_json", "TEXT NOT NULL DEFAULT '[]'"),
+                            ("zu_lang_json", "TEXT NOT NULL DEFAULT '[]'")):
             if spalte not in sp_cols:
                 self.conn.execute(f"ALTER TABLE schnittplan ADD COLUMN {spalte} {typ}")
         br_cols = {row[1] for row in
@@ -1302,12 +1304,13 @@ class Database:
             """INSERT INTO schnittplan (projekt_id, material_id, saegeblatt_id, kerf,
                algorithmus, eingabe_hash, fehlende_json, bedarf_json, erstellt,
                geaendert, version, fuell_alle_reste, max_pro_stange, fuell_wahl_json,
-               fuell_vorschlaege_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               fuell_vorschlaege_json, zu_lang_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (plan.projekt_id, plan.material_id, plan.saegeblatt_id, plan.kerf,
              plan.algorithmus, plan.eingabe_hash, json.dumps(plan.fehlende_teile),
              json.dumps(plan.materialbedarf), plan.erstellt, plan.geaendert,
              plan.version, int(plan.fuell_alle_reste), int(plan.max_pro_stange),
-             json.dumps(plan.fuell_wahl), json.dumps(plan.fuell_vorschlaege)),
+             json.dumps(plan.fuell_wahl), json.dumps(plan.fuell_vorschlaege),
+             json.dumps(plan.zu_lang)),
         )
         plan.id = cur.lastrowid
         for f in plan.fuellteile:
@@ -1378,6 +1381,7 @@ class Database:
             max_pro_stange=row["max_pro_stange"] or 0,
             fuell_wahl=json.loads(row["fuell_wahl_json"] or "{}"),
             fuell_vorschlaege=json.loads(row["fuell_vorschlaege_json"] or "[]"),
+            zu_lang=json.loads(row["zu_lang_json"] or "[]"),
             fuellteile=[{"teil_id": r["teil_id"], "modus": r["modus"], "menge": r["menge"]}
                         for r in self.conn.execute(
                             "SELECT * FROM schnittplan_fuellteil WHERE schnittplan_id=?",

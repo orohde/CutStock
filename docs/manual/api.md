@@ -131,7 +131,7 @@ POST /api/optimize
 
 Algorithm choices: `greedy`, `nested`, `ga`. `reste_zuerst` (remnants first), `fuellteile` (filler parts) and `fuell_alle_reste` are optional (filler mode `auffuellen` = fill or `fest` = fixed quantity; without `fuellteile` the saved plan's selection is kept).
 
-The response is the saved plan: `plan_id`, `schnittplaene` (per board e.g. `stueck_code`, `lagerort`, `platzierungen` with `id` and `gesaegt`), `fehlende_teile` (parts that didn't fit), `gesamt_verschnitt_prozent` (total waste %), `materialbedarf` (additional material needed -- empty when everything fits) and the hints `veraltet` (outdated, with `veraltet_grund`: `teile` = parts/material changed, `anderswo` = parts cut elsewhere meanwhile) and `lager_fehlt` (stock missing).
+The response is the saved plan: `plan_id`, `schnittplaene` (per board e.g. `stueck_code`, `lagerort`, `platzierungen` with `id` and `gesaegt`), `fehlende_teile` (parts that didn't fit), `gesamt_verschnitt_prozent` (total waste %), `materialbedarf` (additional material needed -- empty when everything fits), `zu_lang` (missing parts larger than any piece in stock -- not in the material requirements) and the hints `veraltet` (outdated, with `veraltet_grund`: `teile` = parts/material changed, `anderswo` = parts cut elsewhere meanwhile) and `lager_fehlt` (stock missing).
 
 The saw blade used becomes the material's default saw blade (`saegeblatt_id` in `/api/materials`); the same applies to `/api/sammel/optimize`.
 

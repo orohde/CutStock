@@ -66,7 +66,10 @@ zusammen, z. B. „Alu-Kappsäge 2,8 mm · Standard · Reste zuerst aus“:
   **Standard** (Guillotine mit intelligenter Schnittrichtung) oder **Gründlich** (genetischer
   Algorithmus, dauert länger).
 - **Reste zuerst** – erst nur Reste verplanen, dann ganze Stangen/Platten.
-- **Max. je Stange** – höchstens so viele Teile auf eine Stange, lässt Platz für Füllteile.
+- **Max. je Stange** – legt fest, wie viele Teile höchstens auf eine Stange kommen, auch wenn mehr
+  draufpassen würden. Leer („–“) heißt keine Grenze. Beispiel: Bei 2 bleibt am Ende jeder Stange
+  Platz, den **Reste auffüllen…** mit Teilen anderer Projekte füllen kann (siehe
+  [Füllteile](#füllteile)). Gibt es nur für Stangen, nicht für Platten.
 
 Jede Berechnung wird als **Plan** gespeichert. Der Plan reserviert seine noch nicht angefangenen
 Stücke, andere Projekte verplanen sie nicht (abschaltbar unter Einstellungen → Lager).
@@ -76,8 +79,8 @@ eingeplantes Stück nicht mehr im Lager ist (mit Code, z. B. „Nicht mehr im La
 ### Kennzahlen
 
 Eine Zeile über dem Plan: „6 ganze Stangen + 2 Reste · 24 Teile · 95 % genutzt · Abfall 2 %“.
-Passen Teile nicht ins Lager, steht darunter ein roter Kasten mit den fehlenden Teilen und der
-Einkaufsliste (siehe [Materialbedarf](#materialbedarf)).
+Reicht das Material nicht, steht darunter ein roter Kasten mit den Teilen, die nicht gesägt werden
+können, und der Einkaufsliste (siehe [Materialbedarf](#materialbedarf)).
 
 ## Der Plan
 
@@ -127,8 +130,13 @@ Projekt. Anlegen, umbenennen, Mitglieder ändern und löschen geht auch im Reite
 
 ## Materialbedarf
 
-Reicht der Bestand nicht, zeigt CutStock im roten Kasten eine Einkaufsliste; **Ins Lager**
-übernimmt sie direkt.
+Reicht der Bestand nicht, steht im roten Kasten „Material reicht nicht – 2 Teile können nicht
+gesägt werden: …“ mit den betroffenen Teilen und darunter **Nachkaufen**, z. B. „2× 6000 mm“
+(in der Größe des größten Stücks im Lager). **Ins Lager** bucht das direkt als Bestand ein.
+
+Ist ein Teil länger als jede Stange (bzw. größer als jede Platte) im Lager, steht es in einer
+eigenen Zeile „Länger als jede Stange im Lager: …“ – mehr Stangen derselben Länge helfen dort
+nicht, es braucht längeres Material. Solche Teile zählen nicht zur Einkaufsliste.
 
 ## Werkstatt-Modus
 

@@ -214,6 +214,8 @@ class GespeicherterPlan:
     fuell_wahl: dict = field(default_factory=dict)
     # Stangen: Füllvorschläge je Gruppe gleicher Reste (zum Anzeigen, siehe web/app.py)
     fuell_vorschlaege: list = field(default_factory=list)
+    # Fehlende Teile, die größer als jedes Stück im Lager sind (Nachkaufen derselben Größe hilft nicht)
+    zu_lang: list = field(default_factory=list)
 
 
 def stueck_code(kuerzel: str, nr: int) -> str:
