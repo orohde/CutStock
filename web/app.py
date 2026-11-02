@@ -2140,7 +2140,7 @@ def run_optimization(req: OptimizeRequest):
     vorschlaege: list[dict] = []
     if fuell_auf:
         vorschlaege = _reste_auffuellen(neue, fuell_auf, kerf, material, fuell_alle,
-                                        fuell_wahl)
+                                        fuell_wahl, max_pro_stange)
     bedarf = []
     zu_lang = _zu_lange_teile(ergebnis.fehlende_teile, teile, lage.vorrat_alle, material)
     if ergebnis.fehlende_teile:
@@ -2215,7 +2215,8 @@ def set_fill_choice(plan_id: int, data: FuellWahlIn):
             b.reste = [[rest]] if rest > 0 else []
         offen.append(b)
     plan.fuell_vorschlaege = (_reste_auffuellen_1d(offen, auf, kerf, material,
-                                                   plan.fuell_alle_reste, wahl)
+                                                   plan.fuell_alle_reste, wahl,
+                                                   plan.max_pro_stange)
                               if auf else [])
     gruppen = {g["gruppe"] for g in plan.fuell_vorschlaege}
     plan.fuell_wahl = {k: v for k, v in wahl.items() if k in gruppen}
@@ -2623,12 +2624,13 @@ def _plan_speichern(projekt, material, blade, algorithmus, bretter, fehlende, be
 
 def _reste_auffuellen(bretter: list[PlanBrett], auffuellen: list[tuple[Teil, int]],
                       kerf: float, material: Material, alle_reste: bool,
-                      wahl: dict | None = None) -> list[dict]:
+                      wahl: dict | None = None, max_pro_stange: int = 0) -> list[dict]:
     """Durchgang 2: Reste mit Füllteilen belegen. Liefert bei Stangen die Vorschläge."""
     if material.typ != MaterialTyp.STANGE:
         _reste_auffuellen_2d(bretter, auffuellen, kerf, material, alle_reste)
         return []
-    return _reste_auffuellen_1d(bretter, auffuellen, kerf, material, alle_reste, wahl)
+    return _reste_auffuellen_1d(bretter, auffuellen, kerf, material, alle_reste, wahl,
+                                max_pro_stange)
 
 
 def _reste_auffuellen_2d(bretter: list[PlanBrett], auffuellen: list[tuple[Teil, int]],
@@ -2679,12 +2681,14 @@ def _reste_auffuellen_2d(bretter: list[PlanBrett], auffuellen: list[tuple[Teil, 
 
 def _reste_auffuellen_1d(bretter: list[PlanBrett], auffuellen: list[tuple[Teil, int]],
                          kerf: float, material: Material, alle_reste: bool,
-                         wahl: dict | None = None) -> list[dict]:
+                         wahl: dict | None = None, max_pro_stange: int = 0) -> list[dict]:
     """Den Rest am Ende jeder Stange mit Füllteilen belegen (Durchgang 2).
 
     Standard: nur echter Abfall, also Reste unter dem Mindest-Restmaß. Hat das
-    Material kein Mindest-Restmaß, gilt jeder Rest als auffüllbar. Stangen mit
-    Defekten bleiben außen vor (ihre freien Stücke liegen nicht am Ende).
+    Material kein Mindest-Restmaß, gilt jeder Rest als auffüllbar. Stangen, die
+    "Max. je Stange" voll ausschöpfen, sind immer auffüllbar – dafür ist der
+    Platz frei geblieben. Stangen mit Defekten bleiben außen vor (ihre freien
+    Stücke liegen nicht am Ende).
 
     Stangen mit gleichem Rest bilden eine Gruppe (Schlüssel: Rest auf 0,1 mm).
     Je Gruppe gibt es Vorschläge (mit den Mengen vor ihrer ersten Stange).
@@ -2712,7 +2716,8 @@ def _reste_auffuellen_1d(bretter: list[PlanBrett], auffuellen: list[tuple[Teil, 
         ende = max(st.x + st.laenge for st in b.stuecke)
         start = ende + kerf
         rest = b.lager_laenge - start
-        if rest <= 0 or not (alle_reste or rest_min <= 0 or rest < rest_min):
+        am_limit = max_pro_stange > 0 and len(b.stuecke) >= max_pro_stange
+        if rest <= 0 or not (alle_reste or am_limit or rest_min <= 0 or rest < rest_min):
             continue
         kandidaten = [(tid, nach_id[tid].laenge, n, bevorzugt[tid])
                       for tid, n in vorrat.items() if n > 0]
@@ -3704,6 +3709,16 @@ WEB_EXTRA_TRANSLATIONS = {
     "fill.qty_any": {"de": "beliebig", "en": "any", "fr": "libre", "it": "libero"},
     "fill.apply": {"de": "Übernehmen und optimieren", "en": "Apply and optimize",
                    "fr": "Appliquer et optimiser", "it": "Applica e ottimizza"},
+    "fill.nothing_fits": {
+        "de": "Kein Füllteil passt in die Reste.",
+        "en": "No fill part fits into the remnants.",
+        "fr": "Aucune pièce de remplissage ne rentre dans les chutes.",
+        "it": "Nessun pezzo di riempimento entra negli sfridi."},
+    "fill.nothing_fits_waste": {
+        "de": "Kein Füllteil passt in den Abfall. Verwertbare Reste werden nur mit „Auch verwertbare Reste auffüllen“ belegt.",
+        "en": "No fill part fits into the waste. Usable remnants are only filled with “Also fill usable remnants”.",
+        "fr": "Aucune pièce de remplissage ne rentre dans les déchets. Les chutes réutilisables ne sont remplies qu’avec « Remplir aussi les chutes réutilisables ».",
+        "it": "Nessun pezzo di riempimento entra negli scarti. Gli sfridi riutilizzabili vengono riempiti solo con «Riempi anche gli sfridi riutilizzabili»."},
     "opt.max_per_bar": {"de": "Max. je Stange", "en": "Max. per bar", "fr": "Max. par barre", "it": "Max. per barra"},
     "opt.max_per_bar_hint": {
         "de": "Höchstens so viele Teile auf eine Stange – lässt gezielt Platz für Füllteile. Leer = so viele wie passen.",

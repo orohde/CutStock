@@ -3062,7 +3062,7 @@ async function openFillDialog() {
 
     overlay.classList.remove('hidden');
     overlay.classList.add('active');
-    saveBtn.onclick = () => {
+    saveBtn.onclick = async () => {
         const items = [];
         // Eine Menge ist Obergrenze und Vorrang zugleich, leer = so viele wie passen
         body.querySelectorAll('tr[data-teil]').forEach(tr => {
@@ -3070,10 +3070,17 @@ async function openFillDialog() {
             const menge = Math.max(0, parseInt(tr.querySelector('.fill-qty').value) || 0);
             items.push({ teil_id: parseInt(tr.dataset.teil), modus: 'auffuellen', menge });
         });
-        State.fillSel = { key, items, alle: !!document.getElementById('fill-all-rests')?.checked };
+        const alle = !!document.getElementById('fill-all-rests')?.checked;
+        State.fillSel = { key, items, alle };
         closeModal();
         updateFillButton();
-        runOptimize();
+        await runOptimize();
+        // Sonst sieht es aus, als wäre nichts passiert
+        const plans = State.optimizationResult?.schnittplaene;
+        if (items.length && plans && !plans.some(sp => sp.platzierungen.some(p => p.ist_fuellteil))) {
+            const nurAbfall = !alle && (mat?.rest_min_laenge > 0 || mat?.rest_min_breite > 0);
+            showToast(t(nurAbfall ? 'fill.nothing_fits_waste' : 'fill.nothing_fits'), 'info');
+        }
     };
 }
 

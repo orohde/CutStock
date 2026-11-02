@@ -841,6 +841,18 @@ class TestFuellteile:
         plan = self._opt(client, haupt, mid, bid, max_pro_stange=0)
         assert len(plan["schnittplaene"]) == 4
 
+    def test_max_je_stange_gibt_verwertbaren_rest_zum_auffuellen_frei(self, client):
+        # 4 × 253 lassen 976 mm frei – über dem Mindest-Restmaß, trotzdem auffüllen
+        mid, bid, haupt, _, fid = self._setup(client, rest_min=200)
+        plan = self._opt(client, haupt, mid, bid, max_pro_stange=4,
+                         fuellteile=[{"teil_id": fid, "modus": "auffuellen", "menge": 2}])
+        assert len(self._fuell(plan)) == 2
+        [g] = plan["fuell_vorschlaege"]
+        # auch eine eigene Wahl rechnet mit dem freigegebenen Rest
+        plan = client.post(f"/api/plans/{plan['plan_id']}/fill-choice", json={
+            "gruppe": g["gruppe"], "wahl": [{"teil_id": fid, "anzahl": 1}]}).json()
+        assert len(self._fuell(plan)) == 2
+
     def test_vorschlaege_und_wahl(self, client):
         mid, bid, haupt, _, fid = self._setup(client)
         f100 = self._zweites_fuellteil(client, mid)

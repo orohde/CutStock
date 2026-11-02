@@ -662,6 +662,8 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 /* ----- Dialog ----- */
 
 .fd-dialog.active { display: flex; }
+/* Eigene Ebene: fokussierte Knöpfe (fd-button:focus hat z-index 5) lägen sonst über dem Dialog */
+#modal-overlay { z-index: 1400; }
 
 .fd-dialog__content { min-width: 380px; max-width: 92vw; }
 
