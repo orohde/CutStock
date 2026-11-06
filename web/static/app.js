@@ -33,6 +33,21 @@ const State = {
 
 const API_BASE = '';
 
+// Datei aus einem Blob speichern. Den Blob-Link erst spät freigeben: Edge/Chrome
+// unter Windows fragen oft erst nach dem Speicherort oder prüfen die Datei
+// (SmartScreen) – wird der Link vorher widerrufen, bleibt nur ein abgebrochenes
+// „Nicht bestätigt ….crdownload“ zurück.
+function saveBlob(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10 * 60 * 1000);
+}
+
 // Pseudo-Eintrag für die Abfallkiste in der Lagerort-Liste
 const WASTE_BOX = '\u{1F5D1}:abfallkiste';
 
@@ -289,15 +304,7 @@ const Api = {
             showToast(t('error.pdf_failed'), 'error');
             return;
         }
-        const blob = await resp.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `CutStock-${data.projekt_name || 'Schnittplan'}.pdf`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
+        saveBlob(await resp.blob(), `CutStock-${data.projekt_name || 'Schnittplan'}.pdf`);
     },
 
     async downloadLabels(data) {
@@ -310,15 +317,7 @@ const Api = {
             showToast(t('error.pdf_failed'), 'error');
             return;
         }
-        const blob = await resp.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `CutStock-${data.filename || 'Etiketten'}.pdf`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
+        saveBlob(await resp.blob(), `CutStock-${data.filename || 'Etiketten'}.pdf`);
     },
 
     // Etiketten für Lagerstücke (vermerkt sie als gedruckt); false, wenn nichts kam
@@ -333,14 +332,7 @@ const Api = {
             return false;
         }
         const name = /filename="([^"]+)"/.exec(resp.headers.get('Content-Disposition') || '')?.[1];
-        const url = URL.createObjectURL(await resp.blob());
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = name || 'CutStock-Etiketten.pdf';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
+        saveBlob(await resp.blob(), name || 'CutStock-Etiketten.pdf');
         return true;
     },
 
@@ -356,15 +348,7 @@ const Api = {
         const blob = await resp.blob();
         const cd = resp.headers.get('Content-Disposition') || '';
         const m = cd.match(/filename="?([^"]+)"?/);
-        const name = m ? m[1] : 'cutstock_backup.zip';
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = name;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
+        saveBlob(blob, m ? m[1] : 'cutstock_backup.zip');
     },
 
     async restoreBackup(file) {
@@ -4670,14 +4654,7 @@ async function exportProject() {
     const ver = State.versionInfo ? State.versionInfo.version : '';
     const data = { version: ver, project: proj.name, copies: proj.anzahl || 1, parts };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${proj.name}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    saveBlob(blob, `${proj.name}.json`);
     showToast(t('proj.export_done'), 'info');
 }
 
