@@ -1268,3 +1268,8 @@ td.expand-toggle:hover { background: rgba(255,255,255,0.05); }
   .opt-layout > .panel-splitter { display: none; }
   .wl-panel { position: static; max-height: 40vh; }
 }
+
+/* Leeres Normalmaß (Stückzahl 0): bleibt sichtbar, steht auf der Nachbestellliste */
+.stock-zero { opacity: 0.5; }
+.stock-zero:hover, .stock-zero.selected { opacity: 0.8; }
+.reorder-row { cursor: pointer; }

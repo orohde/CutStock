@@ -1615,8 +1615,12 @@ class Database:
                 self._nrs_sperren(lagerstueck_id, [row["nr"]])
                 anzahl = 1
         ls.stueckzahl -= anzahl
-        if ls.stueckzahl <= 0:
+        if ls.stueckzahl <= 0 and ls.ist_rest:
+            # Reste verschwinden; ein Normalmaß bleibt mit 0 stehen (Nachbestellliste)
             self.delete_lagerstueck(lagerstueck_id)
+        elif ls.stueckzahl <= 0:
+            ls.stueckzahl = 0
+            self.save_lagerstueck(ls)
         else:
             self.save_lagerstueck(ls)
         return snapshot
@@ -1837,6 +1841,18 @@ class Database:
         if material.lagerort_reste:
             return [ls for ls in zeilen if not ls.ist_rest]
         return zeilen
+
+    def nachbestellliste(self) -> list[tuple[Material, Lagerstueck | None]]:
+        """Was fehlt: Normalmaße mit Stückzahl 0 und Materialien ganz ohne
+        Lagerzeile (dann ohne Maß, Lagerstück None)."""
+        erg: list[tuple[Material, Lagerstueck | None]] = []
+        for m in self.list_materials():
+            zeilen = self.list_lagerstuecke(m.id)
+            if not zeilen:
+                erg.append((m, None))
+                continue
+            erg.extend((m, ls) for ls in zeilen if not ls.ist_rest and ls.stueckzahl <= 0)
+        return erg
 
     def stueck_lagerort(self, material: Material, ls: Lagerstueck) -> str:
         """Wo ein Stück liegt: Reste am Reste-Ort des Materials, sonst am Material-Ort."""

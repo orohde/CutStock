@@ -194,6 +194,7 @@ async function fetchJSON(url, method = 'GET', body = null) {
 const Api = {
     getMaterials: () => fetchJSON('/api/materials'),
     createMaterial: (data) => fetchJSON('/api/materials', 'POST', data),
+    getReorder: () => fetchJSON('/api/stock/reorder'),
     updateMaterial: (id, data) => fetchJSON(`/api/materials/${id}`, 'PUT', data),
     deleteMaterial: (id) => fetchJSON(`/api/materials/${id}`, 'DELETE'),
     uploadMaterialImage: (id, file) => {
@@ -571,7 +572,8 @@ async function renderStock() {
             ? ` <span class="defect-badge" title="${t('defect.title')}">${defectCounts[s.id]}</span>`
             : '';
         const expandable = s.stueckzahl > 1;
-        return `<tr class="fd-table__row ${selected}" data-id="${s.id}">
+        const leer = s.stueckzahl <= 0 ? ' stock-zero' : '';
+        return `<tr class="fd-table__row ${selected}${leer}" data-id="${s.id}"${leer ? ` title="${escAttr(t('stock.zero_hint'))}"` : ''}>
             <td class="fd-table__cell num">${s.ist_rest ? `<span class="rest-badge" title="${escAttr(t('stock.is_rest'))}">${escHtml(t('labels.rest'))}</span> ` : ''}${formatDim(s.laenge)}${badge}</td>
             <td class="fd-table__cell num" style="${isPlatte ? '' : 'display:none'}">${formatDim(s.breite)}</td>
             <td class="fd-table__cell num${expandable ? ' expand-toggle' : ''}" data-stock-id="${s.id}">${expandable ? '<span class="expand-arrow">&#9654;</span> ' : ''}${s.stueckzahl}</td>
@@ -895,7 +897,7 @@ async function renderLocationContents(waste = null) {
                 return `<span><span class="piece-code" data-piece="${escAttr(p.code)}" title="${escAttr(t('loc.piece_hint'))}">${escHtml(p.code || '#' + p.nr)}</span>${res}</span>`;
             }).join('');
             const rest = b.ist_rest ? `<span class="rest-badge">${escHtml(t('labels.rest'))}</span> ` : '';
-            return `<div class="loc-line"><span class="loc-dim">${rest}${escHtml(dimText(b.laenge, b.breite))} × ${b.stueckzahl}</span>
+            return `<div class="loc-line${b.stueckzahl <= 0 ? ' stock-zero' : ''}"><span class="loc-dim">${rest}${escHtml(dimText(b.laenge, b.breite))} × ${b.stueckzahl}</span>
                 <span class="loc-codes">${codes}</span></div>`;
         }).join('') : `<div class="loc-line"><span class="loc-codes">${escHtml(t('stock.empty'))}</span></div>`;
         const rolle = m.rolle === 'reste' ? `<span class="loc-role">${escHtml(t('loc.rests_only'))}</span>` : '';
@@ -4274,6 +4276,50 @@ async function openMaterialDialog(material = null) {
 let _matImgPendingFile = null;
 let _matImgPendingDelete = false;
 
+// Nachbestellliste: leere Normalmaße und Materialien ganz ohne Bestand.
+// Klick auf eine Zeile springt zum Material, „Kopieren“ legt die Liste als Text ab.
+async function openReorderDialog() {
+    let liste;
+    try { liste = await Api.getReorder(); } catch { return; }
+    const overlay = document.getElementById('modal-overlay');
+    const body = document.getElementById('modal-body');
+    const saveBtn = document.getElementById('modal-save');
+    document.getElementById('modal-title').textContent = t('reorder.title');
+    document.getElementById('modal-cancel').textContent = t('btn.close');
+
+    const masz = r => r.stock_id == null ? t('reorder.no_stock') : dimText(r.laenge, r.breite);
+    if (!liste.length) {
+        body.innerHTML = `<p class="empty-state">${escHtml(t('reorder.empty'))}</p>`;
+        saveBtn.style.display = 'none';
+    } else {
+        const rows = liste.map(r => `<tr class="fd-table__row reorder-row" data-mat="${r.material_id}">
+            <td class="fd-table__cell">${escHtml(r.material)}${r.kuerzel ? ` <span class="mat-code">${escHtml(r.kuerzel)}</span>` : ''}</td>
+            <td class="fd-table__cell num">${escHtml(masz(r))}</td>
+            <td class="fd-table__cell">${escHtml(r.lagerort)}</td></tr>`).join('');
+        body.innerHTML = `<p class="form-hint">${escHtml(t('reorder.hint'))}</p>
+            <table class="fd-table"><thead class="fd-table__header"><tr class="fd-table__row">
+            <th class="fd-table__cell">${escHtml(t('reorder.material'))}</th>
+            <th class="fd-table__cell">${escHtml(t('reorder.size'))}</th>
+            <th class="fd-table__cell">${escHtml(t('reorder.location'))}</th>
+            </tr></thead><tbody class="fd-table__body">${rows}</tbody></table>`;
+        body.querySelectorAll('tr.reorder-row').forEach(tr => tr.addEventListener('click', () => {
+            closeModal();
+            selectMaterialRow(parseInt(tr.dataset.mat));
+        }));
+        saveBtn.style.display = '';
+        saveBtn.disabled = false;
+        saveBtn.textContent = t('reorder.copy');
+        saveBtn.onclick = () => {
+            const text = liste.map(r => `${r.material}${r.kuerzel ? ` (${r.kuerzel})` : ''}: ${masz(r)}`).join('\n');
+            navigator.clipboard.writeText(text).then(
+                () => showToast(t('reorder.copied'), 'success'),
+                () => showToast(t('reorder.copy_failed'), 'error'));
+        };
+    }
+    overlay.classList.remove('hidden');
+    overlay.classList.add('active');
+}
+
 // Auswahl "+ Neuer Lagerort…": Die Liste wird zum Textfeld, der Name wird beim
 // Speichern angelegt (der Server legt unbekannte Lagerorte an).
 const NEW_LOCATION = '\u{2795}:neuer-lagerort';
@@ -4321,7 +4367,8 @@ function openStockDialog(stock = null) {
     const fields = [
         { key: 'laenge', label: t('stock.length'), type: 'number', required: true, isDimension: true, min: 0.1 },
         { key: 'breite', label: t('stock.width'), type: 'number', isDimension: true, hidden: !isPlatte, min: 0.1 },
-        { key: 'stueckzahl', label: t('stock.qty'), type: 'number', required: true, min: 1, step: 1 },
+        { key: 'stueckzahl', label: t('stock.qty'), type: 'number', required: true, min: 0, step: 1,
+          hint: t('stock.qty_zero_hint') },
         { key: 'ist_rest', label: t('stock.is_rest'), type: 'checkbox' },
     ];
 
@@ -5370,6 +5417,7 @@ function initEvents() {
 
     // ----- Material CRUD -----
     document.getElementById('btn-mat-new')?.addEventListener('click', () => openMaterialDialog());
+    document.getElementById('btn-mat-reorder')?.addEventListener('click', openReorderDialog);
     document.getElementById('btn-mat-edit')?.addEventListener('click', () => {
         const mat = getSelectedMaterial();
         if (!mat) { showToast(t('dlg.select_material'), 'error'); return; }

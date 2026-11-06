@@ -174,7 +174,8 @@ class TestMarkPlanUndo:
             "lager_laenge": 3000, "kerf": 3,
             "marked_laengen": [820, 820], "marked_x": [0, 1050],
             "defekte": [[1000, 50]], "prev_consumed": False})
-        assert sorted(self._stock(client, mid)) == [(177, 0, 1), (1127, 0, 1)]
+        # Das verbrauchte Normalmaß bleibt mit 0 stehen (Nachbestellliste)
+        assert sorted(self._stock(client, mid)) == [(177, 0, 1), (1127, 0, 1), (3000, 0, 0)]
         self._mark(client, mid, res["lagerstueck_id"], True, 3000, 0, [], True,
                    res["rest_ids"])
         assert self._stock(client, mid) == [(3000, 0, 1)]
@@ -726,7 +727,7 @@ class TestReservierungUndResteZuerst:
         client.post(f"/api/plan-pieces/{plan['schnittplaene'][0]['platzierungen'][0]['id']}",
                     json={"gesaegt": True})
         stock = client.get(f"/api/stock?material_id={mid}").json()
-        assert [(s["laenge"], s["ist_rest"]) for s in stock] == [(1997, True)]
+        assert [(s["laenge"], s["ist_rest"]) for s in stock if s["stueckzahl"]] == [(1997, True)]
 
 
 # =====================================================================
@@ -1429,6 +1430,36 @@ class TestLager:
         assert client.get("/api/pieces/LG7-01").status_code == 404
         arten = [j["art"] for j in client.get("/api/journal?material=LG7").json()]
         assert arten.count("zugang") == 2 and "entnahme" in arten
+
+    def test_normalmass_bleibt_bei_null_und_steht_auf_nachbestellliste(self, client):
+        m = self._mat(client, "NB1")
+        client.post("/api/stock/receive", json={"material": "NB1", "laenge": 6000})
+        client.post("/api/stock/receive", json={"material": "NB1", "laenge": 2000})
+        client.post("/api/stock/receive", json={"material": "NB1", "laenge": 900,
+                                                "ist_rest": True})
+        for code in ("NB1-01", "NB1-03"):   # 6 m und der Rest sind aufgebraucht
+            assert client.post(f"/api/pieces/{code}/take", json={}).status_code == 200
+        zeilen = {(s["laenge"], s["ist_rest"]): s["stueckzahl"]
+                  for s in client.get(f"/api/stock?material_id={m['id']}").json()}
+        assert zeilen == {(6000, False): 0, (2000, False): 1}   # Rest weg, 6 m bleibt mit 0
+        liste = [r for r in client.get("/api/stock/reorder").json() if r["kuerzel"] == "NB1"]
+        assert [(r["laenge"], r["stock_id"] is not None) for r in liste] == [(6000, True)]
+        # Zugang füllt das leere Maß wieder auf, statt eine zweite Zeile anzulegen
+        client.post("/api/stock/receive", json={"material": "NB1", "laenge": 6000})
+        assert len(client.get(f"/api/stock?material_id={m['id']}").json()) == 2
+        assert not [r for r in client.get("/api/stock/reorder").json() if r["kuerzel"] == "NB1"]
+
+    def test_leeres_mass_anlegen_und_material_ohne_bestand(self, client):
+        m = self._mat(client, "NB2")
+        liste = [r for r in client.get("/api/stock/reorder").json() if r["kuerzel"] == "NB2"]
+        assert len(liste) == 1 and liste[0]["stock_id"] is None
+        r = client.post("/api/stock", json={"material_id": m["id"], "laenge": 2000,
+                                            "stueckzahl": 0})
+        assert r.status_code == 201 and r.json()["stueckzahl"] == 0
+        liste = [r for r in client.get("/api/stock/reorder").json() if r["kuerzel"] == "NB2"]
+        assert [x["laenge"] for x in liste] == [2000]
+        assert client.post("/api/stock", json={"material_id": m["id"], "laenge": 2000,
+                                               "stueckzahl": -1}).status_code == 422
 
     def test_reserviertes_stueck_nur_mit_trotzdem(self, client):
         m = self._mat(client, "LG8")

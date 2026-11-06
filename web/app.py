@@ -330,7 +330,7 @@ class StockIn(BaseModel):
     material_id: int
     laenge: float
     breite: float = 0.0
-    stueckzahl: int = 1
+    stueckzahl: int = Field(1, ge=0)   # 0 = Maß bleibt gelistet, ist aber leer
     ist_rest: bool = False
 
 
@@ -1050,6 +1050,30 @@ def delete_material_image(mid: int):
 @app.get("/api/stock", response_model=list[StockOut])
 def list_stock(material_id: Optional[int] = Query(None)):
     return [_stock_to_out(ls) for ls in get_db().list_lagerstuecke(material_id)]
+
+
+class ReorderOut(BaseModel):
+    material_id: int
+    material: str
+    kuerzel: str = ""
+    typ: str
+    lagerort: str = ""
+    stock_id: Optional[int] = None     # None = Material hat gar keine Lagerzeile
+    laenge: float = 0.0
+    breite: float = 0.0
+
+
+@app.get("/api/stock/reorder", response_model=list[ReorderOut])
+def reorder_list():
+    """Nachbestellliste: leere Normalmaße und Materialien ganz ohne Bestand."""
+    db = get_db()
+    return [ReorderOut(material_id=m.id, material=m.name, kuerzel=m.kuerzel,
+                       typ=m.typ.value,
+                       lagerort=m.lagerort,
+                       stock_id=ls.id if ls else None,
+                       laenge=ls.laenge if ls else 0.0,
+                       breite=ls.breite if ls else 0.0)
+            for m, ls in db.nachbestellliste()]
 
 
 @app.post("/api/stock", response_model=StockOut, status_code=201)
@@ -3750,6 +3774,31 @@ WEB_EXTRA_TRANSLATIONS = {
     },
     "mat.empty": {"de": "Keine Materialien vorhanden.", "en": "No materials.", "fr": "Aucun matériau.", "it": "Nessun materiale."},
     "stock.empty": {"de": "Kein Lagerbestand.", "en": "No stock.", "fr": "Pas de stock.", "it": "Nessuna scorta."},
+    "stock.qty_zero_hint": {
+        "de": "0 = Maß bleibt gelistet und steht auf der Nachbestellliste.",
+        "en": "0 = size stays listed and appears on the reorder list.",
+        "fr": "0 = la dimension reste listée et figure sur la liste de réapprovisionnement.",
+        "it": "0 = la misura resta in elenco e compare nella lista da riordinare."},
+    "stock.zero_hint": {
+        "de": "Leer – steht auf der Nachbestellliste", "en": "Empty – on the reorder list",
+        "fr": "Vide – sur la liste de réapprovisionnement", "it": "Vuoto – nella lista da riordinare"},
+    "reorder.button": {"de": "Nachbestellen …", "en": "Reorder …", "fr": "Réapprovisionner …", "it": "Riordina …"},
+    "reorder.title": {"de": "Nachbestellen", "en": "Reorder", "fr": "Réapprovisionner", "it": "Da riordinare"},
+    "reorder.hint": {
+        "de": "Leere Normalmaße und Materialien ohne Bestand. Klick auf eine Zeile öffnet das Material.",
+        "en": "Empty standard sizes and materials without stock. Click a row to open the material.",
+        "fr": "Dimensions standard vides et matériaux sans stock. Cliquez sur une ligne pour ouvrir le matériau.",
+        "it": "Misure standard vuote e materiali senza scorta. Clic su una riga apre il materiale."},
+    "reorder.empty": {"de": "Nichts nachzubestellen.", "en": "Nothing to reorder.",
+                      "fr": "Rien à réapprovisionner.", "it": "Niente da riordinare."},
+    "reorder.material": {"de": "Material", "en": "Material", "fr": "Matériau", "it": "Materiale"},
+    "reorder.size": {"de": "Maß", "en": "Size", "fr": "Dimension", "it": "Misura"},
+    "reorder.location": {"de": "Lagerort", "en": "Location", "fr": "Emplacement", "it": "Ubicazione"},
+    "reorder.no_stock": {"de": "kein Bestand", "en": "no stock", "fr": "pas de stock", "it": "nessuna scorta"},
+    "reorder.copy": {"de": "Kopieren", "en": "Copy", "fr": "Copier", "it": "Copia"},
+    "reorder.copied": {"de": "Liste kopiert.", "en": "List copied.", "fr": "Liste copiée.", "it": "Lista copiata."},
+    "reorder.copy_failed": {"de": "Kopieren nicht möglich.", "en": "Copy failed.",
+                            "fr": "Copie impossible.", "it": "Copia non riuscita."},
     "parts.empty": {"de": "Keine Teile vorhanden.", "en": "No parts.", "fr": "Aucune pièce.", "it": "Nessuna parte."},
     "blade.empty": {"de": "Keine Sägeblätter.", "en": "No blades.", "fr": "Aucune lame.", "it": "Nessuna lama."},
     "proj.edit": {"de": "Projekt bearbeiten", "en": "Edit project", "fr": "Modifier le projet", "it": "Modifica progetto"},
