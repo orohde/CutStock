@@ -23,6 +23,8 @@ On the left are the materials, on the right the stock of the selected material.
 | Saw blade | preselected in [Optimization](5-optimization.md#settings); empty = first saw blade. Calculating there with a different one makes it the new default |
 | Image | optional, shown as thumbnail and in the PDF |
 
+**Reorder …** lists empty standard sizes and materials without any stock; click a row to open the material, the list can be copied.
+
 More about locations in the [Stock](2-stock.md) tab.
 
 ## Stock
@@ -32,6 +34,8 @@ of it is in the offcut bin. Below that, one row per size with quantity; offcuts 
 
 - **New** adds pieces (length, width for panels, quantity, "is an offcut").
   Every piece gets a code automatically.
+- A used-up standard size stays listed, greyed out with quantity 0, and appears on the reorder
+  list; used-up offcuts disappear. You can also set quantity 0 by hand.
 - **Edit** / **Delete** changes or removes a stock row.
 - **▶ quantity** expands the individual pieces: code, note, defects and – with 🔒 – which project
   the piece is reserved for. **Double-click** a piece to change its note or take it out.

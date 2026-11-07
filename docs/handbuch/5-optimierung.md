@@ -149,4 +149,5 @@ Code angezeigt und können gleich als Etikett gedruckt werden.
 ## PDF
 
 Teileliste mit Anzahl, Materialbedarf mit Stück-Codes und Lagerort, gleiche Schnittmuster
-zusammengefasst; bei jedem Muster steht, wohin die Abschnitte gehören.
+zusammengefasst; bei jedem Muster steht, wohin die Abschnitte gehören. Sprache und Maßeinheit
+richten sich nach den [Einstellungen](6-einstellungen.md).

@@ -33,6 +33,7 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | GET | `/api/stock?material_id=N` | List stock (optional filter) |
 | POST | `/api/stock` | Create stock entry |
 | PUT | `/api/stock/{id}` | Update stock entry |
+| GET | `/api/stock/reorder` | Reorder list: empty standard sizes and materials without stock |
 | DELETE | `/api/stock/{id}` | Delete stock entry |
 | GET | `/api/stock/{id}/pieces` | List individual pieces (code, location, reserved for) |
 | GET | `/api/pieces/{id or code}` | Look up a piece: material, size, location, reservation |
@@ -106,7 +107,7 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | GET | `/api/version` | App version and links |
 | GET | `/api/license` | License status |
 | GET | `/api/settings` | Read settings |
-| PUT | `/api/settings` | Update settings |
+| PUT | `/api/settings` | Update settings (`unit`: `mm`, `cm`, `in`, `in_frac`; `unit_feet`: feet from 12") |
 | GET | `/api/backup` | Download database backup (ZIP) |
 | POST | `/api/restore` | Restore from backup (ZIP) |
 | GET | `/api/i18n/{lang}` | Translations for a language |

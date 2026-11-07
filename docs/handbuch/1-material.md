@@ -23,6 +23,8 @@ Links stehen die Materialien, rechts der Lagerbestand des gewählten Materials.
 | Sägeblatt | wird in der [Optimierung](5-optimierung.md#einstellungen) vorgewählt; leer = erstes Sägeblatt. Rechnet man dort mit einem anderen, wird dieses zum neuen Standard |
 | Bild | optional, erscheint als Miniatur und im PDF |
 
+**Nachbestellen …** listet leere Normalmaße und Materialien ganz ohne Bestand; ein Klick auf eine Zeile öffnet das Material, die Liste lässt sich kopieren.
+
 Mehr zu Lagerorten im Reiter [Lager](2-lager.md).
 
 ## Lagerbestand
@@ -32,6 +34,8 @@ der Abfallkiste ist. Darunter je Maß eine Zeile mit Anzahl; Reste sind markiert
 
 - **Neu** bucht Stücke ein (Länge, bei Platten Breite, Stückzahl, „ist ein Rest“).
   Jedes Stück bekommt automatisch einen Code.
+- Ist ein Normalmaß aufgebraucht, bleibt es mit Stückzahl 0 ausgegraut stehen und kommt auf die
+  Nachbestellliste; aufgebrauchte Reste verschwinden. Stückzahl 0 lässt sich auch von Hand setzen.
 - **Bearbeiten** / **Löschen** ändert bzw. löscht eine Bestandszeile.
 - **▶ Anzahl** klappt die einzelnen Stücke auf: Code, Notiz, Defekte und – mit 🔒 – für welches
   Projekt das Stück reserviert ist. **Doppelklick** auf ein Stück: Notiz ändern oder entnehmen.

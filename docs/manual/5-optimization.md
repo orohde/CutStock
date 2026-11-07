@@ -148,4 +148,5 @@ as labels right away.
 ## PDF
 
 Parts list with quantities, material requirements with piece codes and location, identical cutting
-patterns combined; every pattern says where its offcuts go.
+patterns combined; every pattern says where its offcuts go. Language and unit follow the
+[settings](6-settings.md).

@@ -33,6 +33,7 @@ Anfragen von der eigenen Web-Oberfläche (Same-Origin) und von localhost sind im
 | GET | `/api/stock?material_id=N` | Lagerbestand auflisten (optionaler Filter) |
 | POST | `/api/stock` | Lagereintrag anlegen |
 | PUT | `/api/stock/{id}` | Lagereintrag aktualisieren |
+| GET | `/api/stock/reorder` | Nachbestellliste: leere Normalmaße und Materialien ohne Bestand |
 | DELETE | `/api/stock/{id}` | Lagereintrag löschen |
 | GET | `/api/stock/{id}/pieces` | Einzelstücke auflisten (Code, Lagerort, reserviert für) |
 | GET | `/api/pieces/{id oder Code}` | Stück suchen: Material, Mass, Lagerort, Reservierung |
@@ -106,7 +107,7 @@ Anfragen von der eigenen Web-Oberfläche (Same-Origin) und von localhost sind im
 | GET | `/api/version` | App-Version und Links |
 | GET | `/api/license` | Lizenzstatus |
 | GET | `/api/settings` | Einstellungen lesen |
-| PUT | `/api/settings` | Einstellungen ändern |
+| PUT | `/api/settings` | Einstellungen ändern (`unit`: `mm`, `cm`, `in`, `in_frac`; `unit_feet`: Fuß ab 12") |
 | GET | `/api/backup` | Datenbank-Backup herunterladen (ZIP) |
 | POST | `/api/restore` | Aus Backup wiederherstellen (ZIP) |
 | GET | `/api/i18n/{lang}` | Übersetzungen für eine Sprache |
