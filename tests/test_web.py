@@ -117,6 +117,16 @@ class TestSettings:
         webapp.SETTINGS_PATH.write_text(json.dumps({"appearance": {"theme": "auto"}}))
         assert client.get("/api/settings").json()["theme"] == "system"
 
+    def test_zoll_einstellen(self, client):
+        assert client.put("/api/settings", json={"unit": "in_frac", "unit_feet": False}).status_code == 200
+        cfg = client.get("/api/settings").json()
+        assert cfg["unit"] == "in_frac" and cfg["unit_feet"] is False
+
+    def test_unbekannte_einheit_abgelehnt(self, client):
+        r = client.put("/api/settings", json={"unit": "yard"})
+        assert r.status_code == 400
+        assert client.get("/api/settings").json()["unit"] == "mm"
+
 
 # =====================================================================
 # Plan-Markierung: Zurücknehmen bucht Originalmaße zurück

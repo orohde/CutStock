@@ -2,7 +2,7 @@
 
 from core.models import Defekt
 from core.optimize import OptimierungsErgebnis, Platzierung, Schnittplan
-from core.pdf import _muster_bilden, _schnittliste_zeilen, export_pdf
+from core.pdf import _EINHEIT, _muster_bilden, _muster_titel, _schnittliste_zeilen, export_pdf
 
 
 def _stange(*laengen, defekte=None, stueck_nr=0):
@@ -53,6 +53,24 @@ class TestSchnittliste:
         zeilen = _schnittliste_zeilen(_stange(100, 200, 300, 400), 150)
         assert zeilen[0] == "1 × Teil 100 (100 mm)"
         assert zeilen[-1] == "1 × Teil 400 (400 mm)   ·   Rest 988 mm"
+
+    def test_zoll_als_bruch(self):
+        token = _EINHEIT.set(("in_frac", True))
+        try:
+            zeilen = _schnittliste_zeilen(_stange(774.7), 1000)
+            titel = _muster_titel(_muster_bilden([_stange(774.7)], [], True)[0], "Stange")
+        finally:
+            _EINHEIT.reset(token)
+        assert zeilen[0].startswith('1 × Teil 774.7 (2\' 6 1/2")')
+        assert titel == '1 × Stange 6\' 6 3/4"'
+
+
+def test_export_in_zoll(tmp_path):
+    erg = OptimierungsErgebnis([_stange(375.5, 307.4)])
+    pfad = tmp_path / "plan.pdf"
+    export_pdf(erg, pfad, "Test", is_1d=True, unit="in_frac")
+    assert pfad.read_bytes().startswith(b"%PDF")
+    assert _EINHEIT.get() == ("mm", True)   # Einheit gilt nur für diesen Export
 
 
 def test_export_erzeugt_pdf(tmp_path):

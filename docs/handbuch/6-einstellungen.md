@@ -11,7 +11,8 @@ ohne Speichern-Knopf.
 
 | Gruppe | Einstellungen |
 |---------|---------------|
-| Allgemein | Sprache (Deutsch, English, Français, Italiano), Maßeinheit (mm/cm), Farbschema (Auto, hell, dunkel) |
+| Allgemein | Sprache (Deutsch, English, Français, Italiano), Maßeinheit (mm, cm, Zoll dezimal, Zoll als Bruch), Farbschema (Auto, hell, dunkel) |
+| | **Zoll als Bruch** – auf 1/16" gerundet, ab 12" wahlweise in Fuß und Zoll (`2' 1/4"`). Eingabe auch als `1 3/4`, `1-3/4"`, `2' 1/4"` oder `8ft`. Gespeichert wird immer in Millimetern |
 | Sägen | Sägeblätter mit Name und Schnittbreite; welches ein Material nimmt, steht am [Material](1-material.md) |
 | Lager | **Pläne reservieren ihr Material** – eingeplante Stücke werden von anderen Projekten nicht verplant |
 | | **Nummern-Sperrfrist** – frei gewordene Stücknummern erst nach so vielen Tagen neu vergeben (0 = sofort) |

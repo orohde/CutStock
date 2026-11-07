@@ -5,7 +5,7 @@
 // ===========================================================================
 
 const State = {
-    settings: { language: 'de', unit: 'mm', theme: 'system', hotkeys: {},
+    settings: { language: 'de', unit: 'mm', unit_feet: true, theme: 'system', hotkeys: {},
                  api_enabled: false, api_port: 8421, api_key: '' },
     translations: {},
     materials: [],
@@ -126,6 +126,33 @@ const applyTranslations = () => {
 // 4. UNIT HELPERS
 // ===========================================================================
 
+// Gespeichert wird immer in mm. Einheiten: mm, cm, in (Zoll dezimal),
+// in_frac (Zoll als Bruch, 1/16", ab 12" mit Fuß) – gleich wie core/units.py.
+const FRAC_DEN = 16;
+const isImperial = () => ['in', 'in_frac'].includes(State.settings.unit);
+
+// Zoll als Bruch mit Zollzeichen: 3/4", 30 1/2", 2' 1/4"
+function inchFraction(inches) {
+    const sixteenths = Math.round(Math.abs(inches) * FRAC_DEN);
+    let whole = Math.floor(sixteenths / FRAC_DEN);
+    const rest = sixteenths % FRAC_DEN;
+    let frac = '';
+    if (rest) {
+        let g = rest, b = FRAC_DEN;
+        while (b) [g, b] = [b, g % b];
+        frac = `${rest / g}/${FRAC_DEN / g}`;
+    }
+    let ft = 0;
+    if (State.settings.unit_feet !== false && whole >= 12) {
+        ft = Math.floor(whole / 12);
+        whole -= ft * 12;
+    }
+    const zoll = whole && frac ? `${whole} ${frac}` : (frac || String(whole));
+    const txt = ft ? `${ft}' ${zoll}"` : `${zoll}"`;
+    return (inches < 0 && sixteenths ? '-' : '') + txt;
+}
+
+// Maßzahl in der eingestellten Einheit (für Tabellen, Pläne, Eingabefelder)
 const toDisplay = (mm) => {
     if (mm == null || mm === '') return '';
     const v = parseFloat(mm);
@@ -133,26 +160,68 @@ const toDisplay = (mm) => {
     switch (State.settings.unit) {
         case 'cm': return +(v / 10).toFixed(2);
         case 'in': return +(v / 25.4).toFixed(3);
+        case 'in_frac': return inchFraction(v / 25.4);
         default: return +v.toFixed(1);
     }
 };
 
-const toMm = (displayVal) => {
-    const v = parseFloat(displayVal);
-    if (isNaN(v)) return 0;
-    switch (State.settings.unit) {
-        case 'cm': return +(v * 10).toFixed(2);
-        case 'in': return +(v * 25.4).toFixed(2);
-        default: return +v.toFixed(2);
+// Eingabe in der eingestellten Einheit lesen → mm (NaN, wenn unlesbar).
+// Zoll versteht 24.25, 1 3/4, 1-3/4", 3/4 und Fuß wie 2' 1/4" oder 8ft.
+function parseLength(text) {
+    if (text == null) return NaN;
+    let s = String(text).trim().replace(',', '.');
+    if (s === '') return NaN;
+    if (!isImperial()) {
+        if (!/^-?\d*\.?\d+$/.test(s)) return NaN;
+        const v = parseFloat(s);
+        return State.settings.unit === 'cm' ? v * 10 : v;
     }
+    s = s.toLowerCase().replace(/[″”“]/g, '"').replace(/[′’‘]/g, "'").replace(/''/g, '"');
+    let feet = 0;
+    const fm = s.match(/^(\d*\.?\d+)\s*(?:'|ft\.?|feet|foot)\s*-?\s*/);
+    if (fm) { feet = parseFloat(fm[1]); s = s.slice(fm[0].length); }
+    s = s.replace(/\s*(?:"|in\.?|inch(?:es)?)$/, '').trim();
+    let inch = 0;
+    if (s !== '') {
+        const m = s.match(/^(?:(\d*\.?\d+)(?:\s+|\s*-\s*)(\d+)\s*\/\s*(\d+)|(\d+)\s*\/\s*(\d+)|(\d*\.?\d+))$/);
+        if (!m) return NaN;
+        if (m[1] !== undefined) inch = parseFloat(m[1]) + (+m[2]) / (+m[3]);
+        else if (m[4] !== undefined) inch = (+m[4]) / (+m[5]);
+        else inch = parseFloat(m[6]);
+        if (!isFinite(inch)) return NaN;
+    } else if (!fm) return NaN;
+    return (feet * 12 + inch) * 25.4;
+}
+
+const toMm = (displayVal) => {
+    const v = typeof displayVal === 'number'
+        ? (State.settings.unit === 'cm' ? displayVal * 10 : isImperial() ? displayVal * 25.4 : displayVal)
+        : parseLength(displayVal);
+    if (isNaN(v)) return 0;
+    // Zoll genauer speichern, damit 1/16" (1,5875 mm) exakt bleibt
+    return +v.toFixed(isImperial() ? 4 : 2);
 };
 
-const unitLabel = () => State.settings.unit || 'mm';
+// Kurzname der Einheit für Spaltenköpfe und Feldbeschriftungen
+const unitLabel = () => (isImperial() ? 'in' : (State.settings.unit || 'mm'));
+// Was hinter einer Maßzahl steht (beim Bruch steckt das Zollzeichen schon drin)
+const unitSuffix = () => ({ cm: ' cm', in: '"', in_frac: '' }[State.settings.unit] ?? ' mm');
 
 const formatDim = (mm) => {
     if (mm == null) return '';
-    return `${toDisplay(mm)} ${unitLabel()}`;
+    return `${toDisplay(mm)}${unitSuffix()}`;
 };
+
+// Länge × Breite: "800 × 600 mm", "31.5\" × 23.625\"", "2' 7 1/2\" × 23 5/8\""
+function formatDims(laenge, breite, sep = ' × ') {
+    if (!(breite > 0)) return formatDim(laenge);
+    return isImperial()
+        ? `${formatDim(laenge)}${sep}${formatDim(breite)}`
+        : `${toDisplay(laenge)}${sep}${toDisplay(breite)}${unitSuffix()}`;
+}
+
+// Maßfelder: im Zoll-Modus Textfeld (Brüche, Fuß), sonst Zahlenfeld
+const dimInputAttrs = () => (isImperial() ? 'type="text" inputmode="text" autocomplete="off"' : 'type="number" step="any"');
 
 // ===========================================================================
 // 5. API FUNCTIONS
@@ -1470,6 +1539,11 @@ async function loadSammel(matId) {
 
 function formatMenge(wert, is1D) {
     const loc = State.settings.language || undefined;
+    if (isImperial()) {
+        return is1D
+            ? `${(wert / 304.8).toLocaleString(loc, { maximumFractionDigits: 1 })} ft`
+            : `${(wert / 92903.04).toLocaleString(loc, { maximumFractionDigits: 1 })} ft²`;
+    }
     return is1D
         ? `${(wert / 1000).toLocaleString(loc, { maximumFractionDigits: 2 })} m`
         : `${(wert / 1e6).toLocaleString(loc, { maximumFractionDigits: 2 })} m²`;
@@ -1690,7 +1764,7 @@ function renderOptResults({ quiet = false } = {}) {
 
         const materialbedarf = result.materialbedarf || [];
         const bedarfTxt = materialbedarf.map(m => m.anzahl + '× ' + (m.breite > 0
-            ? formatDim(m.laenge) + ' × ' + formatDim(m.breite) : formatDim(m.laenge))).join(', ');
+            ? formatDims(m.laenge, m.breite) : formatDim(m.laenge))).join(', ');
         // Zu große Teile getrennt: Nachkaufen derselben Größe hilft dort nicht
         const zuLang = [...(result.zu_lang || [])];
         const fehlt = missing.filter(l => {
@@ -2200,6 +2274,9 @@ function renderSettings() {
 
     if (langSel) langSel.value = State.settings.language;
     if (unitSel) unitSel.value = State.settings.unit;
+    const feetChk = document.getElementById('settings-unit-feet');
+    if (feetChk) feetChk.checked = State.settings.unit_feet !== false;
+    document.getElementById('settings-unit-feet-row')?.classList.toggle('hidden', State.settings.unit !== 'in_frac');
     if (themeSel) themeSel.value = State.settings.theme;
 
     renderLabelFormatSelect();
@@ -2210,7 +2287,10 @@ function renderSettings() {
     const wasteChk = document.getElementById('settings-waste-keep');
     if (wasteChk) wasteChk.checked = !!State.settings.waste_keep;
     const wasteMin = document.getElementById('settings-waste-min');
-    if (wasteMin) wasteMin.value = toDisplay(State.settings.waste_min ?? 50);
+    if (wasteMin) {
+        wasteMin.type = isImperial() ? 'text' : 'number';
+        wasteMin.value = toDisplay(State.settings.waste_min ?? 50);
+    }
     const wasteLbl = document.getElementById('settings-waste-min-label');
     if (wasteLbl) wasteLbl.textContent = t('set.waste_min', { unit: unitLabel() });
     updateWasteMinVisibility();
@@ -3208,9 +3288,7 @@ function pieceCode(mat, nr) {
 }
 
 function dimText(laenge, breite) {
-    return breite > 0
-        ? `${toDisplay(laenge)} × ${toDisplay(breite)} ${unitLabel()}`
-        : formatDim(laenge);
+    return formatDims(laenge, breite);
 }
 
 // One label per placed part; the ID references the panel/bar in the plan
@@ -3411,9 +3489,7 @@ function renderSawPieceList(plan, canvas) {
     const colorMap = buildColorMap();
     list.innerHTML = order.map(p => {
         const idx = plan.platzierungen.indexOf(p);
-        const dims = p.breite > 0
-            ? `${toDisplay(p.laenge)}×${toDisplay(p.breite)} ${unitLabel()}`
-            : formatDim(p.laenge);
+        const dims = formatDims(p.laenge, p.breite, '×');
         const cls = ['saw-piece', p._done ? 'done' : '', p === nextPiece ? 'saw-next' : '']
             .filter(Boolean).join(' ');
         const badge = p === nextPiece ? `<span class="saw-next-badge">${t('saw.next_piece')}</span>` : '';
@@ -3578,7 +3654,7 @@ function trimSinglePiece(p, x0, y0, x1, y1, out, kerf = 0) {
 // ("at X from left"); the resulting dimensions deduct the kerf on the far
 // side of the cut (see the kerf convention at computeGuillotineCuts).
 function buildCutSequence(plan, is1D, kerf) {
-    const dim = (l, b) => `${toDisplay(l)}×${toDisplay(b)}`;
+    const dim = (l, b) => (isImperial() ? formatDims(l, b, '×') : `${toDisplay(l)}×${toDisplay(b)}`);
     if (is1D) {
         // Chop saw: cut pieces to length one after another, left to right.
         // Defects are cut out as waste at their position in between.
@@ -4034,14 +4110,15 @@ function openModal(title, fields, data, onSave) {
             if (grp && grp.style.display === 'none') return;
             let val;
             if (f.type === 'number') {
-                val = el.value === '' ? null : parseFloat(el.value);
-                if (f.required && (val === null || isNaN(val))) {
+                const raw = el.value.trim();
+                val = raw === '' ? null : (f.isDimension ? parseLength(raw) : parseFloat(raw));
+                if ((f.required && val === null) || (val !== null && isNaN(val))) {
                     el.style.borderColor = 'var(--sapNegativeColor, #d20a0a)';
                     valid = false;
                     return;
                 }
                 if (f.isDimension) {
-                    val = val !== null ? toMm(val) : 0;
+                    val = val !== null ? +val.toFixed(isImperial() ? 4 : 2) : 0;
                 }
                 if (val !== null && f.min != null && val < f.min) {
                     el.style.borderColor = 'var(--sapNegativeColor, #d20a0a)';
@@ -4092,8 +4169,11 @@ function fieldHtml(f, data) {
         input = `<select name="${f.key}" class="cs-select">${opts}</select>`;
     } else if (f.type === 'checkbox') {
         input = `<input type="checkbox" name="${f.key}" class="cs-checkbox"${val ? ' checked' : ''}>`;
+    } else if (f.type === 'number' && f.isDimension) {
+        const ph = f.placeholder ?? (isImperial() ? (State.settings.unit === 'in_frac' ? '30 1/2' : '30.5') : '');
+        input = `<input ${dimInputAttrs()} name="${f.key}" value="${escAttr(displayVal)}"${req} placeholder="${escAttr(ph)}">`;
     } else if (f.type === 'number') {
-        const step = f.step ?? (f.isDimension ? 'any' : 1);
+        const step = f.step ?? 1;
         const min = f.min != null ? ` min="${f.min}"` : '';
         const ph = f.placeholder ?? '';
         input = `<input type="number" name="${f.key}" value="${displayVal}" step="${step}"${min}${req} placeholder="${ph}">`;
@@ -4776,6 +4856,11 @@ function splitCsvLine(line, delim) {
 
 function parseCsvNumber(s, delim) {
     if (s == null || s === '') return 0;
+    if (isImperial()) {
+        // Zoll: Brüche und Fuß ("30 1/2", "2' 1/4\"") – Ergebnis in Zoll
+        const mm = parseLength(String(s).replace(',', '.'));
+        return isNaN(mm) ? 0 : mm / 25.4;
+    }
     s = String(s).replace(/\s/g, '');
     if (delim !== ',') s = s.replace(',', '.');  // allow decimal comma
     const v = parseFloat(s);
@@ -5079,10 +5164,10 @@ function openTrapezoidHelper() {
         const dLEl = body.querySelector('[name="depth_left"]');
         const dREl = body.querySelector('[name="depth_right"]');
         const offEl = body.querySelector('[name="offset"]');
-        const edge = parseFloat(edgeEl?.value) || 0;
-        const dL = parseFloat(dLEl?.value) || 0;
-        const dR = parseFloat(dREl?.value) || 0;
-        const off = parseFloat(offEl?.value) || 0;
+        const edge = parseLength(edgeEl?.value) || 0;
+        const dL = parseLength(dLEl?.value) || 0;
+        const dR = parseLength(dREl?.value) || 0;
+        const off = parseLength(offEl?.value) || 0;
 
         if (!edge || (!dL && !dR)) {
             previewDiv.innerHTML = '';
@@ -5104,9 +5189,10 @@ function openTrapezoidHelper() {
         const tL = dL / rectH * h;
         const tR = dR / rectH * h;
 
-        const dimText = t('trap.result_dim', { w: toDisplay(rectW * (toMm(1) || 1)), h: toDisplay(rectH * (toMm(1) || 1)), unit: unitLabel() });
-        // We work in display units already since edge/dL/dR are in display units from the input
-        const dimTextSimple = `${t('trap.result_dim', { w: edge, h: +(maxD + off).toFixed(1), unit: unitLabel() })}`;
+        // Eingaben sind schon in mm umgerechnet (parseLength)
+        const dimTextSimple = isImperial()
+            ? t('trap.result_dim', { w: formatDim(rectW), h: formatDim(rectH), unit: '' }).trim()
+            : t('trap.result_dim', { w: toDisplay(rectW), h: toDisplay(rectH), unit: unitLabel() });
 
         previewDiv.innerHTML = `
             <svg width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">
@@ -5636,7 +5722,8 @@ function initEvents() {
         try { await Api.updateSettings({ waste_keep: e.target.checked }); } catch { /* non-critical */ }
     });
     document.getElementById('settings-waste-min')?.addEventListener('change', async (e) => {
-        const v = Math.max(0, toMm(e.target.value));
+        const mm = parseLength(e.target.value);
+        const v = isNaN(mm) ? (State.settings.waste_min ?? 50) : Math.max(0, toMm(e.target.value));
         State.settings.waste_min = v;
         e.target.value = toDisplay(v);
         try { await Api.updateSettings({ waste_min: v }); } catch { /* non-critical */ }
@@ -5691,16 +5778,20 @@ function initEvents() {
         } catch { /* non-critical */ }
     });
 
+    const rerenderUnits = () => {
+        renderSettings();
+        renderBlades();
+        if (State.optimizationResult) renderOptResults({ quiet: true });
+    };
     document.getElementById('settings-unit')?.addEventListener('change', async (e) => {
         State.settings.unit = e.target.value;
-        try {
-            await Api.updateSettings({ unit: e.target.value });
-            // Re-render tables to show new units
-            const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
-            if (activeTab === 'material') { renderMaterials(); }
-            else if (activeTab === 'stock') { renderLocations(); }
-            else if (activeTab === 'projects') { renderParts(); }
-        } catch { /* non-critical */ }
+        rerenderUnits();
+        try { await Api.updateSettings({ unit: e.target.value }); } catch { /* non-critical */ }
+    });
+    document.getElementById('settings-unit-feet')?.addEventListener('change', async (e) => {
+        State.settings.unit_feet = e.target.checked;
+        rerenderUnits();
+        try { await Api.updateSettings({ unit_feet: e.target.checked }); } catch { /* non-critical */ }
     });
 
     document.getElementById('settings-theme')?.addEventListener('change', async (e) => {

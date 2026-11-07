@@ -53,6 +53,8 @@ from core.optimize import (
     freie_rechtecke_2d,
 )
 from core.pdf import export_pdf
+from core import units
+from core.units import UNITS, normalize_unit
 from ui.i18n import LANGUAGES, TRANSLATIONS
 
 # ---------------------------------------------------------------------------
@@ -638,7 +640,8 @@ class PieceLabelsIn(BaseModel):
 
 class SettingsIn(BaseModel):
     language: Optional[str] = None
-    unit: Optional[str] = None
+    unit: Optional[str] = None              # mm | cm | in | in_frac
+    unit_feet: Optional[bool] = None        # in_frac: ab 12" in Fuß und Zoll
     theme: Optional[str] = None
     hotkeys: Optional[dict[str, str]] = None
     label_format: Optional[str] = None
@@ -896,7 +899,8 @@ def _get_settings_dict() -> dict:
     theme = s.value("appearance/theme", "system")
     return {
         "language": s.value("appearance/language", "en"),
-        "unit": s.value("appearance/unit", "mm"),
+        "unit": normalize_unit(s.value("appearance/unit", "mm")),
+        "unit_feet": bool(s.value("appearance/unit_feet", True)),
         # "auto" stammt aus älteren Versionen des Dropdowns
         "theme": "system" if theme == "auto" else theme,
         "hotkeys": s.value("web/hotkeys", {}),
@@ -917,12 +921,16 @@ def _get_settings_dict() -> dict:
 def _update_settings(data: SettingsIn):
     from core.settings import Settings
 
+    if data.unit is not None and data.unit not in UNITS:
+        raise _fehler(400, "einheit_unbekannt", f"Unknown unit, use one of: {', '.join(UNITS)}")
     settings_path = DB_PATH.parent / "settings.json"
     s = Settings(settings_path)
     if data.language is not None:
         s.setValue("appearance/language", data.language)
     if data.unit is not None:
         s.setValue("appearance/unit", data.unit)
+    if data.unit_feet is not None:
+        s.setValue("appearance/unit_feet", data.unit_feet)
     if data.theme is not None:
         s.setValue("appearance/theme", data.theme)
     if data.hotkeys is not None:
@@ -3422,6 +3430,7 @@ def _pdf_rest_ziel(material_id: int):
 @app.post("/api/pdf")
 def generate_pdf(req: PdfRequest):
     ergebnis = _out_to_ergebnis(req.ergebnis)
+    cfg = _get_settings_dict()
 
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp_path = tmp.name
@@ -3440,6 +3449,8 @@ def generate_pdf(req: PdfRequest):
             material_bild=(get_db().get_material_image(req.material_id) or b""
                            if req.material_id else b""),
             rest_ziel=_pdf_rest_ziel(req.material_id),
+            unit=cfg["unit"],
+            feet=cfg["unit_feet"],
         )
         return FileResponse(
             tmp_path,
@@ -3491,12 +3502,9 @@ def generate_labels(req: LabelsRequest):
     return _labels_pdf([l.model_dump() for l in req.labels], req.filename, req.startfeld)
 
 
-def _mass_text(laenge: float, breite: float, unit: str) -> str:
+def _mass_text(laenge: float, breite: float, unit: str, feet: bool = True) -> str:
     """Maß wie in der Oberfläche: "640 mm" bzw. "800 × 600 mm" in der eingestellten Einheit."""
-    teiler, stellen = {"cm": (10, 2), "in": (25.4, 3)}.get(unit, (1, 1))
-    zahl = lambda v: f"{v / teiler:.{stellen}f}".rstrip("0").rstrip(".")
-    einheit = unit if unit in ("cm", "in") else "mm"
-    return f"{zahl(laenge)} × {zahl(breite)} {einheit}" if breite > 0 else f"{zahl(laenge)} {einheit}"
+    return units.dimensions(laenge, breite, unit, feet)
 
 
 class LabelFormatOut(BaseModel):
@@ -3586,8 +3594,9 @@ def piece_labels(req: PieceLabelsIn):
         raise _fehler(404, "keine_stuecke", "No pieces match the selection")
     stuecke = stuecke[:1000]
 
-    unit = str(_get_settings_dict().get("unit") or "mm")
-    labels = [{"title": m.name, "line1": _mass_text(ls.laenge, ls.breite, unit),
+    cfg = _get_settings_dict()
+    unit, feet = cfg["unit"], cfg["unit_feet"]
+    labels = [{"title": m.name, "line1": _mass_text(ls.laenge, ls.breite, unit, feet),
                "line2": db.stueck_lagerort(m, ls), "id_text": stueck_code(m.kuerzel, e.nr)}
               for m, ls, e in stuecke]
     namen = {m.name for m, _, _ in stuecke}
@@ -3829,6 +3838,9 @@ WEB_EXTRA_TRANSLATIONS = {
     "set.api_key_copied": {"de": "API-Key kopiert.", "en": "API key copied.", "fr": "Clé API copiée.", "it": "Chiave API copiata."},
     "set.unit_mm": {"de": "Millimeter (mm)", "en": "Millimetres (mm)", "fr": "Millimètres (mm)", "it": "Millimetri (mm)"},
     "set.unit_cm": {"de": "Zentimeter (cm)", "en": "Centimetres (cm)", "fr": "Centimètres (cm)", "it": "Centimetri (cm)"},
+    "set.unit_in": {"de": "Zoll dezimal (1.75\")", "en": "Inches, decimal (1.75\")", "fr": "Pouces décimaux (1.75\")", "it": "Pollici decimali (1.75\")"},
+    "set.unit_in_frac": {"de": "Zoll als Bruch (1 3/4\")", "en": "Inches, fractional (1 3/4\")", "fr": "Pouces en fractions (1 3/4\")", "it": "Pollici in frazioni (1 3/4\")"},
+    "set.unit_feet": {"de": "Ab 12\" in Fuß und Zoll:", "en": "Feet and inches from 12\":", "fr": "Pieds et pouces dès 12\" :", "it": "Piedi e pollici da 12\":"},
     "set.theme_system": {"de": "Auto (System)", "en": "Auto (system)", "fr": "Auto (système)", "it": "Auto (sistema)"},
     "set.theme_light": {"de": "Hell", "en": "Light", "fr": "Clair", "it": "Chiaro"},
     "set.theme_dark": {"de": "Dunkel", "en": "Dark", "fr": "Sombre", "it": "Scuro"},
@@ -4049,10 +4061,16 @@ WEB_EXTRA_TRANSLATIONS = {
         "it": "Lingua dell’interfaccia, dei PDF e delle etichette.",
     },
     "set.h_unit": {
-        "de": "Wie Längen angezeigt und eingegeben werden. Gespeichert wird immer in Millimetern.",
-        "en": "How lengths are shown and entered. Everything is stored in millimetres.",
-        "fr": "Comment les longueurs sont affichées et saisies. Tout est enregistré en millimètres.",
-        "it": "Come vengono mostrate e inserite le lunghezze. Tutto viene salvato in millimetri.",
+        "de": "Wie Längen angezeigt und eingegeben werden. Gespeichert wird immer in Millimetern. In Zoll gehen auch Brüche und Fuß: 1 3/4, 1-3/4\", 2' 1/4\", 8ft. Brüche werden auf 1/16\" gerundet.",
+        "en": "How lengths are shown and entered. Everything is stored in millimetres. In inches you can also type fractions and feet: 1 3/4, 1-3/4\", 2' 1/4\", 8ft. Fractions are rounded to 1/16\".",
+        "fr": "Comment les longueurs sont affichées et saisies. Tout est enregistré en millimètres. En pouces, les fractions et les pieds sont acceptés : 1 3/4, 1-3/4\", 2' 1/4\", 8ft. Les fractions sont arrondies au 1/16\".",
+        "it": "Come vengono mostrate e inserite le lunghezze. Tutto viene salvato in millimetri. In pollici si possono inserire anche frazioni e piedi: 1 3/4, 1-3/4\", 2' 1/4\", 8ft. Le frazioni sono arrotondate a 1/16\".",
+    },
+    "set.h_unit_feet": {
+        "de": "Längen ab 12\" als Fuß und Zoll zeigen (2' 1/4\" statt 24 1/4\").",
+        "en": "Show lengths from 12\" as feet and inches (2' 1/4\" instead of 24 1/4\").",
+        "fr": "Afficher les longueurs à partir de 12\" en pieds et pouces (2' 1/4\" au lieu de 24 1/4\").",
+        "it": "Mostra le lunghezze da 12\" in piedi e pollici (2' 1/4\" invece di 24 1/4\").",
     },
     "set.h_theme": {
         "de": "Hell, dunkel oder wie im Betriebssystem eingestellt.",

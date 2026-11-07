@@ -11,7 +11,8 @@ save button.
 
 | Group | Settings |
 |---------|---------------|
-| General | Language (Deutsch, English, Français, Italiano), unit (mm/cm), colour scheme (auto, light, dark) |
+| General | Language (Deutsch, English, Français, Italiano), unit (mm, cm, decimal inches, fractional inches), colour scheme (auto, light, dark) |
+| | **Fractional inches** – rounded to 1/16", optionally shown as feet and inches from 12" (`2' 1/4"`). You can type `1 3/4`, `1-3/4"`, `2' 1/4"` or `8ft`. Everything is stored in millimetres |
 | Sawing | Saw blades with name and kerf; which one a material uses is set on the [material](1-material.md) |
 | Stock | **Saved plans reserve their material** – planned pieces are not planned by other projects |
 | | **Number lock period** – freed piece numbers are reused only after this many days (0 = right away) |

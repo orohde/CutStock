@@ -11,6 +11,7 @@ Kompaktes Layout:
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
@@ -23,6 +24,7 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
+from core import units
 from core.optimize import OptimierungsErgebnis, Schnittplan
 
 PAGE_W, PAGE_H = landscape(A4)
@@ -69,9 +71,26 @@ class _Muster:
     codes: list[str] = field(default_factory=list)   # Stück-Codes aller Exemplare
 
 
+# Einheit des laufenden Exports (Einheit, Fuß ja/nein) – siehe core/units.py
+_EINHEIT: ContextVar[tuple[str, bool]] = ContextVar("pdf_einheit", default=("mm", True))
+
+
 def _fmt(v: float) -> str:
-    """Maß ohne überflüssige Nachkommastelle: 2000, 375.5."""
-    return f"{v:.1f}".rstrip("0").rstrip(".")
+    """Maßzahl in der eingestellten Einheit: 2000, 375.5, 24.25, 2' 1/4"."""
+    unit, feet = _EINHEIT.get()
+    return units.number(v, unit, feet)
+
+
+def _len(v: float) -> str:
+    """Ein Maß mit Einheit: 375.5 mm, 2' 1/4"."""
+    unit, feet = _EINHEIT.get()
+    return units.length(v, unit, feet)
+
+
+def _masse(laenge: float, breite: float = 0.0) -> str:
+    """Länge × Breite mit Einheit: 800 × 600 mm, 31 1/2" × 23 5/8"."""
+    unit, feet = _EINHEIT.get()
+    return units.dimensions(laenge, breite, unit, feet)
 
 
 def _latin1(txt: str) -> str:
@@ -138,14 +157,12 @@ def _muster_bilden(plaene: list[Schnittplan], folgen: list[list[str]],
 
 def _muster_titel(m: _Muster, art: str) -> str:
     plan = m.plan
-    mass = _fmt(plan.lager_laenge)
-    if plan.lager_breite > 0:
-        mass += f" x {_fmt(plan.lager_breite)}"
+    mass = _masse(plan.lager_laenge, plan.lager_breite)
     codes = _codes_text(m.codes)
     if plan.defekte:
         nr = f" {codes}" if codes else ""
-        return f"{art}{nr} – {mass} mm (mit Defekt)"
-    return f"{m.anzahl} × {art} {mass} mm" + (f" – {codes}" if codes else "")
+        return f"{art}{nr} – {mass} (mit Defekt)"
+    return f"{m.anzahl} × {art} {mass}" + (f" – {codes}" if codes else "")
 
 
 def _codes_text(codes: list[str], max_n: int = 8) -> str:
@@ -172,7 +189,19 @@ def export_pdf(
     material_bild: bytes = b"",
     nach_projekt: bool = False,
     rest_ziel: RestZiel | None = None,
+    unit: str = "mm",
+    feet: bool = True,
 ):
+    token = _EINHEIT.set((units.normalize_unit(unit), feet))
+    try:
+        _export_pdf(ergebnis, path, projekt_name, material_name, saegeblatt_name, is_1d,
+                    schnittfolgen, schnittfolge_titel, material_bild, nach_projekt, rest_ziel)
+    finally:
+        _EINHEIT.reset(token)
+
+
+def _export_pdf(ergebnis, path, projekt_name, material_name, saegeblatt_name, is_1d,
+                schnittfolgen, schnittfolge_titel, material_bild, nach_projekt, rest_ziel):
     c = canvas.Canvas(str(path), pagesize=landscape(A4))
     c.setTitle(f"CutStock – {projekt_name}")
 
@@ -354,9 +383,8 @@ def _draw_materialbedarf(c: canvas.Canvas, cur: _PageCursor,
         cur.advance(12)
     c.setFont("Helvetica", 9)
     for (laenge, breite), plaene in sorted(bedarf.items(), reverse=True):
-        mass = _fmt(laenge) + (f" x {_fmt(breite)}" if breite > 0 else "")
         c.drawRightString(x + 20, cur.y, f"{len(plaene)} ×")
-        c.drawString(x + 24, cur.y, f"{mass} mm")
+        c.drawString(x + 24, cur.y, _masse(laenge, breite))
         orte = sorted({p.lagerort for p in plaene if p.lagerort})
         info = _codes_text([p.stueck_code for p in plaene if p.stueck_code])
         if orte:
@@ -380,7 +408,7 @@ def _reste_text_2d(plan: Schnittplan, rest_ziel: RestZiel | None) -> str:
     for laenge, breite in ((r[0], r[1]) for r in reste):
         ziel = rest_ziel(laenge, breite)
         if ziel == "lager":
-            teile.append(f"{_fmt(laenge)} × {_fmt(breite)} mm {ZIEL_TEXT[ziel]}")
+            teile.append(f"{_masse(laenge, breite)} {ZIEL_TEXT[ziel]}")
         else:
             klein[ziel] = klein.get(ziel, 0) + 1
     teile += [f"{n} × {ZIEL_TEXT[z]}" for z, n in klein.items()]
@@ -507,16 +535,16 @@ def _schnittliste_zeilen(plan: Schnittplan, max_w: float,
     for p in plan.platzierungen:
         key = (p.teil_label, round(p.laenge, 1))
         anzahl[key] = anzahl.get(key, 0) + 1
-    teile = [f"{n} × {_latin1(label)} ({_fmt(laenge)} mm)"
+    teile = [f"{n} × {_latin1(label)} ({_len(laenge)})"
              for (label, laenge), n in anzahl.items()]
     if rest_ziel is None:
         rest = sum(r[0] for r in plan.reste if r)
         if rest > 0:
-            teile.append(f"Rest {_fmt(rest)} mm")
+            teile.append(f"Rest {_len(rest)}")
     else:
         for r in plan.reste:
             if r and r[0] > 0.5:
-                teile.append(f"Rest {_fmt(r[0])} mm {ZIEL_TEXT[rest_ziel(r[0], 0.0)]}")
+                teile.append(f"Rest {_len(r[0])} {ZIEL_TEXT[rest_ziel(r[0], 0.0)]}")
 
     sep = "   ·   "
     zeilen: list[str] = []
