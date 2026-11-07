@@ -121,3 +121,26 @@ def test_fuellteile_eigener_abschnitt(tmp_path, monkeypatch):
     export_pdf(erg, pfad, projekt_name="Regal", is_1d=True)
     i = texte.index("Füllteile (1) – zählen bei ihrem eigenen Projekt")
     assert "Seite" in texte[:i] and "Leiste" in texte[i:]   # getrennt, ohne „→ Projekt“
+
+
+
+def test_texte_englisch():
+    from core.pdf import _SPRACHE, _t
+    token, token_e = _SPRACHE.set("en"), _EINHEIT.set(("in_frac", True))
+    try:
+        titel = _muster_titel(_muster_bilden([_stange(774.7)], [], True)[0], _t("bar"))
+        zeilen = _schnittliste_zeilen(_stange(774.7), 1000)
+        assert _t("title") == "CutStock – Cutting plan"
+    finally:
+        _SPRACHE.reset(token)
+        _EINHEIT.reset(token_e)
+    assert titel == '1 × Bar 6\' 6 3/4"'
+    assert zeilen[0].endswith("Offcut 4' 1/8\"")
+
+
+def test_alle_texte_in_allen_sprachen():
+    from core.pdf import TEXTE
+    for key, texte in TEXTE.items():
+        assert set(texte) == {"de", "en", "fr", "it"}, key
+        kodiert = [t.encode("cp1252") for t in texte.values()]   # Helvetica = WinAnsi
+        assert kodiert

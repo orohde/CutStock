@@ -605,7 +605,7 @@ class PdfRequest(BaseModel):
     # Vorformatierte Schnittfolge je Schnittplan (vom Frontend berechnet,
     # damit PDF und Web-Ansicht garantiert dieselbe Zerlegung zeigen)
     schnittfolgen: list[list[str]] = []
-    schnittfolge_titel: str = "Schnittfolge"
+    schnittfolge_titel: str = ""   # leer = in der Sprache der Einstellungen
     # Sammelplan: Farbe je Projekt statt je Teil
     nach_projekt: bool = False
 
@@ -3451,6 +3451,7 @@ def generate_pdf(req: PdfRequest):
             rest_ziel=_pdf_rest_ziel(req.material_id),
             unit=cfg["unit"],
             feet=cfg["unit_feet"],
+            language=cfg["language"],
         )
         return FileResponse(
             tmp_path,

@@ -33,7 +33,50 @@ USABLE_W = PAGE_W - 2 * MARGIN
 USABLE_H = PAGE_H - 2 * MARGIN
 
 # Wohin ein Abschnitt gehört (siehe _rest_ziel in web/app.py)
-ZIEL_TEXT = {"lager": "ins Lager", "abfallkiste": "in die Abfallkiste", "weg": "wegwerfen"}
+# Texte im PDF je Sprache (Sprache der Einstellungen, Standard Deutsch)
+TEXTE: dict[str, dict[str, str]] = {
+    "title": {"de": "CutStock – Schnittplan", "en": "CutStock – Cutting plan",
+              "fr": "CutStock – Plan de coupe", "it": "CutStock – Piano di taglio"},
+    "project": {"de": "Projekt", "en": "Project", "fr": "Projet", "it": "Progetto"},
+    "material": {"de": "Material", "en": "Material", "fr": "Matériau", "it": "Materiale"},
+    "blade": {"de": "Sägeblatt", "en": "Saw blade", "fr": "Lame", "it": "Lama"},
+    "stock_pieces": {"de": "Lagerstücke", "en": "Stock pieces", "fr": "Pièces de stock",
+                     "it": "Pezzi di magazzino"},
+    "waste": {"de": "Verschnitt", "en": "Waste", "fr": "Chute", "it": "Sfrido"},
+    "missing": {"de": "FEHLEND", "en": "MISSING", "fr": "MANQUANT", "it": "MANCANTE"},
+    "fillers": {"de": "Füllteile ({n}) – zählen bei ihrem eigenen Projekt",
+                "en": "Filler parts ({n}) – counted in their own project",
+                "fr": "Pièces de remplissage ({n}) – comptées dans leur propre projet",
+                "it": "Parti di riempimento ({n}) – contano nel proprio progetto"},
+    "part": {"de": "Teil", "en": "Part", "fr": "Pièce", "it": "Parte"},
+    "length": {"de": "Länge", "en": "Length", "fr": "Longueur", "it": "Lunghezza"},
+    "width": {"de": "Breite", "en": "Width", "fr": "Largeur", "it": "Larghezza"},
+    "qty": {"de": "Anzahl", "en": "Qty", "fr": "Qté", "it": "Qtà"},
+    "need": {"de": "Materialbedarf", "en": "Material needed", "fr": "Besoin en matériau",
+             "it": "Fabbisogno di materiale"},
+    "remnants": {"de": "Reste", "en": "Offcuts", "fr": "Chutes", "it": "Ritagli"},
+    "rest": {"de": "Rest", "en": "Offcut", "fr": "Chute", "it": "Ritaglio"},
+    "panel": {"de": "Platte", "en": "Panel", "fr": "Panneau", "it": "Pannello"},
+    "bar": {"de": "Stange", "en": "Bar", "fr": "Barre", "it": "Barra"},
+    "defect": {"de": "mit Defekt", "en": "with defect", "fr": "avec défaut", "it": "con difetto"},
+    "sequence": {"de": "Schnittfolge", "en": "Cutting sequence", "fr": "Ordre de coupe",
+                 "it": "Sequenza di taglio"},
+    "to_stock": {"de": "ins Lager", "en": "to stock", "fr": "au stock", "it": "in magazzino"},
+    "to_bin": {"de": "in die Abfallkiste", "en": "to the scrap bin", "fr": "au bac à chutes",
+               "it": "nel cassone sfridi"},
+    "discard": {"de": "wegwerfen", "en": "discard", "fr": "à jeter", "it": "da buttare"},
+}
+_ZIEL_KEY = {"lager": "to_stock", "abfallkiste": "to_bin", "weg": "discard"}
+_SPRACHE: ContextVar[str] = ContextVar("pdf_sprache", default="de")
+
+
+def _t(key: str, **kw) -> str:
+    texte = TEXTE[key]
+    return texte.get(_SPRACHE.get(), texte["de"]).format(**kw)
+
+
+def _ziel_text(ziel: str) -> str:
+    return _t(_ZIEL_KEY[ziel])
 RestZiel = Callable[[float, float], str]
 
 FARBEN = [
@@ -161,7 +204,7 @@ def _muster_titel(m: _Muster, art: str) -> str:
     codes = _codes_text(m.codes)
     if plan.defekte:
         nr = f" {codes}" if codes else ""
-        return f"{art}{nr} – {mass} (mit Defekt)"
+        return f"{art}{nr} – {mass} ({_t('defect')})"
     return f"{m.anzahl} × {art} {mass}" + (f" – {codes}" if codes else "")
 
 
@@ -185,18 +228,22 @@ def export_pdf(
     saegeblatt_name: str = "",
     is_1d: bool = False,
     schnittfolgen: list[list[str]] | None = None,
-    schnittfolge_titel: str = "Schnittfolge",
+    schnittfolge_titel: str = "",
     material_bild: bytes = b"",
     nach_projekt: bool = False,
     rest_ziel: RestZiel | None = None,
     unit: str = "mm",
     feet: bool = True,
+    language: str = "de",
 ):
     token = _EINHEIT.set((units.normalize_unit(unit), feet))
+    token_sprache = _SPRACHE.set(language)
     try:
         _export_pdf(ergebnis, path, projekt_name, material_name, saegeblatt_name, is_1d,
-                    schnittfolgen, schnittfolge_titel, material_bild, nach_projekt, rest_ziel)
+                    schnittfolgen, schnittfolge_titel or _t("sequence"), material_bild,
+                    nach_projekt, rest_ziel)
     finally:
+        _SPRACHE.reset(token_sprache)
         _EINHEIT.reset(token)
 
 
@@ -235,21 +282,21 @@ def _draw_header(c: canvas.Canvas, cur: _PageCursor,
                  erg: OptimierungsErgebnis,
                  projekt: str, material: str, blade: str):
     c.setFont("Helvetica-Bold", 16)
-    c.drawString(MARGIN, cur.y, "CutStock – Schnittplan")
+    c.drawString(MARGIN, cur.y, _t("title"))
     cur.advance(20)
 
     c.setFont("Helvetica", 10)
-    info = (f"Projekt: {projekt}   |   Material: {material}   |   "
-            f"Sägeblatt: {blade}   |   "
-            f"Lagerstücke: {len(erg.schnittplaene)}   |   "
-            f"Verschnitt: {erg.gesamt_verschnitt_prozent:.1f}%")
+    info = (f"{_t('project')}: {projekt}   |   {_t('material')}: {material}   |   "
+            f"{_t('blade')}: {blade}   |   "
+            f"{_t('stock_pieces')}: {len(erg.schnittplaene)}   |   "
+            f"{_t('waste')}: {erg.gesamt_verschnitt_prozent:.1f}%")
     c.drawString(MARGIN, cur.y, info)
     cur.advance(14)
 
     if erg.fehlende_teile:
         c.setFillColor(colors.red)
         c.setFont("Helvetica-Bold", 10)
-        c.drawString(MARGIN, cur.y, f"FEHLEND: {', '.join(erg.fehlende_teile)}")
+        c.drawString(MARGIN, cur.y, f"{_t('missing')}: {', '.join(erg.fehlende_teile)}")
         c.setFillColor(colors.black)
         cur.advance(14)
 
@@ -284,7 +331,7 @@ def _draw_stueckliste(c: canvas.Canvas, cur: _PageCursor,
         cur.need(40)
         c.setFont("Helvetica-Bold", 10)
         c.drawString(MARGIN, cur.y,
-                     f"Füllteile ({sum(fuell.values())}) – zählen bei ihrem eigenen Projekt")
+                     _t("fillers", n=sum(fuell.values())))
         cur.advance(14)
         _draw_teile_tabelle(c, cur, fuell, farb_map, is_1d, projekt_name)
 
@@ -302,7 +349,7 @@ def _draw_teile_tabelle(c: canvas.Canvas, cur: _PageCursor,
         return _latin1(_teil_von(label) if gruppiert else label)
 
     # Spaltenbreiten nach dem längsten Label, Zahlen rechtsbündig
-    label_w = max([stringWidth("Teil", "Helvetica-Bold", 9)]
+    label_w = max([stringWidth(_t("part"), "Helvetica-Bold", 9)]
                   + [stringWidth(anzeige(k[0]), "Helvetica", 9) for k in teile])
     x_label = MARGIN + 14
     x_laenge = x_label + label_w + 50
@@ -310,11 +357,11 @@ def _draw_teile_tabelle(c: canvas.Canvas, cur: _PageCursor,
     x_anzahl = (x_laenge if is_1d else x_breite) + 60
 
     c.setFont("Helvetica-Bold", 9)
-    c.drawString(x_label, cur.y, "Teil")
-    c.drawRightString(x_laenge, cur.y, "Länge")
+    c.drawString(x_label, cur.y, _t("part"))
+    c.drawRightString(x_laenge, cur.y, _t("length"))
     if not is_1d:
-        c.drawRightString(x_breite, cur.y, "Breite")
-    c.drawRightString(x_anzahl, cur.y, "Anzahl")
+        c.drawRightString(x_breite, cur.y, _t("width"))
+    c.drawRightString(x_anzahl, cur.y, _t("qty"))
     cur.advance(13)
 
     def projekt(key) -> str:
@@ -368,7 +415,7 @@ def _draw_materialbedarf(c: canvas.Canvas, cur: _PageCursor,
     cur.need(13 + max(img_h, text_h))
     c.setFillColor(colors.black)
     c.setFont("Helvetica-Bold", 9)
-    c.drawString(MARGIN, cur.y, "Materialbedarf")
+    c.drawString(MARGIN, cur.y, _t("need"))
     cur.advance(14)
 
     oben = cur.y + 8  # Oberkante der ersten Textzeile
@@ -408,16 +455,16 @@ def _reste_text_2d(plan: Schnittplan, rest_ziel: RestZiel | None) -> str:
     for laenge, breite in ((r[0], r[1]) for r in reste):
         ziel = rest_ziel(laenge, breite)
         if ziel == "lager":
-            teile.append(f"{_masse(laenge, breite)} {ZIEL_TEXT[ziel]}")
+            teile.append(f"{_masse(laenge, breite)} {_ziel_text(ziel)}")
         else:
             klein[ziel] = klein.get(ziel, 0) + 1
-    teile += [f"{n} × {ZIEL_TEXT[z]}" for z, n in klein.items()]
-    return "Reste: " + ", ".join(teile)
+    teile += [f"{n} × {_ziel_text(z)}" for z, n in klein.items()]
+    return f"{_t('remnants')}: " + ", ".join(teile)
 
 
 def _draw_2d_plans(c: canvas.Canvas, cur: _PageCursor,
                    muster: list[_Muster], farb_map: dict,
-                   schnittfolge_titel: str = "Schnittfolge",
+                   schnittfolge_titel: str,
                    rest_ziel: RestZiel | None = None):
     gap = 8
     for m in muster:
@@ -436,10 +483,10 @@ def _draw_2d_plans(c: canvas.Canvas, cur: _PageCursor,
 
         # Titel
         c.setFont("Helvetica-Bold", 9)
-        titel = _muster_titel(m, "Platte")
+        titel = _muster_titel(m, _t("panel"))
         c.drawString(MARGIN, cur.y, titel)
         c.setFont("Helvetica", 9)
-        info = f"Verschnitt: {plan.verschnitt_prozent:.1f}%"
+        info = f"{_t('waste')}: {plan.verschnitt_prozent:.1f}%"
         reste_text = _reste_text_2d(plan, rest_ziel)
         if reste_text:
             info += "   ·   " + reste_text
@@ -505,7 +552,8 @@ def _draw_2d_rect(c: canvas.Canvas, plan: Schnittplan, farb_map: dict,
 
         # Beschriftung nur, wenn sie ins Teil passt (sonst schrumpfen/weglassen)
         c.setFillColor(colors.black)
-        dim = f"{p.laenge:.0f}x{p.breite:.0f}"
+        dim = _masse(p.laenge, p.breite) if units.is_imperial(_EINHEIT.get()[0]) \
+            else f"{_fmt(p.laenge)}x{_fmt(p.breite)}"
         if p.gedreht:
             dim += " ↻"
         lbl = _latin1(p.teil_label)
@@ -540,11 +588,11 @@ def _schnittliste_zeilen(plan: Schnittplan, max_w: float,
     if rest_ziel is None:
         rest = sum(r[0] for r in plan.reste if r)
         if rest > 0:
-            teile.append(f"Rest {_len(rest)}")
+            teile.append(f"{_t('rest')} {_len(rest)}")
     else:
         for r in plan.reste:
             if r and r[0] > 0.5:
-                teile.append(f"Rest {_len(r[0])} {ZIEL_TEXT[rest_ziel(r[0], 0.0)]}")
+                teile.append(f"{_t('rest')} {_len(r[0])} {_ziel_text(rest_ziel(r[0], 0.0))}")
 
     sep = "   ·   "
     zeilen: list[str] = []
@@ -575,13 +623,13 @@ def _draw_1d_plans(c: canvas.Canvas, cur: _PageCursor,
         cur.need(6 + bar_h + 4 + len(zeilen) * zeile_h)
 
         # Titel: "10 × Stange 2000 mm   Verschnitt: 1.0%"
-        titel = _muster_titel(m, "Stange")
+        titel = _muster_titel(m, _t("bar"))
         c.setFillColor(colors.black)
         c.setFont("Helvetica-Bold", 9)
         c.drawString(MARGIN, cur.y, titel)
         c.setFont("Helvetica", 9)
         c.drawString(MARGIN + stringWidth(titel + "   ", "Helvetica-Bold", 9),
-                     cur.y, f"Verschnitt: {plan.verschnitt_prozent:.1f}%")
+                     cur.y, f"{_t('waste')}: {plan.verschnitt_prozent:.1f}%")
 
         ox = MARGIN
         bar_y = cur.y - 6 - bar_h
