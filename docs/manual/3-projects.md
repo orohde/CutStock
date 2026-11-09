@@ -11,9 +11,13 @@ Top left the projects, below them the combined plans, on the right the parts of 
 - **New**, **Edit**, **Delete**, **Duplicate** as usual.
 - **Restart project**: to cut a project once more – progress of all parts goes back to 0, saved
   plans are deleted, stock stays unchanged (asks first).
+- **Save as template**: if the project is built again and again, a
+  [template](4-parts.md#templates) works better – every run gets its own cut job and the project
+  stays as it is. Quantities are per copy.
 - **Number of copies**: if a project is built several times, set the number on the project –
   all copies are optimized together.
-- Import/export as JSON, import part lists from CSV.
+- Import/export as JSON, import part lists from CSV. An exported template becomes a template again
+  when imported.
 - A small 🔗 marks projects that are part of a combined plan (the tooltip names it).
   Cut jobs are not listed here but in the [Parts](4-parts.md) tab.
 

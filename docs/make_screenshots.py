@@ -252,7 +252,7 @@ def seed_demo_data() -> dict:
     api("PUT", "/api/settings", {"language": LANG, "theme": "light", "unit": "mm"})
 
     return {"span": span["id"], "eiche": eiche["id"], "kiefer": kiefer["id"],
-            "leiste": leiste["id"], "schuh": schuh["id"],
+            "leiste": leiste["id"], "schuh": schuh["id"], "hocker": hocker["id"],
             "schrank": schrank["id"], "bank": bank["id"], "regal": regal["id"],
             "span_stock": span_stock}
 
@@ -435,6 +435,19 @@ def shoot(ids: dict):
             if (t) await fetch('/api/cut-lists', {method: 'POST', headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({eintraege: [{teil_id: t.teil_id, menge: t.verfuegbar - 1}]})});
         }""", ids["kiefer"])
+        # Vorlage aus dem Hocker: ein Durchgang fertig gesägt (Verlauf), ein zweiter läuft
+        page.evaluate("""async ([hocker, kiefer, name]) => {
+            const post = async (url, body) => (await fetch(url, {method: 'POST',
+                headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})})).json();
+            const blade = (await (await fetch('/api/blades')).json())[0].id;
+            await post('/api/stock', {material_id: kiefer, laenge: 2400, stueckzahl: 2});
+            const v = await post(`/api/projects/${hocker}/as-template`, {name});
+            const erster = await post(`/api/templates/${v.id}/run`, {saetze: 2});
+            const plan = await post('/api/optimize', {project_id: erster.id, material_id: kiefer, blade_id: blade});
+            await post(`/api/plans/${plan.plan_id}/confirm-all`);
+            await fetch(`/api/projects/${erster.id}`, {method: 'DELETE'});
+            await post(`/api/templates/${v.id}/run`, {saetze: 3});
+        }""", [ids["hocker"], ids["kiefer"], tr("Hocker Kiefer")])
         page.click('.tab-btn[data-tab="parts"]')
         page.wait_for_selector("#parts-groups .parts-group")
         page.select_option("#parts-material", str(ids["kiefer"]))
@@ -448,6 +461,16 @@ def shoot(ids: dict):
         page.wait_for_timeout(300)
         page.mouse.move(1270, 850)
         page.screenshot(path=shot("teile"))
+
+        # 7d) Reiter Teile: Vorlage bearbeiten (Teile je Satz, Verlauf der Durchgänge)
+        page.set_viewport_size({"width": 1280, "height": 520})
+        page.click("#tpl-table .tpl-edit")
+        page.wait_for_selector("#tpl-editor:not(.hidden) #tpl-runs-table tr")
+        page.evaluate("window.scrollTo(0, 0)")
+        page.wait_for_timeout(300)
+        page.mouse.move(1270, 510)
+        page.screenshot(path=shot("vorlage"))
+        page.click("#btn-tpl-back")
 
         # 8) Einstellungen: Gruppe „Etiketten & Drucker“ mit kleinem Rollenformat und Vorschau
         page.set_viewport_size({"width": 1280, "height": 560})

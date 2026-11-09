@@ -65,7 +65,7 @@ Anfragen von der eigenen Web-Oberfläche (Same-Origin) und von localhost sind im
 | PUT | `/api/blades/{id}` | Sägeblatt aktualisieren |
 | DELETE | `/api/blades/{id}` | Sägeblatt löschen |
 | **Projekte** | | |
-| GET | `/api/projects?art=` | Projekte auflisten; ohne `art` Projekte und Sägeaufträge, `art=projekt` nur Projekte, `art=liste` nur Sägeaufträge, `art=sammel` nur Sammelpläne, `art=alle` alles |
+| GET | `/api/projects?art=` | Projekte auflisten; ohne `art` Projekte und Sägeaufträge, `art=projekt` nur Projekte, `art=liste` nur Sägeaufträge, `art=sammel` nur Sammelpläne, `art=vorlage` nur Vorlagen, `art=alle` alles außer Vorlagen |
 | GET | `/api/projects/{id}` | Projekt abrufen |
 | POST | `/api/projects` | Projekt anlegen |
 | PUT | `/api/projects/{id}` | Projekt aktualisieren (Name, Anzahl Exemplare) |
@@ -73,6 +73,11 @@ Anfragen von der eigenen Web-Oberfläche (Same-Origin) und von localhost sind im
 | POST | `/api/projects/{id}/clone` | Projekt kopieren |
 | POST | `/api/projects/{id}/copy-parts` | Teile in ein Projekt kopieren |
 | POST | `/api/projects/{id}/restart` | Projekt neu starten (Fortschritt 0, Pläne weg, Lager bleibt) |
+| POST | `/api/projects/{id}/as-template` | Projekt, Sägeauftrag oder Vorlage als neue Vorlage speichern (`name` optional) |
+| **Vorlagen** | | |
+| POST | `/api/templates` | Leere Vorlage anlegen `{"name": "Regal A"}` (Teile über `/api/projects/{id}/parts`) |
+| POST | `/api/templates/{id}/run` | Durchgang: Sägeauftrag aus der Vorlage anlegen `{"saetze": 3, "name": ""}` |
+| GET | `/api/templates/{id}/runs` | Verlauf der Durchgänge (neueste zuerst) |
 | **Teile** | | |
 | GET | `/api/projects/{id}/parts` | Teile eines Projekts auflisten |
 | POST | `/api/projects/{id}/parts` | Teil hinzufügen |
@@ -251,3 +256,37 @@ Umbenennen mit `PUT /api/projects/{id}` (die Anzahl bleibt 1), löschen mit
 `DELETE /api/projects/{id}`: Gesägtes zählt schon in den Mitglieds-Projekten (`gesaegt_anzahl`),
 der Rest wird wieder offen, reservierte Lagerstücke werden frei. Teile anlegen, kopieren oder
 duplizieren geht bei einem Sammelplan nicht (`400 sammel_ohne_teile`).
+
+## Vorlagen
+
+Eine Vorlage ist ein Projekt mit `art: "vorlage"` – eine feste Stückliste, die nie selbst
+optimiert oder gesägt wird (`anzahl` immer 1, `gesaegt_anzahl` und `vorrat` ihrer Teile immer 0).
+Teile werden wie bei Projekten über `/api/projects/{id}/parts` und `/api/parts/{id}` gepflegt,
+umbenannt wird mit `PUT /api/projects/{id}`, gelöscht mit `DELETE /api/projects/{id}`.
+`GET /api/projects` liefert Vorlagen nur mit `?art=vorlage`; sie fehlen auch in `GET /api/parts`,
+in der Arbeitsliste und bei Sammelplänen.
+
+```json
+POST /api/templates                     {"name": "Regal A"}
+POST /api/projects/14/as-template       {"name": ""}              → Name des Sägeauftrags/Projekts
+POST /api/templates/31/run              {"saetze": 3}
+
+→ 201 {"id": 40, "name": "Regal A – 09.11.2026", "art": "liste", "anzahl": 3,
+       "vorlage_id": 31, "vorlage_name": "Regal A", "teile": [...], ...}
+```
+
+Ein **Durchgang** ist ein Sägeauftrag (`art: "liste"`) mit `anzahl` = Sätze und eigenen Teilen
+ohne `herkunft_teil_id`: Gesägt zählt nur beim Durchgang selbst. Optimiert wird er wie jeder
+Sägeauftrag mit `POST /api/optimize`, also gegen das aktuelle Lager. Änderungen an der Vorlage
+wirken erst beim nächsten Durchgang.
+
+An der Vorlage stehen `durchgaenge` (Anzahl), `zuletzt` (Unix-Zeit des letzten Durchgangs) und
+`laufend` (noch nicht fertige Durchgänge). `GET /api/templates/{id}/runs` liefert je Durchgang
+`auftrag_id` (0 = Sägeauftrag gelöscht), `name`, `saetze`, `gesaegt`, `gesamt`, `angelegt` und
+`fertig` (Unix-Zeit, 0 = offen; wird beim Zurücknehmen wieder 0). Nach dem Löschen des Sägeauftrags
+bleibt der Eintrag mit dem letzten Stand.
+
+`as-template` übernimmt die Stückzahl je Exemplar; bei Sägeaufträgen fällt der Zusatz
+„(Projekt)“ am Teilenamen weg, solange die Namen eindeutig bleiben. Fehler:
+`404 vorlage_unbekannt`, `400 vorlage_leer` (Durchgang ohne Teile), `400 vorlage_nicht_saegbar`
+(`/api/optimize`, `restart` oder `take-stock` mit einer Vorlage), `400 name_leer`.

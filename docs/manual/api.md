@@ -65,7 +65,7 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | PUT | `/api/blades/{id}` | Update a blade |
 | DELETE | `/api/blades/{id}` | Delete a blade |
 | **Projects** | | |
-| GET | `/api/projects?art=` | List projects; without `art` projects and cut jobs, `art=projekt` projects only, `art=liste` cut jobs only, `art=sammel` combined plans only, `art=alle` everything |
+| GET | `/api/projects?art=` | List projects; without `art` projects and cut jobs, `art=projekt` projects only, `art=liste` cut jobs only, `art=sammel` combined plans only, `art=vorlage` templates only, `art=alle` everything except templates |
 | GET | `/api/projects/{id}` | Get a project |
 | POST | `/api/projects` | Create a project |
 | PUT | `/api/projects/{id}` | Update a project (name, number of copies) |
@@ -73,6 +73,11 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | POST | `/api/projects/{id}/clone` | Duplicate a project |
 | POST | `/api/projects/{id}/copy-parts` | Copy parts into a project |
 | POST | `/api/projects/{id}/restart` | Restart project (progress 0, plans removed, stock unchanged) |
+| POST | `/api/projects/{id}/as-template` | Save a project, cut job or template as a new template (`name` optional) |
+| **Templates** | | |
+| POST | `/api/templates` | Create an empty template `{"name": "Shelf A"}` (parts via `/api/projects/{id}/parts`) |
+| POST | `/api/templates/{id}/run` | Run: create a cut job from the template `{"saetze": 3, "name": ""}` |
+| GET | `/api/templates/{id}/runs` | History of runs (newest first) |
 | **Parts** | | |
 | GET | `/api/projects/{id}/parts` | List parts of a project |
 | POST | `/api/projects/{id}/parts` | Add a part |
@@ -251,3 +256,37 @@ Rename with `PUT /api/projects/{id}` (the number of copies stays 1), delete with
 `DELETE /api/projects/{id}`: what has been cut already counts in the member projects
 (`gesaegt_anzahl`), the rest becomes open again and reserved stock pieces are released. Adding,
 copying or duplicating parts is not possible for a combined plan (`400 sammel_ohne_teile`).
+
+## Templates
+
+A template is a project with `art: "vorlage"` – a fixed parts list that is never optimized or cut
+itself (`anzahl` always 1, `gesaegt_anzahl` and `vorrat` of its parts always 0). Parts are managed
+as in projects via `/api/projects/{id}/parts` and `/api/parts/{id}`; rename with
+`PUT /api/projects/{id}`, delete with `DELETE /api/projects/{id}`. `GET /api/projects` only returns
+templates with `?art=vorlage`; they are also left out of `GET /api/parts`, the work list and
+combined plans.
+
+```json
+POST /api/templates                     {"name": "Shelf A"}
+POST /api/projects/14/as-template       {"name": ""}              → name of the cut job/project
+POST /api/templates/31/run              {"saetze": 3}
+
+→ 201 {"id": 40, "name": "Shelf A – 2026-11-09", "art": "liste", "anzahl": 3,
+       "vorlage_id": 31, "vorlage_name": "Shelf A", "teile": [...], ...}
+```
+
+A **run** is a cut job (`art: "liste"`) with `anzahl` = sets and its own parts without
+`herkunft_teil_id`: cut pieces only count for the run itself. It is optimized like any cut job with
+`POST /api/optimize`, i.e. against the current stock. Changes to the template only apply to the next
+run.
+
+The template carries `durchgaenge` (number of runs), `zuletzt` (Unix time of the last run) and
+`laufend` (runs not yet finished). `GET /api/templates/{id}/runs` returns per run `auftrag_id`
+(0 = cut job deleted), `name`, `saetze`, `gesaegt`, `gesamt`, `angelegt` and `fertig` (Unix time,
+0 = open; goes back to 0 when undone). After the cut job is deleted, the entry stays with its last
+status.
+
+`as-template` takes the quantity per copy; for cut jobs the "(project)" suffix on part names is
+dropped as long as names stay unique. Errors: `404 vorlage_unbekannt`, `400 vorlage_leer` (run
+without parts), `400 vorlage_nicht_saegbar` (`/api/optimize`, `restart` or `take-stock` with a
+template), `400 name_leer`.

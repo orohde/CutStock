@@ -32,6 +32,7 @@ Website and manual: **[cutstock.app](https://cutstock.app/en/)** · [Manual](htt
 - **Combined Plan** -- optimize one material for several projects at once (its own entry in the optimization work list), with a separate/combined comparison; cut parts count directly in their project
 - **Filler Parts** -- cut parts from other projects to fill up the waste of bars and panels (no extra material); once cut they count directly for their own project, any extra go to the finished parts
 - **Open Parts and Cut Jobs** -- "Parts" tab with everything still to be cut, grouped by material with a stock estimate; cut selected parts with "Cut now" as a cut job or take them into another project's remnants; finished parts per part
+- **Templates** -- fixed parts lists for repeat work: save a cut job or project as a template, edit it in the "Parts" tab, create a fresh cut job each time with "Cut ×N" (recalculated with current stock), history of all runs
 - **Project Management** -- organize parts by project, build a project several times (number of copies), import/export as JSON, import part lists from CSV
 - **Visual Cut Plans** -- color-coded cutting diagrams with labels and dimensions
 - **Cutting Sequence** -- numbered, kerf-accurate step-by-step sawing order per cut plan (on screen and in the PDF)
@@ -121,7 +122,7 @@ The manual is split by the tabs of the user interface: **[docs/manual](docs/manu
 | [Material](docs/manual/1-material.md) | Materials, stock per material, defects, labels |
 | [Stock](docs/manual/2-stock.md) | Storage locations, what is where, taking pieces out, offcut bin, stock journal |
 | [Projects](docs/manual/3-projects.md) | Projects and their parts |
-| [Parts](docs/manual/4-parts.md) | Open parts of all projects, cut jobs, finished parts |
+| [Parts](docs/manual/4-parts.md) | Open parts of all projects, cut jobs, templates, finished parts |
 | [Optimization](docs/manual/5-optimization.md) | Cut plans, filler parts, combined plan, workshop mode, PDF |
 | [Settings](docs/manual/6-settings.md) | Language, labels, stock, REST API, backup, saw blades |
 | [REST API](docs/manual/api.md) | all endpoints, stock commands for scanners and machines |

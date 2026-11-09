@@ -11,9 +11,13 @@ Links oben die Projekte, darunter die Sammelpläne, rechts die Teile des gewähl
 - **Neu**, **Bearbeiten**, **Löschen**, **Duplizieren** wie gewohnt.
 - **Projekt neu starten**: um ein Projekt noch einmal zu sägen – der Fortschritt aller Teile geht
   auf 0, die gespeicherten Pläne werden gelöscht, das Lager bleibt unverändert (mit Rückfrage).
+- **Als Vorlage speichern**: Wird das Projekt immer wieder gebaut, ist eine
+  [Vorlage](4-teile.md#vorlagen) besser – jeder Durchgang bekommt seinen eigenen Sägeauftrag, das
+  Projekt bleibt, wie es ist. Die Stückzahl gilt je Exemplar.
 - **Anzahl Exemplare**: Wird ein Projekt mehrfach gebaut, genügt die Anzahl am Projekt –
   alle Exemplare werden gemeinsam optimiert.
-- Import/Export als JSON, Teilelisten-Import aus CSV.
+- Import/Export als JSON, Teilelisten-Import aus CSV. Eine exportierte Vorlage wird beim Import
+  wieder eine Vorlage.
 - Ein kleines 🔗 markiert Projekte, die in einem Sammelplan stecken (der Tooltip nennt ihn).
   Sägeaufträge stehen nicht hier, sondern im Reiter [Teile](4-teile.md).
 
