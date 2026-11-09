@@ -1184,9 +1184,16 @@ async function renderParts() {
 
     const sammel = selectedSammel();
     document.getElementById('parts-toolbar')?.classList.toggle('hidden', !!sammel);
-    // Neu starten gilt bei einem Sammelplan für sein Material in allen Mitgliedern
-    const restartBtn = document.getElementById('btn-proj-restart');
-    if (restartBtn) restartBtn.textContent = t(sammel ? 'sammel.restart' : 'plan.restart');
+    // Ist ein Sammelplan gewählt, gelten die Projekt-Knöpfe nicht – ausgrauen statt
+    // ausblenden, damit die Leiste nicht springt. Neu und Import bleiben aktiv.
+    ['btn-proj-edit', 'btn-proj-del', 'btn-proj-clone', 'btn-proj-as-tpl', 'btn-proj-restart',
+     'btn-proj-export'].forEach(id => {
+        const b = document.getElementById(id);
+        if (!b) return;
+        b.disabled = !!sammel;
+        if (sammel) b.title = t('sammel.proj_buttons_hint');
+        else if (b.title === t('sammel.proj_buttons_hint')) b.title = id === 'btn-proj-restart' ? t('proj.restart_hint') : '';
+    });
     if (sammel) { await renderSammelParts(sammel); return; }
     document.getElementById('sammel-detail')?.classList.add('hidden');
 
@@ -5914,6 +5921,7 @@ function initEvents() {
     document.getElementById('btn-sammel-edit')?.addEventListener('click', mitSammel(openSammelRenameDialog));
     document.getElementById('btn-sammel-del')?.addEventListener('click', mitSammel(deleteSammel));
     document.getElementById('btn-sammel-opt')?.addEventListener('click', mitSammel(optimizeSelectedSammel));
+    document.getElementById('btn-sammel-restart')?.addEventListener('click', mitSammel(restartSammel));
 
     document.getElementById('btn-proj-clone')?.addEventListener('click', async () => {
         const proj = State.projects.find(p => p.id === State.selectedProjectId);
@@ -6074,8 +6082,6 @@ function initEvents() {
     });
 
     document.getElementById('btn-proj-restart')?.addEventListener('click', () => {
-        const sammel = selectedSammel();
-        if (sammel) { restartSammel(sammel); return; }
         const proj = State.projects.find(p => p.id === State.selectedProjectId);
         if (!proj) { showToast(t('dlg.select_project'), 'error'); return; }
         openConfirmDialog(t('plan.restart_confirm') + '\n\n' + t('tpl.restart_tip'), () => restartProject(proj.id));

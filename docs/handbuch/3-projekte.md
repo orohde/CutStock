@@ -50,12 +50,13 @@ Kasten „Sammelpläne“ tragen ein 🔗 und das Etikett „Sammelplan“.
   Links ins jeweilige Projekt; bearbeitet wird dort.
 - **Optimieren** springt in die [Optimierung](5-optimierung.md#sammelplan) und wählt dort diesen
   Sammelplan aus.
-- **Sammelplan neu starten** (der Knopf „Projekt neu starten“ heißt bei ausgewähltem Sammelplan
-  so): um ihn noch einmal zu sägen. In allen Mitgliedern geht der Fortschritt der Teile **dieses
+- **Neu starten**: um den Sammelplan noch einmal zu sägen. In allen Mitgliedern geht der Fortschritt der Teile **dieses
   Materials** auf 0, Teile aus anderen Materialien bleiben, wie sie sind. Der gespeicherte
   Sammelplan wird gelöscht, das Lager bleibt unverändert – danach **Optimieren**, gerechnet wird
   mit dem aktuellen Lager samt Resten. Ist in den Projekten nichts mehr offen, bleibt ein fertig
   gesägter Plan beim Neu-Berechnen stehen, und CutStock weist auf diesen Knopf hin.
+- Solange ein Sammelplan ausgewählt ist, sind oben im Kasten „Projekte“ nur **Neu** und
+  **Import** aktiv; die übrigen Knöpfe gelten für Projekte und sind ausgegraut.
 - **Löschen** wie ein Projekt, mit Warnung, wenn schon gesägt wurde. Nichts geht verloren:
   Gesägte Teile bleiben in ihren Projekten als gesägt, der Rest wird wieder offen, reservierte
   Lagerstücke werden frei. Danach lassen sich die Projekte einzeln optimieren oder neu
