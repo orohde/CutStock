@@ -163,6 +163,7 @@
               <button id="btn-proj-edit" class="fd-button" type="button" data-i18n="btn.edit">Bearbeiten</button>
               <button id="btn-proj-del" class="fd-button fd-button--negative" type="button" data-i18n="btn.delete">Entfernen</button>
               <button id="btn-proj-clone" class="fd-button" type="button" data-i18n="proj.clone">Duplizieren</button>
+              <button id="btn-proj-as-tpl" class="fd-button" type="button" data-i18n="tpl.save_as">Als Vorlage speichern</button>
               <button id="btn-proj-restart" class="fd-button" type="button" data-i18n="plan.restart" title="" data-i18n-title="proj.restart_hint">Projekt neu starten</button>
               <button id="btn-proj-export" class="fd-button" type="button" data-i18n="proj.export">Export</button>
               <button id="btn-proj-import" class="fd-button" type="button" data-i18n="proj.import">Import</button>
@@ -251,7 +252,11 @@
       <div class="panel" id="tpl-panel">
         <div class="panel-header">
           <h2 class="fd-title fd-title--h5" data-i18n="tpl.title">Vorlagen</h2>
-          <button id="btn-tpl-new" class="fd-button" type="button" data-i18n="tpl.new">Neue Vorlage</button>
+          <div class="toolbar">
+            <button id="btn-tpl-new" class="fd-button" type="button" data-i18n="tpl.new">Neue Vorlage</button>
+            <button id="btn-tpl-import" class="fd-button" type="button" data-i18n="proj.import">Import</button>
+            <input id="tpl-import-file" type="file" accept="application/json,.json" class="hidden">
+          </div>
         </div>
         <p class="saw-hint" id="tpl-hint" data-i18n="tpl.hint"></p>
         <div class="table-wrap">
@@ -272,6 +277,7 @@
             <button id="btn-tpl-run" class="fd-button fd-button--emphasized" type="button" data-i18n="tpl.run">Sägen ×N…</button>
             <button id="btn-tpl-rename" class="fd-button" type="button" data-i18n="tpl.rename">Umbenennen</button>
             <button id="btn-tpl-clone" class="fd-button" type="button" data-i18n="proj.clone">Duplizieren</button>
+            <button id="btn-tpl-export" class="fd-button" type="button" data-i18n="proj.export">Export</button>
             <button id="btn-tpl-delete" class="fd-button fd-button--negative" type="button" data-i18n="tpl.delete">Vorlage löschen</button>
           </div>
         </div>

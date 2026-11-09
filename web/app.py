@@ -4197,6 +4197,8 @@ WEB_EXTRA_TRANSLATIONS = {
     "tpl.sets_hint": {"de": "Wie oft die ganze Stückliste gesägt wird.", "en": "How many times the whole parts list is cut.", "fr": "Combien de fois toute la liste est découpée.", "it": "Quante volte si taglia l’intera distinta."},
     "tpl.sets_n": {"de": "{n}× Satz", "en": "{n}× set", "fr": "{n}× jeu", "it": "{n}× set"},
     "tpl.rename": {"de": "Umbenennen", "en": "Rename", "fr": "Renommer", "it": "Rinomina"},
+    "tpl.restart_tip": {"de": "Wird das öfter gesägt? Dann besser „Als Vorlage speichern“ – jeder Durchgang bekommt seinen eigenen Sägeauftrag und das Projekt bleibt, wie es ist.", "en": "Cut this regularly? Then “Save as template” works better – every run gets its own cut job and the project stays as it is.", "fr": "Vous le découpez régulièrement ? Mieux vaut « Enregistrer comme modèle » – chaque passage reçoit son propre ordre de coupe et le projet reste tel quel.", "it": "Lo tagli spesso? Meglio «Salva come modello» – ogni passaggio ha il suo ordine di taglio e il progetto resta com’è."},
+    "tpl.material_delete": {"de": "- Auch aus diesen Vorlagen verschwinden die Teile: {namen}", "en": "- The parts also disappear from these templates: {namen}", "fr": "- Les pièces disparaissent aussi de ces modèles : {namen}", "it": "- I pezzi spariscono anche da questi modelli: {namen}"},
     "tpl.delete": {"de": "Vorlage löschen", "en": "Delete template", "fr": "Supprimer le modèle", "it": "Elimina modello"},
     "tpl.name": {"de": "Name", "en": "Name", "fr": "Nom", "it": "Nome"},
     "tpl.col_part": {"de": "Teil", "en": "Part", "fr": "Pièce", "it": "Pezzo"},

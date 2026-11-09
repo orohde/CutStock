@@ -3134,6 +3134,19 @@ function setupTemplateEditor() {
         if (file) await importPartsCsv(file, templateTarget());
     });
     on('btn-tpl-part-trapez', () => openTrapezoidHelper(templateTarget()));
+    on('btn-tpl-export', () => State.tplEdit && exportProject(State.tplEdit));
+    on('btn-tpl-import', () => document.getElementById('tpl-import-file')?.click());
+    document.getElementById('tpl-import-file')?.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (file) await importProject(file, true);
+    });
+    on('btn-proj-as-tpl', () => {
+        const proj = State.projects.find(p => p.id === State.selectedProjectId);
+        if (!proj) { showToast(t('dlg.select_project'), 'error'); return; }
+        // Danach in die Vorlage springen, damit man sieht, wo sie liegt
+        openSaveAsTemplateDialog(proj, (v) => openTemplateEditor(v.id));
+    });
 }
 
 function partsFiltered() {
@@ -4995,8 +5008,7 @@ function optimizeSelectedSammel(sammel) {
 }
 
 // Projekt als JSON exportieren – Format kompatibel mit der Desktop-App
-async function exportProject() {
-    const proj = State.projects.find(p => p.id === State.selectedProjectId);
+async function exportProject(proj = State.projects.find(p => p.id === State.selectedProjectId)) {
     if (!proj) { showToast(t('dlg.select_project'), 'error'); return; }
 
     let teile = proj.teile;
@@ -5020,13 +5032,17 @@ async function exportProject() {
 
     const ver = State.versionInfo ? State.versionInfo.version : '';
     const data = { version: ver, project: proj.name, copies: proj.anzahl || 1, parts };
+    // Vorlagen tragen ihre Art mit, damit der Import wieder eine Vorlage anlegt
+    if (proj.art === 'vorlage') data.kind = 'template';
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     saveBlob(blob, `${proj.name}.json`);
     showToast(t('proj.export_done'), 'info');
 }
 
-// Projekt aus JSON importieren – fehlende Materialien automatisch anlegen
-async function importProject(file) {
+// Projekt aus JSON importieren – fehlende Materialien automatisch anlegen.
+// Eine exportierte Vorlage (kind: 'template') oder ein Import über den Kasten
+// Vorlagen (asTemplate) wird wieder eine Vorlage.
+async function importProject(file, asTemplate = false) {
     let data;
     try {
         data = JSON.parse(await file.text());
@@ -5044,12 +5060,15 @@ async function importProject(file) {
 
     const matByName = new Map(State.materials.map(m => [m.name, m]));
 
+    const alsVorlage = asTemplate || data.kind === 'template';
     let project;
     try {
-        project = await Api.createProject({
-            name: data.project || 'Import',
-            anzahl: Math.max(1, parseInt(data.copies) || 1),
-        });
+        project = alsVorlage
+            ? await Api.createTemplate({ name: data.project || 'Import' })
+            : await Api.createProject({
+                name: data.project || 'Import',
+                anzahl: Math.max(1, parseInt(data.copies) || 1),
+            });
     } catch { return; }
 
     let imported = 0;
@@ -5086,11 +5105,15 @@ async function importProject(file) {
         } catch { /* skip */ }
     }
 
-    State.selectedProjectId = project.id;
-    await renderProjects();
-    State.projects = await Api.getProjects();
     State.materials = await Api.getMaterials();
-    renderOptDropdowns();
+    if (alsVorlage) {
+        await openTemplateEditor(project.id);
+    } else {
+        State.selectedProjectId = project.id;
+        await renderProjects();
+        State.projects = await Api.getProjects();
+        renderOptDropdowns();
+    }
     renderMaterials();
 
     let msg = t('proj.import_done', { n: imported });
@@ -5787,7 +5810,12 @@ function initEvents() {
         let stock;
         try { stock = await Api.getStock(mat.id); } catch { return; }
         const n = stock.reduce((sum, s) => sum + s.stueckzahl, 0);
-        openConfirmDialog(t('dlg.delete_material', { n }), async () => {
+        // Vorlagen verlieren ihre Teile dieses Materials – beim Namen nennen
+        let vorlagen = [];
+        try { vorlagen = await Api.getProjects('vorlage'); } catch { /* ignore */ }
+        const betroffen = vorlagen.filter(v => v.teile.some(x => x.material_id === mat.id)).map(v => v.name);
+        const extra = betroffen.length ? '\n' + t('tpl.material_delete', { namen: betroffen.join(', ') }) : '';
+        openConfirmDialog(t('dlg.delete_material', { n }) + extra, async () => {
             try {
                 await Api.deleteMaterial(mat.id);
                 State.selectedMaterialId = null;
@@ -6027,7 +6055,7 @@ function initEvents() {
     document.getElementById('btn-proj-restart')?.addEventListener('click', () => {
         const proj = State.projects.find(p => p.id === State.selectedProjectId);
         if (!proj) { showToast(t('dlg.select_project'), 'error'); return; }
-        openConfirmDialog(t('plan.restart_confirm'), () => restartProject(proj.id));
+        openConfirmDialog(t('plan.restart_confirm') + '\n\n' + t('tpl.restart_tip'), () => restartProject(proj.id));
     });
 
     document.getElementById('btn-pdf')?.addEventListener('click', () => {
