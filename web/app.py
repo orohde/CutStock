@@ -441,6 +441,13 @@ class ProjectOut(BaseModel):
     art: str = ""   # "" = normales Projekt, "liste" = Schnittliste, "sammel" = Sammelplan
     sammel_material_id: int = 0      # nur Sammelplan: sein Material
     mitglieder: list[int] = []       # nur Sammelplan: IDs der Mitglieds-Projekte
+    # nur Sägeauftrag aus einer Vorlage (Durchgang): die Vorlage
+    vorlage_id: int = 0
+    vorlage_name: str = ""
+    # nur Vorlage: Zahl der Durchgänge, letzter Durchgang (Unix-Zeit), laufende Durchgänge
+    durchgaenge: int = 0
+    zuletzt: float = 0.0
+    laufend: list["TemplateRunOut"] = []
 
 
 class FuellKandidatOut(BaseModel):
@@ -733,6 +740,45 @@ def _teil_to_out(t: Teil) -> PartOut:
     )
 
 
+class TemplateRunOut(BaseModel):
+    """Ein Durchgang einer Vorlage (Verlauf)."""
+    id: int
+    auftrag_id: int = 0      # 0 = Sägeauftrag gelöscht
+    name: str
+    saetze: int
+    gesaegt: int
+    gesamt: int
+    angelegt: float          # Unix-Zeit
+    fertig: float = 0.0      # Unix-Zeit, 0 = noch nicht fertig
+
+
+ProjectOut.model_rebuild()
+
+
+def _lauf_to_out(d: dict) -> TemplateRunOut:
+    return TemplateRunOut(id=d["id"], auftrag_id=d["auftrag_id"], name=d["name"],
+                          saetze=d["saetze"], gesaegt=d["gesaegt"], gesamt=d["teile_gesamt"],
+                          angelegt=d["angelegt"], fertig=d["fertig"])
+
+
+def _vorlage_felder(p: Projekt) -> dict:
+    """Zusatzfelder für Vorlagen und Durchgänge in ProjectOut."""
+    db = get_db()
+    if not p.id:
+        return {}
+    if p.art == "vorlage":
+        verlauf = db.vorlage_verlauf(p.id)
+        return {"durchgaenge": len(verlauf),
+                "zuletzt": max((d["angelegt"] for d in verlauf), default=0.0),
+                "laufend": [_lauf_to_out(d) for d in verlauf
+                            if d["auftrag_id"] and not d["fertig"]]}
+    if p.art == "liste":
+        herkunft = db.vorlage_von_durchgang(p.id)
+        if herkunft:
+            return {"vorlage_id": herkunft.id, "vorlage_name": herkunft.name}
+    return {}
+
+
 def _projekt_to_out(p: Projekt) -> ProjectOut:
     return ProjectOut(
         id=p.id,
@@ -747,6 +793,7 @@ def _projekt_to_out(p: Projekt) -> ProjectOut:
         art=p.art,
         sammel_material_id=p.sammel_material_id,
         mitglieder=get_db().sammel_mitglieder(p.id) if p.id and p.art == "sammel" else [],
+        **_vorlage_felder(p),
     )
 
 
@@ -1639,10 +1686,14 @@ def delete_blade(bid: int):
 @app.get("/api/projects", response_model=list[ProjectOut])
 def list_projects(art: str = ""):
     """Projekte samt Sägeaufträgen; ?art=sammel nur die Sammelpläne, ?art=alle alles
-    (Sammelpläne zuletzt), ?art=liste nur die Sägeaufträge, ?art=projekt nur normale."""
-    if art not in ("", "sammel", "alle", "liste", "projekt"):
-        raise HTTPException(400, "art must be '', 'projekt', 'liste', 'sammel' or 'alle'")
+    (Sammelpläne zuletzt, ohne Vorlagen), ?art=liste nur die Sägeaufträge, ?art=projekt nur
+    normale, ?art=vorlage nur die Vorlagen."""
+    if art not in ("", "sammel", "alle", "liste", "projekt", "vorlage"):
+        raise HTTPException(
+            400, "art must be '', 'projekt', 'liste', 'sammel', 'vorlage' or 'alle'")
     db = get_db()
+    if art == "vorlage":
+        return [_projekt_to_out(p) for p in db.list_projekte(vorlagen=True)]
     if art in ("liste", "projekt"):
         return [_projekt_to_out(p) for p in db.list_projekte()
                 if (p.art == "liste") == (art == "liste")]
@@ -1779,11 +1830,16 @@ def take_stock_of_part(ref: int, data: TakeStockIn = TakeStockIn()):
     return _teil_to_out(db.get_teil(ref))
 
 
-def _saegeauftrag_name() -> str:
+def _datum_heute() -> tuple[str, str]:
+    """(Sprache, heutiges Datum in deren Schreibweise) für vergebene Namen."""
     import datetime
     lang = _get_settings_dict().get("language", "en")
     heute = datetime.date.today()
-    datum = heute.strftime("%d.%m.%Y") if lang in ("de", "fr", "it") else heute.isoformat()
+    return lang, heute.strftime("%d.%m.%Y") if lang in ("de", "fr", "it") else heute.isoformat()
+
+
+def _saegeauftrag_name() -> str:
+    lang, datum = _datum_heute()
     vorlage = WEB_EXTRA_TRANSLATIONS["parts.list_default"]
     return vorlage.get(lang, vorlage["en"]).replace("{datum}", datum)
 
@@ -1803,6 +1859,76 @@ def create_cut_list(data: CutListIn):
     liste = db.schnittliste_anlegen(data.name.strip() or _saegeauftrag_name(),
                                     list(mengen.items()))
     return _projekt_to_out(liste)
+
+
+class TemplateIn(BaseModel):
+    name: str = Field("", max_length=200)   # leer: beim Speichern aus Projekt dessen Name
+
+
+class TemplateRunIn(BaseModel):
+    saetze: int = Field(1, ge=1, le=1000)
+    name: str = Field("", max_length=200)   # leer = „<Vorlage> – <Datum>“
+
+
+def _vorlage_holen(db: Database, vid: int) -> Projekt:
+    v = db.get_projekt(vid)
+    if not v or v.art != "vorlage":
+        raise _fehler(404, "vorlage_unbekannt", f"Template {vid} not found")
+    return v
+
+
+def _nicht_vorlage(p: Projekt):
+    """Vorlagen werden nie optimiert oder gesägt – nur ihre Durchgänge."""
+    if p.art == "vorlage":
+        raise _fehler(400, "vorlage_nicht_saegbar",
+                      "A template is never cut itself; start a run from it")
+
+
+@app.post("/api/templates", response_model=ProjectOut, status_code=201)
+def create_template(data: TemplateIn):
+    """Neue, leere Vorlage (Teile danach über /api/projects/{id}/parts)."""
+    name = data.name.strip()
+    if not name:
+        raise _fehler(400, "name_leer", "Name must not be empty")
+    return _projekt_to_out(get_db().vorlage_anlegen(name))
+
+
+@app.post("/api/projects/{pid}/as-template", response_model=ProjectOut, status_code=201)
+def save_as_template(pid: int, data: TemplateIn):
+    """Vorlage aus einem Projekt, Sägeauftrag oder einer anderen Vorlage (Kopie der Teile,
+    Stückzahl je Exemplar). Das Original bleibt unverändert."""
+    db = get_db()
+    quelle = db.get_projekt(pid)
+    if not quelle:
+        raise HTTPException(404, "Project not found")
+    if quelle.art == "sammel":
+        raise _sammel_ohne_teile()
+    name = data.name.strip() or quelle.name
+    return _projekt_to_out(db.vorlage_aus_projekt(pid, name))
+
+
+@app.post("/api/templates/{vid}/run", response_model=ProjectOut, status_code=201)
+def run_template(vid: int, data: TemplateRunIn):
+    """Durchgang: neuer Sägeauftrag mit den Teilen der Vorlage × Sätze. Wird wie jeder
+    Sägeauftrag optimiert (gegen das aktuelle Lager) und gesägt; gesägt zählt nur beim
+    Durchgang selbst."""
+    db = get_db()
+    v = _vorlage_holen(db, vid)
+    if not v.teile:
+        raise _fehler(400, "vorlage_leer", "The template has no parts")
+    name = data.name.strip()
+    if not name:
+        _, datum = _datum_heute()
+        name = f"{v.name} – {datum}"
+    return _projekt_to_out(db.durchgang_anlegen(vid, data.saetze, name))
+
+
+@app.get("/api/templates/{vid}/runs", response_model=list[TemplateRunOut])
+def template_runs(vid: int):
+    """Verlauf einer Vorlage, neueste zuerst."""
+    db = get_db()
+    _vorlage_holen(db, vid)
+    return [_lauf_to_out(d) for d in db.vorlage_verlauf(vid)]
 
 
 @app.get("/api/projects/{pid}", response_model=ProjectOut)
@@ -1841,8 +1967,8 @@ def clone_project(pid: int):
         raise HTTPException(404, "Project not found")
     if existing.art == "sammel":
         raise _sammel_ohne_teile()
-    # Eine Schnittliste bleibt beim Duplizieren eine Schnittliste (samt Herkunft)
-    art = "liste" if existing.art == "liste" else ""
+    # Schnittliste (samt Herkunft) und Vorlage behalten beim Duplizieren ihre Art
+    art = existing.art if existing.art in ("liste", "vorlage") else ""
     clone = Projekt(name=f"{existing.name} (Kopie)", anzahl=existing.anzahl, art=art)
     clone = db.save_projekt(clone)
     for t in db.list_teile(pid):
@@ -1925,6 +2051,8 @@ def create_part(pid: int, data: PartIn):
         raise HTTPException(404, "Project not found")
     if existing.art == "sammel":
         raise _sammel_ohne_teile()
+    if existing.art == "vorlage":
+        data.gesaegt_anzahl = 0   # eine Vorlage hat keinen Fortschritt
     t = Teil(
         projekt_id=pid,
         label=data.label,
@@ -1959,6 +2087,9 @@ def update_part(tid: int, data: PartIn):
     if not rows:
         raise HTTPException(404, "Part not found")
     t.projekt_id = rows["projekt_id"]
+    if (pr := get_db().get_projekt(t.projekt_id)) and pr.art == "vorlage":
+        t.gesaegt_anzahl = 0
+        data.vorrat = None
     get_db().save_teil(t)
     if data.vorrat is not None:
         get_db().teil_vorrat_setzen(tid, data.vorrat)
@@ -2110,6 +2241,7 @@ def run_optimization(req: OptimizeRequest):
         raise HTTPException(404, "Project not found")
     if projekt.art == "sammel":
         raise HTTPException(400, "Use /api/sammel/optimize for collective plans")
+    _nicht_vorlage(projekt)
 
     material = get_db().get_material(req.material_id)
     if not material:
@@ -2315,7 +2447,7 @@ def _sammel_teile(db: Database, material: Material, projekt_ids: list[int],
     teile, offen = [], {}
     for pid in projekt_ids:
         pr = db.get_projekt(pid)
-        if not pr or pr.art == "sammel":
+        if not pr or pr.art in ("sammel", "vorlage"):
             continue
         einzel = _offener_einzelplan(db, pid, material.id)
         eigene = _schon_geplant(einzel.bretter) if einzel else {}
@@ -2389,7 +2521,7 @@ def _mitglieder_ref(db: Database, refs: list[str]) -> list[int]:
     ids = []
     for ref in refs:
         pr = db.projekt_finden(ref)
-        if not pr or pr.art == "sammel":
+        if not pr or pr.art in ("sammel", "vorlage"):
             raise _fehler(404, "projekt_unbekannt", f"Project {ref} not found")
         if pr.id not in ids:
             ids.append(pr.id)
@@ -2443,7 +2575,7 @@ def optimize_sammel(req: SammelRequest):
     if not blade:
         raise HTTPException(404, "Saw blade not found")
     projekt_ids = [pid for pid in dict.fromkeys(req.projekt_ids)
-                   if (pr := db.get_projekt(pid)) and pr.art != "sammel"]
+                   if (pr := db.get_projekt(pid)) and pr.art not in ("sammel", "vorlage")]
     if not projekt_ids:
         raise HTTPException(400, "No projects selected")
 
@@ -3192,8 +3324,10 @@ def fill_candidates(pid: int, mid: int):
 def take_part_stock(pid: int, mid: int):
     """Teile-Vorrat ("Regal") dieses Projekts/Materials als gesägt übernehmen."""
     db = get_db()
-    if not db.get_projekt(pid):
+    projekt = db.get_projekt(pid)
+    if not projekt:
         raise HTTPException(404, "Project not found")
+    _nicht_vorlage(projekt)
     db.vorrat_uebernehmen(pid, mid)
     return _projekt_to_out(db.get_projekt(pid))
 
@@ -3224,8 +3358,10 @@ def confirm_all_pieces(plan_id: int):
 def restart_project(pid: int):
     """Projekt nochmal sägen: Fortschritt auf 0, Pläne weg, Lager bleibt wie es ist."""
     db = get_db()
-    if not db.get_projekt(pid):
+    projekt = db.get_projekt(pid)
+    if not projekt:
         raise HTTPException(404, "Project not found")
+    _nicht_vorlage(projekt)
     db.projekt_neu_starten(pid)
     return _projekt_to_out(db.get_projekt(pid))
 
@@ -4393,6 +4529,9 @@ WEB_EXTRA_TRANSLATIONS = {
     "plan.stock_missing_codes": {"de": "Nicht mehr im Lager: {codes} – ggf. neu optimieren", "en": "No longer in stock: {codes} – consider optimizing again", "fr": "Plus en stock : {codes} – réoptimiser si nécessaire", "it": "Non più in magazzino: {codes} – eventualmente ottimizzare di nuovo"},
     "err.lagerort_vorhanden": {"de": "Diesen Lagerort gibt es schon.", "en": "This location already exists.", "fr": "Cet emplacement existe déjà.", "it": "Questa ubicazione esiste già."},
     "err.letzter_lagerort": {"de": "Der letzte Lagerort kann nicht gelöscht werden.", "en": "The last location cannot be deleted.", "fr": "Le dernier emplacement ne peut pas être supprimé.", "it": "L’ultima ubicazione non può essere eliminata."},
+    "err.vorlage_unbekannt": {"de": "Vorlage nicht gefunden.", "en": "Template not found.", "fr": "Modèle introuvable.", "it": "Modello non trovato."},
+    "err.vorlage_leer": {"de": "Die Vorlage enthält noch keine Teile.", "en": "The template has no parts yet.", "fr": "Le modèle ne contient encore aucune pièce.", "it": "Il modello non contiene ancora pezzi."},
+    "err.vorlage_nicht_saegbar": {"de": "Eine Vorlage wird nicht selbst gesägt – starte einen Durchgang mit „Sägen ×N“.", "en": "A template is not cut itself – start a run with “Cut ×N”.", "fr": "Un modèle n’est pas découpé lui-même – lancez un passage avec « Découper ×N ».", "it": "Un modello non si taglia direttamente – avvia un passaggio con «Taglia ×N»."},
     "err.name_leer": {"de": "Bitte einen Namen eingeben.", "en": "Please enter a name.", "fr": "Veuillez saisir un nom.", "it": "Inserisci un nome."},
     "err.stueck_unbekannt": {"de": "Stück nicht gefunden.", "en": "Piece not found.", "fr": "Pièce introuvable.", "it": "Pezzo non trovato."},
     "err.abfall_zu_wenig": {"de": "Davon liegen nur {vorhanden} in der Abfallkiste.", "en": "Only {vorhanden} of these are in the offcut bin.", "fr": "Il n’y en a que {vorhanden} dans le bac à chutes.", "it": "Nella cassa ce ne sono solo {vorhanden}."},

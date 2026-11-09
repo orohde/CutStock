@@ -1288,6 +1288,176 @@ class TestSchnittliste:
         assert kopie["teile"][0]["herkunft_teil_id"] == teile["A"]["id"]
 
 
+class TestVorlagen:
+    """Vorlagen: feste Stücklisten, aus denen Durchgänge (Sägeaufträge) entstehen."""
+
+    def _setup(self, client):
+        mid = client.post("/api/materials", json={"name": "Vorlage-Alu", "typ": "Stange"}).json()["id"]
+        client.post("/api/stock", json={"material_id": mid, "laenge": 2000, "stueckzahl": 20})
+        bid = client.post("/api/blades", json={"name": "B", "schnittbreite": 3}).json()["id"]
+        r = client.post("/api/templates", json={"name": "Regal A"})
+        assert r.status_code == 201, r.text
+        v = r.json()
+        for label, laenge, n in (("Seite", 700, 2), ("Boden", 500, 3)):
+            client.post(f"/api/projects/{v['id']}/parts", json={
+                "label": label, "typ": "Stange", "material_id": mid,
+                "laenge": laenge, "stueckzahl": n})
+        return mid, bid, client.get(f"/api/projects/{v['id']}").json()
+
+    def _run(self, client, vid, saetze=1, name=""):
+        r = client.post(f"/api/templates/{vid}/run", json={"saetze": saetze, "name": name})
+        assert r.status_code == 201, r.text
+        return r.json()
+
+    def _saegen(self, client, auftrag, mid, bid):
+        plan = client.post("/api/optimize", json={
+            "project_id": auftrag["id"], "material_id": mid, "blade_id": bid}).json()
+        client.post(f"/api/plans/{plan['plan_id']}/confirm-all")
+
+    def test_vorlage_nirgends_saegbar(self, client):
+        mid, bid, v = self._setup(client)
+        assert v["art"] == "vorlage" and len(v["teile"]) == 2
+        ids = lambda art="": {p["id"] for p in client.get(
+            "/api/projects", params={"art": art} if art else None).json()}
+        assert v["id"] not in ids() | ids("alle") | ids("projekt") | ids("liste")
+        assert v["id"] in ids("vorlage")
+        assert all(x["projekt_id"] != v["id"] for x in client.get("/api/parts").json())
+        assert all(e["projekt_id"] != v["id"] for e in
+                   client.get("/api/worklist", params={"fertige": True}).json())
+        r = client.post("/api/optimize", json={
+            "project_id": v["id"], "material_id": mid, "blade_id": bid})
+        assert r.status_code == 400 and r.json()["detail"]["code"] == "vorlage_nicht_saegbar"
+        for pfad in (f"/api/projects/{v['id']}/restart",
+                     f"/api/projects/{v['id']}/take-stock/{mid}"):
+            assert client.post(pfad).json()["detail"]["code"] == "vorlage_nicht_saegbar"
+        r = client.post("/api/sammel", json={"material": str(mid), "projekte": [str(v["id"])]})
+        assert r.status_code == 404
+
+    def test_vorlage_ohne_fortschritt(self, client):
+        mid, _, v = self._setup(client)
+        t = v["teile"][0]
+        r = client.put(f"/api/parts/{t['id']}", json={**t, "gesaegt_anzahl": 2, "vorrat": 5})
+        assert (r.json()["gesaegt_anzahl"], r.json()["vorrat"]) == (0, 0)
+        r = client.post(f"/api/projects/{v['id']}/parts", json={
+            "label": "X", "typ": "Stange", "material_id": mid, "laenge": 100,
+            "stueckzahl": 1, "gesaegt_anzahl": 1})
+        assert r.json()["gesaegt_anzahl"] == 0
+        assert client.put(f"/api/projects/{v['id']}", json={"name": "Regal A", "anzahl": 4}
+                          ).json()["anzahl"] == 1
+
+    def test_durchgang_ist_saegeauftrag_mit_saetzen(self, client):
+        _, _, v = self._setup(client)
+        a = self._run(client, v["id"], saetze=3)
+        assert a["art"] == "liste" and a["anzahl"] == 3
+        assert a["name"].startswith("Regal A – ")
+        assert (a["vorlage_id"], a["vorlage_name"]) == (v["id"], "Regal A")
+        assert sorted((t["label"], t["gesamt_anzahl"], t["herkunft_teil_id"])
+                      for t in a["teile"]) == [("Boden", 9, 0), ("Seite", 6, 0)]
+        v2 = client.get(f"/api/projects/{v['id']}").json()
+        assert v2["durchgaenge"] == 1 and v2["laufend"][0]["auftrag_id"] == a["id"]
+
+    def test_zweiter_durchgang_eigenstaendig(self, client):
+        mid, bid, v = self._setup(client)
+        erster = self._run(client, v["id"], name="Erster")
+        self._saegen(client, erster, mid, bid)
+        zweiter = self._run(client, v["id"], name="Zweiter")
+        assert all(t["gesaegt_anzahl"] == 0 for t in zweiter["teile"])
+        self._saegen(client, zweiter, mid, bid)
+        for a in (erster, zweiter):
+            teile = client.get(f"/api/projects/{a['id']}").json()["teile"]
+            assert all(t["gesaegt_anzahl"] == t["gesamt_anzahl"] and t["vorrat"] == 0
+                       for t in teile)
+        # Die Vorlage selbst bleibt unberührt
+        assert all(t["gesaegt_anzahl"] == 0 for t in
+                   client.get(f"/api/projects/{v['id']}").json()["teile"])
+
+    def test_vorlage_aendern_wirkt_nicht_auf_laufenden(self, client):
+        mid, _, v = self._setup(client)
+        a = self._run(client, v["id"])
+        t = next(x for x in v["teile"] if x["label"] == "Seite")
+        client.put(f"/api/parts/{t['id']}", json={**t, "laenge": 777})
+        client.post(f"/api/projects/{v['id']}/parts", json={
+            "label": "Rückwand", "typ": "Stange", "material_id": mid, "laenge": 300})
+        alt = client.get(f"/api/projects/{a['id']}").json()["teile"]
+        assert sorted((x["label"], x["laenge"]) for x in alt) == [("Boden", 500), ("Seite", 700)]
+        neu = self._run(client, v["id"])
+        assert sorted(x["label"] for x in neu["teile"]) == ["Boden", "Rückwand", "Seite"]
+
+    def test_verlauf_fertig_und_geloescht(self, client):
+        mid, bid, v = self._setup(client)
+        a = self._run(client, v["id"], saetze=2, name="Lauf 1")
+        lauf = client.get(f"/api/templates/{v['id']}/runs").json()[0]
+        assert (lauf["gesaegt"], lauf["gesamt"], lauf["fertig"]) == (0, 10, 0)
+        self._saegen(client, a, mid, bid)
+        lauf = client.get(f"/api/templates/{v['id']}/runs").json()[0]
+        assert lauf["gesaegt"] == 10 and lauf["fertig"] > 0
+        assert client.get(f"/api/projects/{v['id']}").json()["laufend"] == []
+        # Zurücknehmen: wieder offen
+        plan = client.get(f"/api/projects/{a['id']}/plans/{mid}").json()
+        stueck = plan["schnittplaene"][0]["platzierungen"][0]
+        client.post(f"/api/plan-pieces/{stueck['id']}", json={"gesaegt": False})
+        assert client.get(f"/api/templates/{v['id']}/runs").json()[0]["fertig"] == 0
+        # Löschen: Eintrag bleibt mit letztem Stand
+        client.delete(f"/api/projects/{a['id']}")
+        lauf = client.get(f"/api/templates/{v['id']}/runs").json()[0]
+        assert (lauf["auftrag_id"], lauf["name"], lauf["gesaegt"], lauf["gesamt"]) == (
+            0, "Lauf 1", 9, 10)
+
+    def test_vorlage_loeschen_laesst_durchgang_stehen(self, client):
+        _, _, v = self._setup(client)
+        a = self._run(client, v["id"])
+        client.delete(f"/api/projects/{v['id']}")
+        rest = client.get(f"/api/projects/{a['id']}").json()
+        assert rest["art"] == "liste" and rest["vorlage_id"] == 0
+
+    def test_leere_und_unbekannte_vorlage(self, client):
+        v = client.post("/api/templates", json={"name": "Leer"}).json()
+        r = client.post(f"/api/templates/{v['id']}/run", json={"saetze": 1})
+        assert r.status_code == 400 and r.json()["detail"]["code"] == "vorlage_leer"
+        assert client.post("/api/templates/999999/run", json={}).json()["detail"]["code"] \
+            == "vorlage_unbekannt"
+        assert client.post("/api/templates", json={"name": " "}).json()["detail"]["code"] \
+            == "name_leer"
+        pid = client.post("/api/projects", json={"name": "P"}).json()["id"]
+        assert client.get(f"/api/templates/{pid}/runs").status_code == 404
+
+    def test_aus_saegeauftrag_ohne_projektzusatz(self, client):
+        mid = client.post("/api/materials", json={"name": "AT-Alu", "typ": "Stange"}).json()["id"]
+        teile = []
+        for proj, label in (("P1", "Leiste"), ("P2", "Leiste"), ("P2", "Sprosse")):
+            pid = next((p["id"] for p in client.get("/api/projects").json()
+                        if p["name"] == proj and p["art"] == ""), None) \
+                or client.post("/api/projects", json={"name": proj}).json()["id"]
+            teile.append(client.post(f"/api/projects/{pid}/parts", json={
+                "label": label, "typ": "Stange", "material_id": mid,
+                "laenge": 400, "stueckzahl": 3}).json())
+        liste = client.post("/api/cut-lists", json={"name": "Auftrag", "eintraege": [
+            {"teil_id": t["id"], "menge": 2} for t in teile]}).json()
+        r = client.post(f"/api/projects/{liste['id']}/as-template", json={"name": ""})
+        assert r.status_code == 201, r.text
+        v = r.json()
+        assert v["art"] == "vorlage" and v["name"] == "Auftrag"
+        assert sorted((t["label"], t["stueckzahl"], t["herkunft_teil_id"]) for t in v["teile"]) \
+            == [("Leiste (P1)", 2, 0), ("Leiste (P2)", 2, 0), ("Sprosse", 2, 0)]
+        # Der Sägeauftrag bleibt unverändert
+        assert len(client.get(f"/api/projects/{liste['id']}").json()["teile"]) == 3
+
+    def test_aus_projekt_je_exemplar(self, client):
+        mid = client.post("/api/materials", json={"name": "AP-Alu", "typ": "Stange"}).json()["id"]
+        pid = client.post("/api/projects", json={"name": "Stuhl", "anzahl": 4}).json()["id"]
+        client.post(f"/api/projects/{pid}/parts", json={
+            "label": "Bein", "typ": "Stange", "material_id": mid, "laenge": 450,
+            "stueckzahl": 4, "gesaegt_anzahl": 5})
+        v = client.post(f"/api/projects/{pid}/as-template", json={"name": "Stuhl-Vorlage"}).json()
+        t = v["teile"][0]
+        assert (v["anzahl"], t["stueckzahl"], t["gesaegt_anzahl"]) == (1, 4, 0)
+
+    def test_duplizieren_bleibt_vorlage(self, client):
+        _, _, v = self._setup(client)
+        kopie = client.post(f"/api/projects/{v['id']}/clone").json()
+        assert kopie["art"] == "vorlage" and len(kopie["teile"]) == 2
+
+
 class TestArbeitsliste:
     """Reiter „Optimierung“: Arbeitsliste mit Status, Sägeblatt je Material."""
 

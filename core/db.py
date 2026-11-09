@@ -170,6 +170,21 @@ CREATE TABLE IF NOT EXISTS projekt (
     sammel_material_id INTEGER NOT NULL DEFAULT 0
 );
 
+-- Verlauf einer Vorlage (projekt.art='vorlage'): ein Eintrag je Durchgang.
+-- Der Durchgang ist ein Sägeauftrag (art='liste'); wird er gelöscht, bleibt der
+-- Eintrag mit auftrag_id=0 und dem letzten Stand in gesaegt.
+CREATE TABLE IF NOT EXISTS vorlage_lauf (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    vorlage_id   INTEGER NOT NULL,
+    auftrag_id   INTEGER NOT NULL DEFAULT 0,
+    name         TEXT    NOT NULL,
+    saetze       INTEGER NOT NULL,
+    teile_gesamt INTEGER NOT NULL,
+    angelegt     REAL    NOT NULL,
+    fertig       REAL    NOT NULL DEFAULT 0,
+    gesaegt      INTEGER NOT NULL DEFAULT 0
+);
+
 -- Mitglieder eines Sammelplans (Sammel-Projekt ↔ beteiligte Projekte)
 CREATE TABLE IF NOT EXISTS sammel_mitglied (
     sammel_id   INTEGER NOT NULL REFERENCES projekt(id) ON DELETE CASCADE,
@@ -1043,6 +1058,8 @@ class Database:
             )
             p.id = cur.lastrowid
         else:
+            if p.art == "vorlage":
+                p.anzahl = 1   # eine Vorlage ist genau ein Satz
             self.conn.execute(
                 "UPDATE projekt SET name=?, anzahl=? WHERE id=?", (p.name, p.anzahl, p.id)
             )
@@ -1052,14 +1069,21 @@ class Database:
                    status = CASE WHEN MIN(gesaegt_anzahl, stueckzahl * ?) >= stueckzahl * ?
                    THEN 'gesägt' ELSE 'offen' END WHERE projekt_id=?""",
                 (p.anzahl, p.anzahl, p.anzahl, p.id))
+            self._durchgang_stand(p.id)
         self.conn.commit()
         return p
 
-    def list_projekte(self, sammel: bool = False) -> list[Projekt]:
-        """Alle normalen Projekte (ohne Sammelpläne) bzw. mit sammel=True nur die Sammelpläne."""
+    def list_projekte(self, sammel: bool = False, vorlagen: bool = False) -> list[Projekt]:
+        """Projekte und Sägeaufträge (ohne Sammelpläne und Vorlagen); mit sammel=True nur
+        die Sammelpläne, mit vorlagen=True nur die Vorlagen."""
+        if sammel:
+            bedingung = "art = 'sammel'"
+        elif vorlagen:
+            bedingung = "art = 'vorlage'"
+        else:
+            bedingung = "art NOT IN ('sammel', 'vorlage')"
         rows = self.conn.execute(
-            f"SELECT * FROM projekt WHERE art {'=' if sammel else '!='} 'sammel'"
-            " ORDER BY name").fetchall()
+            f"SELECT * FROM projekt WHERE {bedingung} ORDER BY name").fetchall()
         projekte = []
         for r in rows:
             p = self._row_to_projekt(r)
@@ -1208,6 +1232,13 @@ class Database:
         return n
 
     def delete_projekt(self, pid: int):
+        # Durchgang einer Vorlage: Verlauf behält den letzten Stand
+        stand = self._auftrag_stand(pid)
+        if stand:
+            self.conn.execute(
+                "UPDATE vorlage_lauf SET auftrag_id=0, gesaegt=? WHERE auftrag_id=?",
+                (stand[0], pid))
+        self.conn.execute("DELETE FROM vorlage_lauf WHERE vorlage_id=?", (pid,))
         self.conn.execute("DELETE FROM schnittplan WHERE projekt_id=?", (pid,))
         self.conn.execute("DELETE FROM teil WHERE projekt_id=?", (pid,))
         self.conn.execute("DELETE FROM projekt WHERE id=?", (pid,))
@@ -1249,6 +1280,7 @@ class Database:
                  t.laenge, t.breite, t.stueckzahl, t.gesaegt_anzahl,
                  t.maserung.value, t.status.value, t.id),
             )
+        self._durchgang_stand(t.projekt_id)
         self.conn.commit()
         return t
 
@@ -1262,7 +1294,10 @@ class Database:
         return [self._row_to_teil(r) for r in rows]
 
     def delete_teil(self, tid: int):
+        row = self.conn.execute("SELECT projekt_id FROM teil WHERE id=?", (tid,)).fetchone()
         self.conn.execute("DELETE FROM teil WHERE id=?", (tid,))
+        if row:
+            self._durchgang_stand(row["projekt_id"])
         self.conn.commit()
 
     @staticmethod
@@ -1491,6 +1526,9 @@ class Database:
             """UPDATE teil SET status = CASE WHEN gesaegt_anzahl >=
                    stueckzahl * (SELECT anzahl FROM projekt WHERE id = teil.projekt_id)
                THEN 'gesägt' ELSE 'offen' END WHERE id=?""", (teil_id,))
+        row = self.conn.execute("SELECT projekt_id FROM teil WHERE id=?", (teil_id,)).fetchone()
+        if row:
+            self._durchgang_stand(row["projekt_id"])
         self.conn.commit()
 
     def teil_vorrat_aendern(self, teil_id: int, delta: int):
@@ -1578,7 +1616,115 @@ class Database:
             "UPDATE teil SET gesaegt_anzahl=0, status='offen' WHERE projekt_id=?",
             (projekt_id,))
         self.conn.execute("DELETE FROM schnittplan WHERE projekt_id=?", (projekt_id,))
+        self._durchgang_stand(projekt_id)
         self.conn.commit()
+
+    # ------------------------------------------------------------------
+    # Vorlagen: feste Stücklisten, aus denen Durchgänge (Sägeaufträge) entstehen
+    # ------------------------------------------------------------------
+
+    def vorlage_anlegen(self, name: str) -> Projekt:
+        cur = self.conn.execute(
+            "INSERT INTO projekt (name, anzahl, art) VALUES (?,1,'vorlage')", (name,))
+        self.conn.commit()
+        return self.get_projekt(cur.lastrowid)
+
+    def vorlage_aus_projekt(self, projekt_id: int, name: str) -> Projekt:
+        """Vorlage mit Kopien der Teile eines Projekts, Sägeauftrags oder einer Vorlage.
+
+        Stückzahl = Stückzahl je Exemplar. Sägeauftrags-Teile heißen „Label (Projekt)“;
+        der Zusatz entfällt (Name des Herkunftsteils), außer zwei Teile hießen dann gleich.
+        """
+        quelle = self.list_teile(projekt_id)
+        kurz = []
+        for t in quelle:
+            herkunft = self.get_teil(t.herkunft_teil_id) if t.herkunft_teil_id else None
+            kurz.append(herkunft.label if herkunft else t.label)
+        doppelt = {k for k in kurz if kurz.count(k) > 1}
+        cur = self.conn.execute(
+            "INSERT INTO projekt (name, anzahl, art) VALUES (?,1,'vorlage')", (name,))
+        vid = cur.lastrowid
+        for t, k in zip(quelle, kurz):
+            self.conn.execute(
+                """INSERT INTO teil (projekt_id, label, typ, material_id, laenge, breite,
+                       stueckzahl, maserung)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (vid, t.label if k in doppelt else k, t.typ.value, t.material_id,
+                 t.laenge, t.breite, t.stueckzahl, t.maserung.value))
+        self.conn.commit()
+        return self.get_projekt(vid)
+
+    def durchgang_anlegen(self, vorlage_id: int, saetze: int, name: str) -> Projekt:
+        """Sägeauftrag (art='liste', anzahl=Sätze) mit eigenen Teilen ohne Herkunft:
+        gesägt zählt nur beim Durchgang. Die Vorlage bleibt unverändert."""
+        import time
+        teile = self.list_teile(vorlage_id)
+        cur = self.conn.execute(
+            "INSERT INTO projekt (name, anzahl, art) VALUES (?,?,'liste')", (name, saetze))
+        aid = cur.lastrowid
+        for t in teile:
+            self.conn.execute(
+                """INSERT INTO teil (projekt_id, label, typ, material_id, laenge, breite,
+                       stueckzahl, maserung)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (aid, t.label, t.typ.value, t.material_id, t.laenge, t.breite,
+                 t.stueckzahl, t.maserung.value))
+        self.conn.execute(
+            """INSERT INTO vorlage_lauf (vorlage_id, auftrag_id, name, saetze, teile_gesamt,
+                   angelegt) VALUES (?,?,?,?,?,?)""",
+            (vorlage_id, aid, name, saetze, sum(t.stueckzahl for t in teile) * saetze,
+             time.time()))
+        self.conn.commit()
+        return self.get_projekt(aid)
+
+    def vorlage_von_durchgang(self, auftrag_id: int) -> Projekt | None:
+        """Die Vorlage, aus der dieser Sägeauftrag entstanden ist (ohne Teile)."""
+        row = self.conn.execute(
+            """SELECT p.* FROM vorlage_lauf l JOIN projekt p ON p.id = l.vorlage_id
+               WHERE l.auftrag_id=?""", (auftrag_id,)).fetchone()
+        return self._row_to_projekt(row) if row else None
+
+    def _auftrag_stand(self, auftrag_id: int) -> tuple[int, int] | None:
+        """(gesägt, gesamt) eines Durchgangs, None wenn er zu keiner Vorlage gehört."""
+        if not self.conn.execute(
+                "SELECT 1 FROM vorlage_lauf WHERE auftrag_id=?", (auftrag_id,)).fetchone():
+            return None
+        row = self.conn.execute(
+            """SELECT COALESCE(SUM(MIN(t.gesaegt_anzahl, t.stueckzahl * p.anzahl)), 0) AS g,
+                      COALESCE(SUM(t.stueckzahl * p.anzahl), 0) AS n
+               FROM teil t JOIN projekt p ON p.id = t.projekt_id
+               WHERE t.projekt_id=?""", (auftrag_id,)).fetchone()
+        return row["g"], row["n"]
+
+    def _durchgang_stand(self, auftrag_id: int):
+        """Fertig-Zeitpunkt eines Durchgangs nachziehen (ohne Commit)."""
+        import time
+        stand = self._auftrag_stand(auftrag_id)
+        if stand is None:
+            return
+        gesaegt, gesamt = stand
+        if gesamt > 0 and gesaegt >= gesamt:
+            self.conn.execute(
+                "UPDATE vorlage_lauf SET fertig=? WHERE auftrag_id=? AND fertig=0",
+                (time.time(), auftrag_id))
+        else:
+            self.conn.execute(
+                "UPDATE vorlage_lauf SET fertig=0 WHERE auftrag_id=?", (auftrag_id,))
+
+    def vorlage_verlauf(self, vorlage_id: int) -> list[dict]:
+        """Durchgänge einer Vorlage, neueste zuerst; gesägt/gesamt live, solange der
+        Sägeauftrag existiert."""
+        rows = self.conn.execute(
+            "SELECT * FROM vorlage_lauf WHERE vorlage_id=? ORDER BY angelegt DESC, id DESC",
+            (vorlage_id,)).fetchall()
+        erg = []
+        for r in rows:
+            d = dict(r)
+            stand = self._auftrag_stand(r["auftrag_id"]) if r["auftrag_id"] else None
+            if stand:
+                d["gesaegt"], d["teile_gesamt"] = stand
+            erg.append(d)
+        return erg
 
     # ------------------------------------------------------------------
     # Lager-Operationen für den Optimierungslauf
