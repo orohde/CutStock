@@ -1139,6 +1139,21 @@ class Database:
             "SELECT projekt_id FROM sammel_mitglied WHERE sammel_id=? ORDER BY projekt_id",
             (sammel_id,))]
 
+    def sammel_neu_starten(self, sammel_id: int, material_id: int):
+        """Sammelplan noch einmal sägen: Fortschritt der Teile dieses Materials in allen
+        Mitgliedern auf 0, Sammelplan und Einzelpläne der Mitglieder für dieses Material
+        löschen. Andere Materialien der Projekte und das Lager bleiben unverändert."""
+        mitglieder = self.sammel_mitglieder(sammel_id)
+        for pid in mitglieder:
+            self.conn.execute(
+                "UPDATE teil SET gesaegt_anzahl=0, status='offen' "
+                "WHERE projekt_id=? AND material_id=?", (pid, material_id))
+        self.conn.execute(
+            "DELETE FROM schnittplan WHERE material_id=? AND projekt_id IN (%s)"
+            % ",".join("?" * (len(mitglieder) + 1)),
+            (material_id, sammel_id, *mitglieder))
+        self.conn.commit()
+
     def sammel_mitglieder_setzen(self, sammel_id: int, projekt_ids: list[int]):
         self.conn.execute("DELETE FROM sammel_mitglied WHERE sammel_id=?", (sammel_id,))
         self.conn.executemany(

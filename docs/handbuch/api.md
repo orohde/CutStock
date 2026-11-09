@@ -95,6 +95,7 @@ Anfragen von der eigenen Web-Oberfläche (Same-Origin) und von localhost sind im
 | GET | `/api/sammel/{material_id}` | Sammelplan-Status und mögliche Projekte |
 | POST | `/api/sammel` | Sammelplan anlegen (Material und Projekte, noch ohne Schnittplan) |
 | PUT | `/api/sammel/{id oder Kuerzel}/members` | Mitglieder des Sammelplans eines Materials ersetzen |
+| POST | `/api/sammel/{id oder Kuerzel}/restart` | Sammelplan neu starten (Teile dieses Materials in allen Mitgliedern wieder offen, Pläne weg, Lager bleibt) |
 | POST | `/api/sammel/optimize` | Sammelplan anlegen/ersetzen und berechnen |
 | GET | `/api/parts` | Teile aller Projekte mit Verplanung: `beauftragt`, `auftraege`, `verplant`, `sammelplan`, `verfuegbar` (Reiter "Teile") |
 | GET | `/api/parts/materials` | Verfügbare Teile je Material mit grober Lager-Schätzung (`bedarf`, `lager`, `reicht`, `fehlt_stueck`) |
@@ -244,6 +245,11 @@ POST /api/sammel
 Material per ID oder Kürzel, Projekte per ID oder Namen, `name` optional. Gibt es für das
 Material schon einen, kommt `409 sammel_vorhanden` mit `sammel_id`; unbekannt sind
 `404 material_unbekannt` bzw. `projekt_unbekannt`. Berechnet wird mit `POST /api/sammel/optimize`.
+Ist in den Mitgliedern in diesem Material nichts mehr offen, antwortet es mit
+`400 sammel_nichts_offen` und lässt einen fertig gesägten Plan stehen. Zum erneuten Sägen
+`POST /api/sammel/{id oder Kürzel}/restart`: setzt `gesaegt_anzahl` der Teile dieses Materials in
+allen Mitgliedern auf 0 und löscht Sammelplan und Einzelpläne für dieses Material; andere
+Materialien und das Lager bleiben.
 
 Mitglieder ändern (ein berechneter Plan gilt danach als `veraltet`):
 

@@ -980,6 +980,46 @@ class TestSammelplan:
         labels = sorted(p["teil_label"] for p in self._stuecke(plan))
         assert labels == ["Seite → A"] * 4 + ["Seite → B"] * 4   # gleiche Labels getrennt
 
+    def _fertig_saegen(self, client, mid, bid, a, b):
+        plan = self._sammel(client, mid, bid, [a, b])
+        client.post(f"/api/plans/{plan['plan_id']}/confirm-all")
+        return plan
+
+    def test_neu_berechnen_ohne_offene_teile_behaelt_fertigen_plan(self, client):
+        mid, bid, a, b = self._setup(client)
+        plan = self._fertig_saegen(client, mid, bid, a, b)
+        r = client.post("/api/sammel/optimize", json=self._req(mid, bid, [a, b]))
+        assert r.status_code == 400 and r.json()["detail"]["code"] == "sammel_nichts_offen"
+        sid = plan["projekt_id"]
+        alt = client.get(f"/api/projects/{sid}/plans/{mid}").json()
+        assert alt and alt["plan_id"] == plan["plan_id"]          # nicht verworfen
+
+    def test_sammelplan_neu_starten(self, client):
+        mid, bid, a, b = self._setup(client)
+        # A hat noch ein Teil aus einem anderen Material – das bleibt unberührt
+        andere = client.post("/api/materials", json={"name": "Holz", "typ": "Stange"}).json()["id"]
+        fremd = client.post(f"/api/projects/{a}/parts", json={
+            "label": "Griff", "typ": "Stange", "material_id": andere, "laenge": 100,
+            "stueckzahl": 2, "gesaegt_anzahl": 2}).json()
+        plan = self._fertig_saegen(client, mid, bid, a, b)
+        r = client.post(f"/api/sammel/{mid}/restart")
+        assert r.status_code == 200, r.text
+        assert r.json()["plaene"] == []
+        for pid in (a, b):
+            for t in client.get(f"/api/projects/{pid}/parts").json():
+                if t["material_id"] == mid:
+                    assert t["gesaegt_anzahl"] == 0
+        assert client.get(f"/api/projects/{a}/parts").json() and next(
+            t for t in client.get(f"/api/projects/{a}/parts").json()
+            if t["id"] == fremd["id"])["gesaegt_anzahl"] == 2
+        neu = self._sammel(client, mid, bid, [a, b])
+        assert neu["plan_id"] != plan["plan_id"] and len(self._stuecke(neu)) == 8
+
+    def test_sammelplan_neu_starten_unbekannt(self, client):
+        mid = client.post("/api/materials", json={"name": "Ohne", "typ": "Stange"}).json()["id"]
+        r = client.post(f"/api/sammel/{mid}/restart")
+        assert r.status_code == 404 and r.json()["detail"]["code"] == "sammel_unbekannt"
+
     def test_vergleich_getrennt_teilt_sich_das_lager(self, client):
         """Getrennt darf nicht jedes Projekt denselben Rest verplanen."""
         mid = client.post("/api/materials", json={"name": "Alu", "typ": "Stange"}).json()["id"]

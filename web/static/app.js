@@ -347,6 +347,7 @@ const Api = {
     setPieceSawn: (pieceId, gesaegt) => fetchJSON(`/api/plan-pieces/${pieceId}`, 'POST', { gesaegt }),
     confirmAllPieces: (planId) => fetchJSON(`/api/plans/${planId}/confirm-all`, 'POST'),
     restartProject: (projectId) => fetchJSON(`/api/projects/${projectId}/restart`, 'POST'),
+    restartSammel: (materialId) => fetchJSON(`/api/sammel/${materialId}/restart`, 'POST'),
     discardPlan: (planId) => fetchJSON(`/api/plans/${planId}`, 'DELETE'),
     getSammel: (materialId) => fetchJSON(`/api/sammel/${materialId}`),
     getLabelFormats: () => fetchJSON('/api/labels/formats'),
@@ -1183,6 +1184,9 @@ async function renderParts() {
 
     const sammel = selectedSammel();
     document.getElementById('parts-toolbar')?.classList.toggle('hidden', !!sammel);
+    // Neu starten gilt bei einem Sammelplan für sein Material in allen Mitgliedern
+    const restartBtn = document.getElementById('btn-proj-restart');
+    if (restartBtn) restartBtn.textContent = t(sammel ? 'sammel.restart' : 'plan.restart');
     if (sammel) { await renderSammelParts(sammel); return; }
     document.getElementById('sammel-detail')?.classList.add('hidden');
 
@@ -3521,6 +3525,23 @@ async function discardPlan() {
 }
 
 // „Projekt neu starten" (Reiter Projekte): Fortschritt auf 0, Pläne löschen (Lager bleibt).
+// „Sammelplan neu starten“: Teile seines Materials in allen Mitgliedern wieder offen
+function restartSammel(sammel) {
+    const material = State.materials.find(m => m.id === sammel.sammel_material_id)?.name || '';
+    const projekte = sammel.mitglieder
+        .map(id => State.projects.find(p => p.id === id)?.name).filter(Boolean).join(', ');
+    openConfirmDialog(t('sammel.restart_confirm', { name: sammel.name, projekte, material }), async () => {
+        try { await Api.restartSammel(sammel.sammel_material_id); } catch { return; }
+        if (State.optMode === 'material'
+            && parseInt(document.getElementById('opt-material')?.value) === sammel.sammel_material_id) {
+            clearOptResult();
+        }
+        await renderProjects();
+        renderOptDropdowns();
+        showToast(t('sammel.restarted'), 'info');
+    });
+}
+
 async function restartProject(projId) {
     try { await Api.restartProject(projId); } catch { return; }
     if (optProjId() === projId) clearOptResult();
@@ -6053,6 +6074,8 @@ function initEvents() {
     });
 
     document.getElementById('btn-proj-restart')?.addEventListener('click', () => {
+        const sammel = selectedSammel();
+        if (sammel) { restartSammel(sammel); return; }
         const proj = State.projects.find(p => p.id === State.selectedProjectId);
         if (!proj) { showToast(t('dlg.select_project'), 'error'); return; }
         openConfirmDialog(t('plan.restart_confirm') + '\n\n' + t('tpl.restart_tip'), () => restartProject(proj.id));

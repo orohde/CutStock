@@ -95,6 +95,7 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | GET | `/api/sammel/{material_id}` | Combined plan status and eligible projects |
 | POST | `/api/sammel` | Create a combined plan (material and projects, no cutting plan yet) |
 | PUT | `/api/sammel/{id or code}/members` | Replace the members of a material's combined plan |
+| POST | `/api/sammel/{id or code}/restart` | Restart combined plan (parts of this material open again in all members, plans removed, stock unchanged) |
 | POST | `/api/sammel/optimize` | Create/replace and compute the combined plan |
 | GET | `/api/parts` | Parts of all projects with planning state: `beauftragt` (in cut jobs), `auftraege`, `verplant`, `sammelplan`, `verfuegbar` ("Parts" tab) |
 | GET | `/api/parts/materials` | Available parts per material with a rough stock estimate (`bedarf`, `lager`, `reicht`, `fehlt_stueck`) |
@@ -243,7 +244,11 @@ POST /api/sammel
 Material by ID or code, projects by ID or name, `name` optional. If the material already has
 one, you get `409 sammel_vorhanden` with `sammel_id`; unknown references give
 `404 material_unbekannt` or `projekt_unbekannt`. The plan is calculated with
-`POST /api/sammel/optimize`.
+`POST /api/sammel/optimize`. If nothing is open in this material in the members, it answers
+`400 sammel_nichts_offen` and keeps a fully cut plan. To cut it again,
+`POST /api/sammel/{id or code}/restart` sets `gesaegt_anzahl` of the parts of this material in all
+members to 0 and deletes the combined plan and the members' plans for this material; other
+materials and stock stay unchanged.
 
 Change members (a calculated plan is then `veraltet`, i.e. outdated):
 

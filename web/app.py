@@ -2545,6 +2545,20 @@ def create_sammel(data: SammelCreateIn):
     return _projekt_to_out(db.get_projekt(sammel.id))
 
 
+@app.post("/api/sammel/{material}/restart", response_model=ProjectOut)
+def restart_sammel(material: str):
+    """Sammelplan noch einmal sägen: In allen Mitglieds-Projekten geht der Fortschritt
+    der Teile dieses Materials auf 0, der Sammelplan und die Einzelpläne der Mitglieder
+    für dieses Material werden gelöscht. Andere Materialien und das Lager bleiben."""
+    db = get_db()
+    mat = _material_ref(db, material)
+    sammel = db.get_sammel(mat.id)
+    if not sammel:
+        raise _fehler(404, "sammel_unbekannt", f"“{mat.name}” has no combined plan")
+    db.sammel_neu_starten(sammel.id, mat.id)
+    return _projekt_to_out(db.get_projekt(sammel.id))
+
+
 @app.put("/api/sammel/{material}/members", response_model=ProjectOut)
 def set_sammel_members(material: str, data: SammelMembersIn):
     """Mitglieder des Sammelplans eines Materials (ID oder Kürzel) ersetzen.
@@ -2583,23 +2597,28 @@ def optimize_sammel(req: SammelRequest):
     is_1d = material.typ == MaterialTyp.STANGE
     sammel = db.get_sammel(material.id) or db.sammel_anlegen(
         material.id, f"Sammelplan {material.name}")
+
+    # Erst prüfen, ob es etwas zu sägen gibt – vorher nichts verwerfen. Ein fertig
+    # gesägter Plan bleibt sonst stehen (früher war er danach weg).
+    alt = db.get_plan(sammel.id, material.id)
+    alt_fertig = bool(alt) and all(st.gesaegt for b in alt.bretter for st in b.stuecke)
+    behalten = [] if alt_fertig else _angefangene_bretter(alt, is_1d)
+    teile, offen = _sammel_teile(db, material, projekt_ids, sammel.id,
+                                 _schon_geplant(behalten))
+    if not teile and not behalten:
+        raise _fehler(400, "sammel_nichts_offen",
+                      "Nothing is open in this material in the member projects; "
+                      "restart the combined plan first")
+
     for pid in projekt_ids:
         if einzel := _offener_einzelplan(db, pid, material.id):
             db.delete_plan(einzel.id)
-
-    alt = db.get_plan(sammel.id, material.id)
-    if alt and all(st.gesaegt for b in alt.bretter for st in b.stuecke):
+    if alt_fertig:
         db.delete_plan(alt.id)
-        alt = None
-    behalten = _angefangene_bretter(alt, is_1d)
     db.sammel_mitglieder_setzen(sammel.id, projekt_ids)
-    teile, offen = _sammel_teile(db, material, projekt_ids, sammel.id,
-                                 _schon_geplant(behalten))
     sammel = db.get_projekt(sammel.id)
     if not teile:
-        if behalten:
-            return _plan_speichern(sammel, material, blade, req.algorithm, behalten, [], [])
-        raise HTTPException(400, "No open parts for this material")
+        return _plan_speichern(sammel, material, blade, req.algorithm, behalten, [], [])
 
     kerf = blade.schnittbreite
     lage = _lagerlage(db, material.id, ausser_projekt=sammel.id)
@@ -4572,6 +4591,10 @@ WEB_EXTRA_TRANSLATIONS = {
     "plan.stock_missing_codes": {"de": "Nicht mehr im Lager: {codes} – ggf. neu optimieren", "en": "No longer in stock: {codes} – consider optimizing again", "fr": "Plus en stock : {codes} – réoptimiser si nécessaire", "it": "Non più in magazzino: {codes} – eventualmente ottimizzare di nuovo"},
     "err.lagerort_vorhanden": {"de": "Diesen Lagerort gibt es schon.", "en": "This location already exists.", "fr": "Cet emplacement existe déjà.", "it": "Questa ubicazione esiste già."},
     "err.letzter_lagerort": {"de": "Der letzte Lagerort kann nicht gelöscht werden.", "en": "The last location cannot be deleted.", "fr": "Le dernier emplacement ne peut pas être supprimé.", "it": "L’ultima ubicazione non può essere eliminata."},
+    "err.sammel_nichts_offen": {"de": "In den Projekten dieses Sammelplans ist in diesem Material nichts mehr offen. Zum erneuten Sägen im Reiter Projekte den Sammelplan auswählen und „Sammelplan neu starten“.", "en": "Nothing is open in this material in the projects of this combined plan. To cut it again, select the combined plan in the Projects tab and use “Restart combined plan”.", "fr": "Plus rien n’est ouvert dans ce matériau dans les projets de ce plan groupé. Pour le découper à nouveau, sélectionnez le plan groupé dans l’onglet Projets et utilisez « Recommencer le plan groupé ».", "it": "Nei progetti di questo piano cumulativo non c’è più nulla di aperto in questo materiale. Per tagliarlo di nuovo seleziona il piano cumulativo nella scheda Progetti e usa «Ricomincia piano cumulativo»."},
+    "sammel.restart": {"de": "Sammelplan neu starten", "en": "Restart combined plan", "fr": "Recommencer le plan groupé", "it": "Ricomincia piano cumulativo"},
+    "sammel.restart_confirm": {"de": "Sammelplan „{name}“ neu starten, um ihn noch einmal zu sägen?\n- In {projekte} geht der Fortschritt aller Teile aus {material} auf 0\n- Teile aus anderen Materialien bleiben, wie sie sind\n- Der gespeicherte Sammelplan wird gelöscht, das Lager bleibt unverändert\n\nDanach „Optimieren“ – gerechnet wird mit dem aktuellen Lager samt Resten.", "en": "Restart combined plan “{name}” to cut it again?\n- In {projekte}, progress of all parts made of {material} goes back to 0\n- Parts of other materials stay as they are\n- The saved combined plan is deleted, stock stays unchanged\n\nThen “Optimize” – it is calculated with the current stock including remnants.", "fr": "Recommencer le plan groupé « {name} » pour le découper à nouveau ?\n- Dans {projekte}, la progression de toutes les pièces en {material} revient à 0\n- Les pièces d’autres matériaux restent inchangées\n- Le plan groupé enregistré est supprimé, le stock reste inchangé\n\nEnsuite « Optimiser » – le calcul utilise le stock actuel, chutes comprises.", "it": "Ricominciare il piano cumulativo «{name}» per tagliarlo di nuovo?\n- In {projekte} l’avanzamento di tutti i pezzi in {material} torna a 0\n- I pezzi di altri materiali restano invariati\n- Il piano cumulativo salvato viene eliminato, il magazzino resta invariato\n\nPoi «Ottimizza» – si calcola con il magazzino attuale, sfridi compresi."},
+    "sammel.restarted": {"de": "Sammelplan neu gestartet – jetzt optimieren", "en": "Combined plan restarted – optimize it now", "fr": "Plan groupé recommencé – optimisez-le maintenant", "it": "Piano cumulativo ricominciato – ora ottimizzalo"},
     "err.vorlage_unbekannt": {"de": "Vorlage nicht gefunden.", "en": "Template not found.", "fr": "Modèle introuvable.", "it": "Modello non trovato."},
     "err.vorlage_leer": {"de": "Die Vorlage enthält noch keine Teile.", "en": "The template has no parts yet.", "fr": "Le modèle ne contient encore aucune pièce.", "it": "Il modello non contiene ancora pezzi."},
     "err.vorlage_nicht_saegbar": {"de": "Eine Vorlage wird nicht selbst gesägt – starte einen Durchgang mit „Sägen ×N“.", "en": "A template is not cut itself – start a run with “Cut ×N”.", "fr": "Un modèle n’est pas découpé lui-même – lancez un passage avec « Découper ×N ».", "it": "Un modello non si taglia direttamente – avvia un passaggio con «Taglia ×N»."},

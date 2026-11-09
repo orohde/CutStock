@@ -50,6 +50,12 @@ saves whole bars or panels. There is at most one combined plan per material. The
   the project; parts are edited there.
 - **Optimize** jumps to [Optimization](5-optimization.md#combined-plan) and selects this combined
   plan there.
+- **Restart combined plan** (the "Restart project" button is called this while a combined plan is
+  selected): to cut it once more. In all members, progress of the parts made of **this material**
+  goes back to 0; parts of other materials stay as they are. The saved combined plan is deleted,
+  stock stays unchanged – then **Optimize**, calculated with the current stock including remnants.
+  If nothing is open in the projects any more, a fully cut plan stays when you recalculate, and
+  CutStock points you to this button.
 - **Delete** like a project, with a warning if cutting has already started. Nothing is lost:
   parts already cut stay cut in their projects, the rest becomes open again and reserved stock
   pieces are released. Afterwards the projects can be optimized individually or combined anew.
