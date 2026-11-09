@@ -248,7 +248,63 @@
           </table>
         </div>
       </div>
-      <div class="panel">
+      <div class="panel" id="tpl-panel">
+        <div class="panel-header">
+          <h2 class="fd-title fd-title--h5" data-i18n="tpl.title">Vorlagen</h2>
+          <button id="btn-tpl-new" class="fd-button" type="button" data-i18n="tpl.new">Neue Vorlage</button>
+        </div>
+        <p class="saw-hint" id="tpl-hint" data-i18n="tpl.hint"></p>
+        <div class="table-wrap">
+          <table id="tpl-table" class="fd-table">
+            <tbody class="fd-table__body"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel hidden" id="tpl-editor">
+        <div class="panel-header">
+          <h2 class="fd-title fd-title--h5">
+            <button id="btn-tpl-back" class="cs-link tpl-back" type="button" data-i18n="tpl.back">← Teile</button>
+            <span class="tpl-crumb-sep">›</span>
+            <span id="tpl-editor-name"></span>
+            <span id="tpl-editor-sub" class="parts-sub"></span>
+          </h2>
+          <div class="toolbar">
+            <button id="btn-tpl-run" class="fd-button fd-button--emphasized" type="button" data-i18n="tpl.run">Sägen ×N…</button>
+            <button id="btn-tpl-rename" class="fd-button" type="button" data-i18n="tpl.rename">Umbenennen</button>
+            <button id="btn-tpl-clone" class="fd-button" type="button" data-i18n="proj.clone">Duplizieren</button>
+            <button id="btn-tpl-delete" class="fd-button fd-button--negative" type="button" data-i18n="tpl.delete">Vorlage löschen</button>
+          </div>
+        </div>
+        <div class="toolbar tpl-parts-toolbar">
+          <button id="btn-tpl-part-new" class="fd-button" type="button" data-i18n="part.add">Neu</button>
+          <button id="btn-tpl-part-edit" class="fd-button" type="button" data-i18n="btn.edit">Bearbeiten</button>
+          <button id="btn-tpl-part-del" class="fd-button fd-button--negative" type="button" data-i18n="btn.delete">Entfernen</button>
+          <button id="btn-tpl-part-csv" class="fd-button" type="button" data-i18n="csv.import">CSV-Import</button>
+          <input type="file" id="tpl-csv-file" accept=".csv,.txt,text/csv" class="hidden">
+          <button id="btn-tpl-part-trapez" class="fd-button" type="button" data-i18n="trap.title">Trapez-Helfer</button>
+        </div>
+        <div class="table-wrap">
+          <table id="tpl-parts-table" class="fd-table">
+            <thead class="fd-table__header">
+              <tr class="fd-table__row">
+                <th class="fd-table__cell" data-i18n="tpl.col_part">Teil</th>
+                <th class="fd-table__cell" data-i18n="tpl.col_material">Material</th>
+                <th class="fd-table__cell" data-i18n="tpl.col_grain">Maserung</th>
+                <th class="fd-table__cell num" data-i18n="tpl.dims">Maße</th>
+                <th class="fd-table__cell num" data-i18n="tpl.per_set">Stück je Satz</th>
+              </tr>
+            </thead>
+            <tbody class="fd-table__body"></tbody>
+          </table>
+        </div>
+        <h3 class="fd-title fd-title--h6 tpl-runs-title" data-i18n="tpl.runs">Verlauf</h3>
+        <div class="table-wrap">
+          <table id="tpl-runs-table" class="fd-table">
+            <tbody class="fd-table__body"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel" id="parts-panel">
         <div class="panel-header">
           <h2 class="fd-title fd-title--h5"><span data-i18n="parts.title">Offene Teile</span>
             <span id="parts-summary" class="parts-summary"></span></h2>

@@ -328,6 +328,10 @@ const Api = {
     createProject: (data) => fetchJSON('/api/projects', 'POST', data),
     updateProject: (id, data) => fetchJSON(`/api/projects/${id}`, 'PUT', data),
     cloneProject: (id) => fetchJSON(`/api/projects/${id}/clone`, 'POST'),
+    createTemplate: (data) => fetchJSON('/api/templates', 'POST', data),
+    saveAsTemplate: (projectId, data) => fetchJSON(`/api/projects/${projectId}/as-template`, 'POST', data),
+    runTemplate: (id, data) => fetchJSON(`/api/templates/${id}/run`, 'POST', data),
+    getTemplateRuns: (id) => fetchJSON(`/api/templates/${id}/runs`),
     copyPartsToProject: (targetId, partIds) => fetchJSON(`/api/projects/${targetId}/copy-parts`, 'POST', { part_ids: partIds }),
     deleteProject: (id) => fetchJSON(`/api/projects/${id}`, 'DELETE'),
 
@@ -2719,14 +2723,34 @@ function offerCutListDelete() {
     if (!liste?.teile?.length || State.cutListOffered?.has(liste.id)) return;
     if (!liste.teile.every(x => x.gesaegt_anzahl >= x.gesamt_anzahl)) return;
     (State.cutListOffered ??= new Set()).add(liste.id);
-    openConfirmDialog(t('parts.list_done', { name: liste.name }), async () => {
+    const loeschen = async () => {
         try {
             await Api.deleteProject(liste.id);
             if (State.selectedProjectId === liste.id) State.selectedProjectId = null;
             await renderProjects();
             renderOptDropdowns();
         } catch { /* handled */ }
+    };
+    // Durchgang einer Vorlage: Verlauf bleibt, also nur löschen
+    if (liste.vorlage_id) {
+        openConfirmDialog(t('tpl.run_finished', { name: liste.name, vorlage: liste.vorlage_name }), loeschen);
+        return;
+    }
+    // Sonst: vor dem Löschen anbieten, ihn als Vorlage aufzuheben
+    openModal(t('btn.confirm'), [
+        { key: 'als_vorlage', label: t('tpl.keep_as'), type: 'checkbox' },
+    ], { als_vorlage: true }, async (formData) => {
+        if (formData.als_vorlage) openSaveAsTemplateDialog(liste, loeschen);
+        else await loeschen();
     });
+    // Häkchen neben dem Text statt darunter
+    const grp = document.querySelector('#modal-body [data-field="als_vorlage"]');
+    grp.innerHTML = `<label class="opt-check"><input type="checkbox" name="als_vorlage" class="cs-checkbox" checked>
+        <span>${escHtml(t('tpl.keep_as'))}</span></label>`;
+    document.getElementById('modal-body').insertAdjacentHTML('afterbegin',
+        `<p style="padding:8px 0;white-space:pre-line">${escHtml(t('parts.list_done', { name: liste.name }))}</p>`);
+    document.getElementById('modal-save').textContent = t('tpl.delete_job');
+    document.getElementById('modal-cancel').textContent = t('tpl.keep_job');
 }
 
 // „Bestätigen": alle noch nicht markierten Stücke auf einmal als gesägt markieren.
@@ -2775,16 +2799,19 @@ const PartsCollapsed = new Set();
 let partsCollapseInit = false;
 
 async function renderAllParts() {
-    let teile, uebersicht, projekte;
+    let teile, uebersicht, projekte, vorlagen;
     try {
-        [teile, uebersicht, projekte] = await Promise.all([
-            Api.getAllParts(), Api.getPartsByMaterial(), Api.getProjects()]);
+        [teile, uebersicht, projekte, vorlagen] = await Promise.all([
+            Api.getAllParts(), Api.getPartsByMaterial(), Api.getProjects(), Api.getProjects('vorlage')]);
         if (!State.materials.length) State.materials = await Api.getMaterials();
     } catch { return; }
     State.allParts = teile;
     State.partsMaterials = new Map(uebersicht.map(m => [m.material_id, m]));
     State.projects = projekte;
+    State.templates = vorlagen;
+    if (State.tplEditId) { await renderTemplateEditor(); return; }
     renderCutJobs();
+    renderTemplates();
 
     const matSel = document.getElementById('parts-material');
     const projSel = document.getElementById('parts-project');
@@ -2826,12 +2853,18 @@ function renderCutJobs() {
         const fertig = gesamt > 0 && gesaegt >= gesamt;
         const mats = [...new Set(j.teile.map(x => x.material_id))]
             .map(id => State.materials.find(m => m.id === id)?.name).filter(Boolean).join(', ');
+        const herkunft = j.vorlage_id
+            ? ` <button class="cs-link part-status job-tpl" type="button">${escHtml(t('jobs.from_template', { name: j.vorlage_name }))}</button>` : '';
+        // Ein Durchgang stammt schon aus einer Vorlage – dort nicht nochmal anbieten
+        const alsVorlage = j.vorlage_id ? ''
+            : `<button class="fd-button fd-button--transparent job-tpl-save" type="button">${escHtml(t('tpl.save_as'))}</button>`;
         return `<tr class="fd-table__row" data-id="${j.id}">
             <td class="fd-table__cell"><strong>${escHtml(j.name)}</strong>
-                <span class="parts-sub">${escHtml(mats)}</span></td>
+                <span class="parts-sub">${escHtml(mats)}</span>${herkunft}</td>
             <td class="fd-table__cell"><span class="plan-badge${fertig ? ' plan-badge--done' : ''}">${escHtml(t('jobs.progress', { done: gesaegt, total: gesamt }))}</span></td>
             <td class="fd-table__cell jobs-actions">
                 <button class="fd-button job-saw" type="button">${escHtml(t(fertig ? 'jobs.show' : 'jobs.continue'))}</button>
+                ${alsVorlage}
                 <button class="fd-button fd-button--transparent job-delete" type="button">${escHtml(t('btn.delete'))}</button>
             </td></tr>`;
     }).join('');
@@ -2841,12 +2874,266 @@ function renderCutJobs() {
             const offen = job.teile.find(x => x.offen_anzahl > 0) || job.teile[0];
             openInOptimization(job.id, offen?.material_id, false);
         });
+        tr.querySelector('.job-tpl-save')?.addEventListener('click', () => openSaveAsTemplateDialog(job));
+        tr.querySelector('.job-tpl')?.addEventListener('click', () => openTemplateEditor(job.vorlage_id));
         tr.querySelector('.job-delete').addEventListener('click', () =>
             openConfirmDialog(t('jobs.delete_confirm', { name: job.name }), async () => {
                 try { await Api.deleteProject(job.id); } catch { return; }
                 renderAllParts();
             }));
     });
+}
+
+// ---------------------------------------------------------------------------
+// Vorlagen (Reiter Teile): feste Stücklisten, „Sägen ×N“ legt einen Durchgang an
+// ---------------------------------------------------------------------------
+
+const fmtDay = (ts) => ts ? new Date(ts * 1000).toLocaleDateString(State.settings.language || undefined) : '';
+
+// Materialnamen einer Teileliste, z. B. "Birke 18, Kiefer 44×44"
+function partsMaterialNames(teile) {
+    return [...new Set(teile.map(x => x.material_id))]
+        .map(id => State.materials.find(m => m.id === id)?.name).filter(Boolean).join(', ');
+}
+
+function templateSummary(v) {
+    const n = v.teile.reduce((s, x) => s + x.stueckzahl, 0);
+    const mats = new Set(v.teile.map(x => x.material_id)).size;
+    const parts = [t('tpl.summary', { n, m: mats })];
+    parts.push(v.durchgaenge
+        ? t('tpl.last_run', { datum: fmtDay(v.zuletzt), n: v.durchgaenge })
+        : t('tpl.never'));
+    return parts.join(' · ');
+}
+
+function renderTemplates() {
+    const tbody = document.querySelector('#tpl-table tbody');
+    if (!tbody) return;
+    const vorlagen = State.templates || [];
+    tbody.innerHTML = vorlagen.length ? vorlagen.map(v => {
+        const laeuft = v.laufend.length
+            ? ` <span class="plan-badge">${escHtml(t('tpl.running', { n: v.laufend.length }))}</span>` : '';
+        return `<tr class="fd-table__row" data-id="${v.id}">
+            <td class="fd-table__cell"><button class="cs-link tpl-open" type="button"><strong>${escHtml(v.name)}</strong></button>${laeuft}
+                <span class="parts-sub">${escHtml(templateSummary(v))}</span></td>
+            <td class="fd-table__cell jobs-actions">
+                <button class="fd-button fd-button--emphasized tpl-run" type="button"${v.teile.length ? '' : ' disabled'}>${escHtml(t('tpl.run'))}</button>
+                <button class="fd-button tpl-edit" type="button">${escHtml(t('btn.edit'))}</button>
+            </td></tr>`;
+    }).join('') : '';
+    document.getElementById('tpl-hint')?.classList.toggle('hidden', vorlagen.length > 0);
+    tbody.querySelectorAll('tr[data-id]').forEach(tr => {
+        const v = vorlagen.find(x => x.id === parseInt(tr.dataset.id));
+        tr.querySelector('.tpl-run').addEventListener('click', () => openRunTemplateDialog(v));
+        tr.querySelector('.tpl-edit').addEventListener('click', () => openTemplateEditor(v.id));
+        tr.querySelector('.tpl-open').addEventListener('click', () => openTemplateEditor(v.id));
+    });
+}
+
+function openNewTemplateDialog() {
+    openModal(t('tpl.new'), [{ key: 'name', label: t('tpl.name'), type: 'text', required: true }], {},
+        async (formData) => {
+            let v;
+            try { v = await Api.createTemplate({ name: formData.name }); } catch { return; }
+            showToast(t('tpl.created', { name: v.name }), 'success');
+            await openTemplateEditor(v.id);
+        });
+}
+
+// Sägeauftrag oder Projekt als Vorlage speichern; danach optional weitermachen (then)
+function openSaveAsTemplateDialog(quelle, then = null) {
+    // Datum am Ende weglassen („Regal A – 09.11.2026“ → „Regal A“); vom automatischen
+    // Namen „Sägeauftrag 09.11.2026“ bleibt nichts Brauchbares → leer lassen
+    let vorschlag = quelle.name.replace(/\s*[–-]?\s*\d{1,4}[.\-/]\d{1,2}[.\-/]\d{1,4}$/, '').trim();
+    if (vorschlag === t('parts.list_default', { datum: '' }).trim()) vorschlag = '';
+    openModal(t('tpl.save_as'), [{ key: 'name', label: t('tpl.name'), type: 'text', required: true }],
+        { name: vorschlag }, async (formData) => {
+            let v;
+            try { v = await Api.saveAsTemplate(quelle.id, { name: formData.name }); } catch { return; }
+            showToast(t('tpl.created', { name: v.name }), 'success');
+            if (then) await then(v);
+            else await renderAllParts();
+        });
+    document.getElementById('modal-body').insertAdjacentHTML('afterbegin',
+        `<p class="saw-hint">${escHtml(t('tpl.save_as_hint', { n: quelle.teile.length, materialien: partsMaterialNames(quelle.teile) }))}</p>`);
+}
+
+function openRunTemplateDialog(v) {
+    if (!v.teile.length) { showToast(t('err.vorlage_leer'), 'error'); return; }
+    openModal(t('tpl.run_title', { name: v.name }), [
+        { key: 'saetze', label: t('tpl.sets'), type: 'number', required: true, min: 1, step: 1,
+          hint: t('tpl.sets_hint') },
+        { key: 'name', label: t('tpl.name'), type: 'text', placeholder: t('tpl.run_name_auto') },
+    ], { saetze: 1 }, async (formData) => {
+        const saetze = Math.max(1, parseInt(formData.saetze) || 1);
+        let auftrag;
+        try { auftrag = await Api.runTemplate(v.id, { saetze, name: formData.name || '' }); } catch { return; }
+        showToast(t('parts.list_created', { name: auftrag.name }), 'success');
+        State.tplEditId = null;
+        try { State.projects = await Api.getProjects(); } catch { /* ignore */ }
+        await openInOptimization(auftrag.id, auftrag.teile[0]?.material_id, true);
+    });
+    const body = document.getElementById('modal-body');
+    document.getElementById('modal-save').textContent = t('tpl.run_go');
+    const preview = document.createElement('p');
+    preview.className = 'saw-hint';
+    body.appendChild(preview);
+    const n1 = v.teile.reduce((s, x) => s + x.stueckzahl, 0);
+    const update = () => {
+        const s = Math.max(1, parseInt(body.querySelector('[name="saetze"]').value) || 1);
+        preview.textContent = t('tpl.run_preview', { n: n1 * s, materialien: partsMaterialNames(v.teile) });
+    };
+    body.querySelector('[name="saetze"]').addEventListener('input', update);
+    update();
+    if (v.laufend.length) {
+        const l = v.laufend[0];
+        body.insertAdjacentHTML('beforeend', `<p class="parts-bar-note">${escHtml(t('tpl.already_running',
+            { name: l.name, done: l.gesaegt, total: l.gesamt }))}</p>`);
+    }
+}
+
+// Bearbeiten-Ansicht: ersetzt im Reiter Teile die Listen, bis „← Teile“
+async function openTemplateEditor(id) {
+    State.tplEditId = id;
+    State.tplSelPartId = null;
+    document.querySelector('.tab-btn[data-tab="parts"]')?.classList.contains('active')
+        || document.querySelector('.tab-btn[data-tab="parts"]')?.click();
+    await renderTemplateEditor();
+}
+
+function closeTemplateEditor() {
+    State.tplEditId = null;
+    State.tplEdit = null;
+    showTemplateEditor(false);
+    renderAllParts();
+}
+
+// Bearbeiten-Ansicht ein/aus; Sägeaufträge und Auswahl-Leiste blendet renderAllParts
+// danach selbst wieder passend ein
+function showTemplateEditor(on) {
+    ['jobs-panel', 'tpl-panel', 'parts-panel', 'parts-bar'].forEach(id =>
+        document.getElementById(id)?.classList.toggle('hidden', on || id === 'parts-bar'));
+    document.getElementById('tpl-editor')?.classList.toggle('hidden', !on);
+}
+
+function templateTarget() {
+    const v = State.tplEdit;
+    return {
+        id: v?.id, vorlage: true, anzahl: v?.teile.length || 0,
+        after: () => renderTemplateEditor(),
+    };
+}
+
+async function renderTemplateEditor() {
+    const id = State.tplEditId;
+    if (!id) return;
+    let v, runs;
+    try {
+        [v, runs] = await Promise.all([Api.getProject(id), Api.getTemplateRuns(id)]);
+        if (!State.materials.length) State.materials = await Api.getMaterials();
+    } catch { closeTemplateEditor(); return; }
+    State.tplEdit = v;
+    showTemplateEditor(true);
+    document.getElementById('tpl-editor-name').textContent = v.name;
+    document.getElementById('tpl-editor-sub').textContent = templateSummary(v);
+    document.getElementById('btn-tpl-run').disabled = !v.teile.length;
+
+    const tbody = document.querySelector('#tpl-parts-table tbody');
+    if (!v.teile.find(x => x.id === State.tplSelPartId)) State.tplSelPartId = null;
+    tbody.innerHTML = v.teile.length ? v.teile.map(p => {
+        const mat = State.materials.find(m => m.id === p.material_id);
+        const grain = p.typ === 'Platte' ? t(GRAIN_KEY[p.maserung] || p.maserung) : '';
+        return `<tr class="fd-table__row${p.id === State.tplSelPartId ? ' selected' : ''}" data-id="${p.id}">
+            <td class="fd-table__cell">${escHtml(p.label)}</td>
+            <td class="fd-table__cell">${escHtml(mat ? mat.name : '#' + p.material_id)}</td>
+            <td class="fd-table__cell">${grain}</td>
+            <td class="fd-table__cell num">${formatDims(p.laenge, p.typ === 'Platte' ? p.breite : 0)}</td>
+            <td class="fd-table__cell num">${p.stueckzahl}</td></tr>`;
+    }).join('') : `<tr><td colspan="5" class="empty-state">${escHtml(t('tpl.empty'))}</td></tr>`;
+    tbody.querySelectorAll('tr[data-id]').forEach(tr => {
+        const pid = parseInt(tr.dataset.id);
+        tr.addEventListener('click', () => {
+            State.tplSelPartId = pid;
+            tbody.querySelectorAll('tr').forEach(r => r.classList.toggle('selected', r === tr));
+        });
+        tr.addEventListener('dblclick', () => openPartDialog(v.teile.find(x => x.id === pid), templateTarget()));
+    });
+
+    const rbody = document.querySelector('#tpl-runs-table tbody');
+    rbody.innerHTML = runs.length ? runs.map(r => {
+        const stand = r.fertig ? t('tpl.run_done', { datum: fmtDay(r.fertig) })
+            : (r.auftrag_id ? t('jobs.progress', { done: r.gesaegt, total: r.gesamt })
+                : t('tpl.run_deleted', { done: r.gesaegt, total: r.gesamt }));
+        const name = r.auftrag_id
+            ? `<button class="cs-link tpl-run-open" type="button" data-id="${r.auftrag_id}">${escHtml(r.name)}</button>`
+            : escHtml(r.name);
+        return `<tr class="fd-table__row">
+            <td class="fd-table__cell">${name}</td>
+            <td class="fd-table__cell">${escHtml(t('tpl.sets_n', { n: r.saetze }))}</td>
+            <td class="fd-table__cell"><span class="plan-badge${r.fertig ? ' plan-badge--done' : ''}">${escHtml(stand)}</span></td>
+            <td class="fd-table__cell num">${escHtml(fmtDay(r.angelegt))}</td></tr>`;
+    }).join('') : `<tr><td class="empty-state">${escHtml(t('tpl.no_runs'))}</td></tr>`;
+    rbody.querySelectorAll('.tpl-run-open').forEach(btn => btn.addEventListener('click', async () => {
+        const aid = parseInt(btn.dataset.id);
+        let job;
+        try { job = await Api.getProject(aid); } catch { return; }
+        State.tplEditId = null;
+        const offen = job.teile.find(x => x.offen_anzahl > 0) || job.teile[0];
+        openInOptimization(aid, offen?.material_id, false);
+    }));
+}
+
+function setupTemplateEditor() {
+    const sel = () => State.tplEdit?.teile.find(x => x.id === State.tplSelPartId);
+    const on = (id, fn) => document.getElementById(id)?.addEventListener('click', fn);
+    on('btn-tpl-new', () => openNewTemplateDialog());
+    on('btn-tpl-back', () => closeTemplateEditor());
+    on('btn-tpl-run', () => State.tplEdit && openRunTemplateDialog(State.tplEdit));
+    on('btn-tpl-rename', () => {
+        const v = State.tplEdit;
+        if (!v) return;
+        openModal(t('tpl.rename'), [{ key: 'name', label: t('tpl.name'), type: 'text', required: true }],
+            { name: v.name }, async (formData) => {
+                try { await Api.updateProject(v.id, { name: formData.name, anzahl: 1 }); } catch { return; }
+                renderTemplateEditor();
+            });
+    });
+    on('btn-tpl-clone', async () => {
+        if (!State.tplEdit) return;
+        let kopie;
+        try { kopie = await Api.cloneProject(State.tplEdit.id); } catch { return; }
+        showToast(t('tpl.created', { name: kopie.name }), 'success');
+        openTemplateEditor(kopie.id);
+    });
+    on('btn-tpl-delete', () => {
+        const v = State.tplEdit;
+        if (!v) return;
+        openConfirmDialog(t('tpl.delete_confirm', { name: v.name }), async () => {
+            try { await Api.deleteProject(v.id); } catch { return; }
+            closeTemplateEditor();
+        });
+    });
+    on('btn-tpl-part-new', () => openPartDialog(null, templateTarget()));
+    on('btn-tpl-part-edit', () => {
+        const p = sel();
+        if (!p) { showToast(t('tpl.select_part'), 'error'); return; }
+        openPartDialog(p, templateTarget());
+    });
+    on('btn-tpl-part-del', () => {
+        const p = sel();
+        if (!p) { showToast(t('tpl.select_part'), 'error'); return; }
+        openConfirmDialog(t('dlg.delete_part'), async () => {
+            try { await Api.deletePart(p.id); } catch { return; }
+            renderTemplateEditor();
+        });
+    });
+    on('btn-tpl-part-csv', () => document.getElementById('tpl-csv-file')?.click());
+    document.getElementById('tpl-csv-file')?.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (file) await importPartsCsv(file, templateTarget());
+    });
+    on('btn-tpl-part-trapez', () => openTrapezoidHelper(templateTarget()));
 }
 
 function partsFiltered() {
@@ -4585,7 +4872,7 @@ function openProjectDialog(project = null) {
     const data = project ? { ...project } : { anzahl: 1 };
 
     const fields = [
-        { key: 'name', label: t('proj.name'), type: 'text', required: true },
+        { key: 'name', label: t('tpl.name'), type: 'text', required: true },
         { key: 'anzahl', label: t('proj.copies'), type: 'number', min: 1, step: 1, required: true },
     ];
 
@@ -4677,7 +4964,7 @@ function openSammelNewDialog() {
 }
 
 function openSammelRenameDialog(sammel) {
-    openModal(t('sammel.rename_title'), [{ key: 'name', label: t('proj.name'), type: 'text', required: true }],
+    openModal(t('sammel.rename_title'), [{ key: 'name', label: t('tpl.name'), type: 'text', required: true }],
         sammel, async (formData) => {
             try { await Api.updateProject(sammel.id, { name: formData.name, anzahl: 1 }); } catch { return; }
             await renderProjects();
@@ -4874,8 +5161,8 @@ function normalizeGrain(g) {
     return 'egal';
 }
 
-async function importPartsCsv(file) {
-    if (!State.selectedProjectId) { showToast(t('dlg.select_project'), 'error'); return; }
+async function importPartsCsv(file, target = projectTarget()) {
+    if (!target.id) { showToast(t('dlg.select_project'), 'error'); return; }
 
     let text;
     try { text = await file.text(); } catch { showToast(t('csv.invalid'), 'error'); return; }
@@ -4923,7 +5210,7 @@ async function importPartsCsv(file) {
 
         let imported = 0, skipped = 0;
         const missing = new Set();
-        let nextNr = (State.parts || []).length + 1;
+        let nextNr = target.anzahl + 1;
         for (const it of items) {
             let mat = defaultMat;
             if (it.materialName) {
@@ -4935,7 +5222,7 @@ async function importPartsCsv(file) {
             const isPlatte = mat.typ === 'Platte';
             if (isPlatte && it.breite <= 0) { skipped++; continue; }
             try {
-                await Api.createPart(State.selectedProjectId, {
+                await Api.createPart(target.id, {
                     label: it.label || `Teil ${nextNr}`,
                     typ: mat.typ,
                     material_id: mat.id,
@@ -4950,9 +5237,7 @@ async function importPartsCsv(file) {
             } catch { skipped++; }
         }
 
-        await renderParts();
-        State.projects = await Api.getProjects();
-        renderOptDropdowns();
+        await target.after();
 
         if (missing.size > 0) {
             showToast(t('proj.import_missing', { materials: [...missing].sort().join(', ') }), 'error');
@@ -4968,15 +5253,30 @@ async function importPartsCsv(file) {
         `<p style="margin:0 0 0.75rem">${escHtml(t('csv.confirm', { n: items.length, unit: unitLabel() }))}</p>`);
 }
 
-function openPartDialog(part = null) {
+// Ziel der Teile-Dialoge (Neu/Bearbeiten, CSV, Trapez): das gewählte Projekt im Reiter
+// Projekte – oder eine Vorlage im Reiter Teile (templateTarget). after() lädt neu.
+function projectTarget() {
+    return {
+        id: State.selectedProjectId,
+        vorlage: false,
+        anzahl: (State.parts || []).length,
+        after: async () => {
+            await renderParts();
+            State.projects = await Api.getProjects();
+            renderOptDropdowns();
+        },
+    };
+}
+
+function openPartDialog(part = null, target = projectTarget()) {
     const isEdit = !!part;
-    if (!State.selectedProjectId) {
+    if (!target.id) {
         showToast(t('dlg.select_project'), 'error');
         return;
     }
 
     const title = isEdit ? t('part.edit') : t('part.new');
-    const defaultLabel = isEdit ? undefined : `Teil ${(State.parts || []).length + 1}`;
+    const defaultLabel = isEdit ? undefined : `Teil ${target.anzahl + 1}`;
     const data = part ? { ...part } : { typ: 'Platte', stueckzahl: 1, gesaegt_anzahl: 0, maserung: 'egal', label: defaultLabel };
 
     const currentTyp = data.typ || 'Platte';
@@ -5009,8 +5309,8 @@ function openPartDialog(part = null) {
         { key: 'stueckzahl', label: t('stock.qty'), type: 'number', required: true, min: 1, step: 1 },
     ];
 
-    // Beim Bearbeiten den Gesägt-Fortschritt editierbar machen
-    if (isEdit) {
+    // Beim Bearbeiten den Gesägt-Fortschritt editierbar machen (eine Vorlage hat keinen)
+    if (isEdit && !target.vorlage) {
         fields.push({ key: 'gesaegt_anzahl', label: t('part.sawn_count'), type: 'number', min: 0, step: 1 });
         // Sägeauftrags-Kopien haben keine eigenen Fertigteile (gesägt zählt beim Ursprungsteil)
         if (!part.herkunft_teil_id) {
@@ -5024,9 +5324,9 @@ function openPartDialog(part = null) {
             formData.breite = 0;
         }
         const stk = parseInt(formData.stueckzahl) || 0;
-        formData.gesaegt_anzahl = isEdit
+        formData.gesaegt_anzahl = isEdit && !target.vorlage
             ? Math.max(0, Math.min(stk, parseInt(formData.gesaegt_anzahl) || 0))
-            : (data.gesaegt_anzahl || 0);
+            : (target.vorlage ? 0 : (data.gesaegt_anzahl || 0));
         formData.material_id = parseInt(formData.material_id);
         if (isEdit && 'vorrat' in formData) {
             formData.vorrat = Math.max(0, parseInt(formData.vorrat) || 0);
@@ -5037,12 +5337,9 @@ function openPartDialog(part = null) {
             if (isEdit) {
                 await Api.updatePart(part.id, formData);
             } else {
-                await Api.createPart(State.selectedProjectId, formData);
+                await Api.createPart(target.id, formData);
             }
-            await renderParts();
-            // Refresh projects to update offen_anzahl in optimization dropdowns
-            State.projects = await Api.getProjects();
-            renderOptDropdowns();
+            await target.after();
         } catch { /* handled */ }
     });
 
@@ -5077,8 +5374,8 @@ function setupPartTypToggle(typ) {
     });
 }
 
-function openTrapezoidHelper() {
-    if (!State.selectedProjectId) {
+function openTrapezoidHelper(target = projectTarget()) {
+    if (!target.id) {
         showToast(t('dlg.select_project'), 'error');
         return;
     }
@@ -5143,13 +5440,11 @@ function openTrapezoidHelper() {
                 maserung: formData.maserung,
             };
             try {
-                await Api.createPart(State.selectedProjectId, partData);
+                await Api.createPart(target.id, partData);
             } catch { /* handled */ }
         }
         showToast(t('trap.created', { n: count }));
-        await renderParts();
-        State.projects = await Api.getProjects();
-        renderOptDropdowns();
+        await target.after();
     });
 
     // Live preview of calculated rectangle
@@ -5886,6 +6181,7 @@ function initEvents() {
         renderAllPartsTable();
     });
     document.getElementById('btn-create-cutlist')?.addEventListener('click', () => createCutList());
+    setupTemplateEditor();
     document.getElementById('btn-parts-fill')?.addEventListener('click', () => partsAsFillers());
 
     // ----- Etiketten -----

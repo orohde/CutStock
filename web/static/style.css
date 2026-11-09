@@ -1205,8 +1205,16 @@ td.expand-toggle:hover { background: rgba(255,255,255,0.05); }
 .parts-bar .toolbar { margin-left: auto; }
 .parts-selected { font-weight: 600; color: var(--sapTextColor, #1d2d3e); }
 .parts-bar-note { color: var(--sapCriticalTextColor, #b44f00); font-size: 0.85rem; }
-#jobs-table .jobs-actions { text-align: right; white-space: nowrap; }
-#jobs-table .jobs-actions .fd-button { margin-left: 0.35rem; }
+#jobs-table .jobs-actions, #tpl-table .jobs-actions { text-align: right; white-space: nowrap; }
+#jobs-table .jobs-actions .fd-button, #tpl-table .jobs-actions .fd-button { margin-left: 0.35rem; }
+#jobs-table .job-tpl { margin-left: 0.5rem; font-size: 0.8rem; }
+#tpl-table .plan-badge { margin-left: 0.35rem; }
+/* Vorlage bearbeiten */
+.tpl-back { font-size: inherit; }
+#tpl-editor .panel-header .fd-title { white-space: normal; overflow: visible; text-overflow: clip; }
+.tpl-crumb-sep { margin: 0 0.35rem; color: var(--sapContent_LabelColor, #556b82); }
+.tpl-parts-toolbar { margin-bottom: 0.5rem; }
+.tpl-runs-title { margin: 1rem 0 0.4rem; }
 
 /* Reiter „Optimierung“: Arbeitsliste links, Plan rechts */
 .opt-layout { display: grid; grid-template-columns: var(--wl-width, 300px) 16px minmax(0, 1fr); align-items: stretch; }
