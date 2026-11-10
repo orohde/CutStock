@@ -109,6 +109,13 @@ CREATE TABLE IF NOT EXISTS lagerort (
     name  TEXT    NOT NULL UNIQUE COLLATE NOCASE
 );
 
+-- Frühere Kürzel eines Materials: gedruckte Etiketten (z. B. QR-Code "AP40-07")
+-- finden ihr Stück auch nach dem Ändern des Kürzels
+CREATE TABLE IF NOT EXISTS kuerzel_alt (
+    kuerzel     TEXT    PRIMARY KEY,
+    material_id INTEGER NOT NULL REFERENCES material(id) ON DELETE CASCADE
+);
+
 -- Abfallkiste: Abschnitte unter dem Mindest-Restmaß, ohne Stück-Code
 CREATE TABLE IF NOT EXISTS abfall (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -653,6 +660,13 @@ class Database:
             m.kuerzel = kuerzel_vorschlag(m.name, andere)
         elif m.kuerzel in andere:
             raise ValueError(f"Kürzel {m.kuerzel} ist schon vergeben")
+        vorher = (self.conn.execute("SELECT kuerzel FROM material WHERE id=?", (m.id,)).fetchone()
+                  if m.id is not None else None)
+        # Ein vergebenes Kürzel gilt ab jetzt nur noch für dieses Material
+        self.conn.execute("DELETE FROM kuerzel_alt WHERE kuerzel=?", (m.kuerzel,))
+        if vorher and vorher["kuerzel"] and vorher["kuerzel"] != m.kuerzel:
+            self.conn.execute("INSERT OR REPLACE INTO kuerzel_alt (kuerzel, material_id) "
+                              "VALUES (?, ?)", (vorher["kuerzel"], m.id))
         m.lagerort = self.lagerort_sichern(m.lagerort) or self.standard_lagerort()
         m.lagerort_reste = self.lagerort_sichern(m.lagerort_reste)
         if m.lagerort_reste.lower() == m.lagerort.lower():
@@ -2038,6 +2052,13 @@ class Database:
                JOIN lagerstueck l ON l.id = e.lagerstueck_id
                JOIN material m ON m.id = l.material_id
                WHERE m.kuerzel=? AND e.nr=?""", (kuerzel, int(nr_text))).fetchone()
+        if not row and kuerzel:
+            # Etikett mit einem früheren Kürzel des Materials
+            row = self.conn.execute(
+                """SELECT e.id FROM einzelstueck e
+                   JOIN lagerstueck l ON l.id = e.lagerstueck_id
+                   JOIN kuerzel_alt k ON k.material_id = l.material_id
+                   WHERE k.kuerzel=? AND e.nr=?""", (kuerzel, int(nr_text))).fetchone()
         if not row:
             return None
         e = self.get_einzelstueck(row["id"])
@@ -2050,9 +2071,17 @@ class Database:
             m = self.get_material(int(ref))
             if m:
                 return m
-        row = self.conn.execute("SELECT id FROM material WHERE kuerzel=?",
-                                (str(ref).strip().upper(),)).fetchone()
+        ref = str(ref).strip().upper()
+        row = (self.conn.execute("SELECT id FROM material WHERE kuerzel=?", (ref,)).fetchone()
+               or self.conn.execute("SELECT material_id AS id FROM kuerzel_alt WHERE kuerzel=?",
+                                    (ref,)).fetchone())
         return self.get_material(row["id"]) if row else None
+
+    def kuerzel_alt(self, material_id: int) -> list[str]:
+        """Frühere Kürzel eines Materials (alte Etiketten gelten weiter)."""
+        return [r[0] for r in self.conn.execute(
+            "SELECT kuerzel FROM kuerzel_alt WHERE material_id=? ORDER BY kuerzel",
+            (material_id,))]
 
     # ------------------------------------------------------------------
     # Abfallkiste
@@ -2113,6 +2142,15 @@ class Database:
                VALUES (?,?,?,?,?,?,?,?,?)""",
             (time.time(), art, material_id, code, laenge, breite or 0.0, anzahl,
              self.quelle, notiz))
+
+    def journal_letzter(self, code: str) -> dict | None:
+        """Letzte Lagerbuchung zu einem Stück-Code (z. B. wann es entnommen wurde)."""
+        row = self.conn.execute(
+            """SELECT j.*, COALESCE(m.name, '') AS material FROM lagerjournal j
+               LEFT JOIN material m ON m.id = j.material_id
+               WHERE j.code = ? COLLATE NOCASE ORDER BY j.id DESC LIMIT 1""",
+            ((code or "").strip(),)).fetchone()
+        return dict(row) if row else None
 
     def journal_liste(self, material_id: int | None = None, seit: float = 0.0,
                       limit: int = 200) -> list[dict]:

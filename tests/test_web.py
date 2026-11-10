@@ -1858,3 +1858,586 @@ class TestEtikettenFormate:
         v = client.get("/api/labels/preview", params={"format": "roll_23x23"}).json()
         assert (v["breite"], v["hoehe"]) == (23, 23)
         assert v["elemente"][0]["text"] == "AP40-07" and v["elemente"][0]["fett"]
+
+
+class TestQrScan:
+    """QR-Codes auf Etiketten, Scan-Auflösung, Lagerort-Etiketten, Kürzel-Alias."""
+
+    def _lager(self, client, kuerzel, ort):
+        r = client.post("/api/materials", json={"name": f"Mat {kuerzel}", "typ": "Stange",
+                                                "kuerzel": kuerzel, "lagerort": ort})
+        assert r.status_code == 201, r.text
+        client.post("/api/stock/receive", json={"material": kuerzel, "laenge": 2000, "anzahl": 2})
+        return r.json()
+
+    def test_qr_text(self):
+        from core.labels import qr_text
+        assert qr_text("s", "ap40-07") == "AP40-07"
+        assert qr_text("o", 3) == "O:3"
+        assert (qr_text("s", "AP40-07", "https://cutstock.example/")
+                == "HTTPS://CUTSTOCK.EXAMPLE/S/AP40-07")
+        assert qr_text("o", 3, "lager.example:8422") == "HTTPS://LAGER.EXAMPLE:8422/O/3"
+        # Pfad bleibt, Umlaute prozentkodiert (bleibt im Alphanumerik-Modus)
+        assert qr_text("s", "HÄ-02", "http://x.example/cs") == "HTTP://X.EXAMPLE/cs/S/H%C3%84-02"
+
+    def test_qr_layouts_und_mindestgroesse(self):
+        from core.labels import LABEL_STYLES, QR_MIN_MM, label_items, qr_text
+        from reportlab.lib.units import mm
+        lab = {"title": "Alu", "line1": "1200 mm", "line2": "Regal", "id_text": "AP40-07",
+               "qr": qr_text("s", "AP40-07", "https://cutstock.example")}
+        for stil in LABEL_STYLES:
+            for fmt in ("tze_12", "tze_24", "a4_7x27", "roll_23x23", "a4_3x8"):
+                w, h, items = label_items(fmt, lab, stil=stil)
+                qrs = [i for i in items if "qr" in i]
+                assert bool(qrs) == (stil != "text"), (stil, fmt)
+                for q in qrs:   # QR liegt ganz auf dem Etikett und ist groß genug
+                    assert q["size"] >= QR_MIN_MM * mm - 0.01
+                    assert q["x"] >= 0 and q["x"] + q["size"] <= w * mm + 0.01
+                    assert q["y"] >= 0 and q["y"] + q["size"] <= h * mm + 0.01
+                assert any(i.get("text") == "AP40-07" or "AP40-07" in i.get("text", "")
+                           for i in items), (stil, fmt)
+        # 12-mm-Band ist zu niedrig für QR + Code darunter → fällt auf Mini zurück
+        _, _, items = label_items("tze_12", lab, stil="qr")
+        assert any("qr" in i for i in items)
+        # TZe: Inhalt bleibt in der bedruckbaren Höhe (9,9 mm auf 12-mm-Band)
+        _, h, items = label_items("tze_12", lab, stil="mini")
+        q = next(i for i in items if "qr" in i)
+        assert h == 12.0 and q["y"] >= 1.0 * mm and q["y"] + q["size"] <= 11.0 * mm
+
+    def test_kettendruck_pdf(self, tmp_path):
+        from core.labels import export_labels
+        lab = {"title": "Alu", "line1": "1200 mm", "id_text": "AP40-07", "qr": "AP40-07"}
+        export_labels([lab] * 30, tmp_path / "k.pdf", fmt="tze_12", stil="mini", kette=True)
+        export_labels([lab] * 3, tmp_path / "e.pdf", fmt="tze_12", stil="mini")
+        k, e = (tmp_path / "k.pdf").read_bytes(), (tmp_path / "e.pdf").read_bytes()
+        assert k.count(b"/Type /Page\n") < 30 and e.count(b"/Type /Page\n") == 3
+
+    def test_scan_stueck_ort_unbekannt(self, client):
+        self._lager(client, "QRA", "QR-Regal")
+        ort = next(o for o in client.get("/api/locations").json() if o["name"] == "QR-Regal")
+        for text in ("QRA-01", "qra-01", "HTTPS://CS.EXAMPLE/S/QRA-01",
+                     "https://cs.example/sub/s/QRA-01", "https://cs.example/?s=QRA-01"):
+            r = client.get("/api/scan", params={"code": text}).json()
+            assert r["art"] == "stueck" and r["stueck"]["code"] == "QRA-01", text
+            assert r["stueck"]["lagerort"] == "QR-Regal"
+        for text in (f"O:{ort['id']}", f"HTTPS://CS.EXAMPLE/O/{ort['id']}"):
+            r = client.get("/api/scan", params={"code": text}).json()
+            assert r["art"] == "lagerort" and r["lagerort"]["name"] == "QR-Regal"
+            assert r["lagerort"]["stuecke"] == 2
+        client.post("/api/pieces/QRA-02/take", json={"grund": "verbraucht"})
+        r = client.get("/api/scan", params={"code": "QRA-02"}).json()
+        assert r["art"] == "unbekannt" and r["letzte_buchung"]["code"] == "QRA-02"
+        assert client.get("/api/scan", params={"code": "O:9999"}).json()["art"] == "unbekannt"
+
+    def test_scan_link_leitet_um(self, client):
+        r = client.get("/S/QRX-01", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["location"] == "../?s=QRX-01"
+        r = client.get("/o/3", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["location"] == "../?o=3"
+
+    def test_lagerort_etiketten(self, client):
+        self._lager(client, "QRB", "QR-Fach")
+        r = client.post("/api/labels/locations", json={"orte": ["QR-Fach"]})
+        assert r.status_code == 200 and r.content.startswith(b"%PDF")
+        assert r.headers["X-Label-Count"] == "1" and "QR-Fach" in r.headers["content-disposition"]
+        r = client.post("/api/labels/locations", json={})
+        assert int(r.headers["X-Label-Count"]) == len(client.get("/api/locations").json())
+        assert client.post("/api/labels/locations",
+                           json={"orte": ["Gibtsnicht"]}).status_code == 404
+        # Stück-Etiketten mit dem Ort vorneweg, auch ganz ohne Stücke
+        r = client.post("/api/labels/pieces", json={"lagerort": "QR-Fach", "lagerort_etikett": "QR-Fach"})
+        assert r.headers["X-Label-Count"] == "3"
+        r = client.post("/api/labels/pieces", json={"lagerort_etikett": "QR-Fach"})
+        assert r.status_code == 200 and r.headers["X-Label-Count"] == "1"
+
+    def test_einstellungen_und_vorschau(self, client):
+        s = client.get("/api/settings").json()
+        assert s["label_qr"] is True and s["label_style"] == "normal" and s["label_qr_base"] == ""
+        s = client.put("/api/settings", json={"label_qr_base": "https://cs.example/",
+                                              "label_style": "mini", "label_format": "tze_12"}).json()
+        assert s["label_qr_base"] == "https://cs.example" and s["label_style"] == "mini"
+        assert client.put("/api/settings", json={"label_style": "riesig"}).status_code == 400
+        assert client.put("/api/settings", json={"label_qr_base": "nicht gültig"}).status_code == 400
+        v = client.get("/api/labels/preview").json()
+        assert v["stil"] == "mini" and v["qr"] and len(v["qr"]["zeilen"]) == 25
+        assert all(len(z) == 25 for z in v["qr"]["zeilen"])
+        client.put("/api/settings", json={"label_qr": False})
+        v = client.get("/api/labels/preview").json()
+        assert v["qr"] is None and v["stil"] == "text" and not v["qr_zu_klein"]
+        formate = {f["key"]: f for f in client.get("/api/labels/formats").json()}
+        assert formate["tze_12"]["gruppe"] == "ptouch" and formate["tze_24"]["hoehe"] == 24
+
+    def test_kuerzel_alias(self, client):
+        m = self._lager(client, "QRC", "QR-Kiste")
+        body = {k: m[k] for k in ("name", "typ")} | {"kuerzel": "QRNEU", "lagerort": "QR-Kiste"}
+        r = client.put(f"/api/materials/{m['id']}", json=body)
+        assert r.status_code == 200 and r.json()["kuerzel"] == "QRNEU"
+        # altes Etikett findet das Stück weiter, angezeigt wird der neue Code
+        r = client.get("/api/scan", params={"code": "QRC-01"}).json()
+        assert r["art"] == "stueck" and r["stueck"]["code"] == "QRNEU-01"
+        assert client.get("/api/pieces/QRC-02").json()["code"] == "QRNEU-02"
+        # Kürzel zurück: kein Alias mehr auf sich selbst, QRNEU wird Alias
+        body["kuerzel"] = "QRC"
+        client.put(f"/api/materials/{m['id']}", json=body)
+        assert client.get("/api/pieces/QRNEU-01").json()["code"] == "QRC-01"
+        # vergibt ein anderes Material das alte Kürzel, gilt es für das neue
+        n = self._lager(client, "QRNEU", "QR-Kiste")
+        r = client.get("/api/scan", params={"code": "QRNEU-01"}).json()
+        assert r["stueck"]["material_id"] == n["id"]
+
+
+class TestDirektdruck:
+    """P-touch-Druckersprache, Druckbild und API (Drucker simuliert)."""
+
+    def test_packbits_wie_im_handbuch(self):
+        from core.ptouch import packbits
+        daten = bytes(20) + bytes.fromhex("2222 23BABFA2222B")
+        assert packbits(daten) == bytes.fromhex("ED00 FF22 0523BABFA2222B")
+
+    def test_status_deuten(self):
+        from core.ptouch import status_deuten
+        roh = bytearray(32)
+        roh[0:6] = b"\x80\x20B0v0"
+        roh[10], roh[11], roh[18] = 12, 0x01, 0x00
+        st = status_deuten(bytes(roh))
+        assert st.gueltig and st.band_mm == 12 and st.medium == "laminiert" and not st.fehler
+        roh[8], roh[9], roh[18] = 0x01, 0x10, 0x02
+        st = status_deuten(bytes(roh))
+        assert st.art == "fehler" and set(st.fehler) == {"kein_band", "deckel_offen"}
+        assert not status_deuten(b"\x00" * 32).gueltig
+
+    def test_rasterzeilen_pins(self):
+        from PIL import Image
+        from core.ptouch import rasterzeilen
+        bild = Image.new("1", (2, 70), 0)
+        bild.putpixel((0, 69), 1)      # unten → niedrigster Pin des Druckbereichs (29)
+        bild.putpixel((1, 0), 1)       # oben → höchster Pin (98)
+        z = rasterzeilen(bild, 12)
+        assert len(z) == 2 and all(len(x) == 16 for x in z)
+        assert z[0][15 - 29 // 8] == 1 << (29 % 8) and sum(z[0]) == 1 << (29 % 8)
+        assert z[1][15 - 98 // 8] == 1 << (98 % 8)
+
+    def test_auftrag_aufbau(self):
+        from PIL import Image
+        from core.ptouch import auftrag
+        bilder = [Image.new("1", (60, 70), 0), Image.new("1", (80, 70), 1)]
+        job = auftrag(bilder, 12, schneiden=True)
+        assert job.startswith(b"\x00" * 100 + b"\x1b\x40\x1b\x69\x61\x01")
+        assert job.count(b"\x1b\x69\x7a") == 2 and job.endswith(b"\x1a")
+        assert job.count(b"\x1b\x69\x4d\x40") == 2           # Messer an
+        i = job.index(b"\x1b\x69\x7a")
+        assert job[i + 5] == 12 and int.from_bytes(job[i + 7:i + 11], "little") == 60
+        assert job[i + 11] == 0                                # erste Seite
+        j = job.index(b"\x1b\x69\x7a", i + 1)
+        assert job[j + 11] == 1 and b"\x0c" in job[i:j]       # Seitenwechsel dazwischen
+        ohne = auftrag(bilder[:1], 12, schneiden=False, kompression=False)
+        assert b"\x1b\x69\x4d\x00" in ohne and ohne.count(b"\x47\x10\x00") == 60
+        import pytest
+        with pytest.raises(ValueError):
+            auftrag([Image.new("1", (60, 50), 0)], 12)          # Höhe passt nicht zum Band
+        with pytest.raises(ValueError):
+            auftrag(bilder, 7)
+
+    def test_druckbild_groesse_und_qr(self):
+        from core.labels import qr_text
+        from core.labels_raster import druckbild
+        lab = {"title": "Alu", "line1": "1200 mm", "id_text": "AP40-07",
+               "qr": qr_text("s", "AP40-07", "https://cs.example")}
+        for mm, hoehe in ((12, 70), (18, 112), (24, 128)):
+            for stil in ("normal", "mini", "qr", "text"):
+                b = druckbild(lab, mm, stil)
+                assert b.mode == "1" and b.size[1] == hoehe and b.size[0] >= 31
+                assert b.getbbox() is not None                 # es wird etwas gedruckt
+
+    def _drucker(self, monkeypatch, band=12, fehler=None):
+        from core import drucker
+        gedruckt = []
+        monkeypatch.setattr(drucker, "verfuegbar", lambda: True)
+        monkeypatch.setattr(drucker, "status", lambda: {
+            "gefunden": True, "modell": "PT-P710BT", "band_mm": band, "medium": "laminiert",
+            "fehler": fehler or [], "code": (fehler or [""])[0]})
+
+        def drucken(bilder, band_mm, schneiden=True, kette=False):
+            gedruckt.append((len(bilder), band_mm, schneiden, [b.size for b in bilder]))
+            return {"gedruckt": len(bilder), "bestaetigt": True, "modell": "PT-P710BT"}
+        monkeypatch.setattr(drucker, "drucken", drucken)
+        return gedruckt
+
+    def test_api_druckt_auf_eingelegtes_band(self, client, monkeypatch):
+        gedruckt = self._drucker(monkeypatch, band=24)
+        client.post("/api/materials", json={"name": "Mat DD", "typ": "Stange", "kuerzel": "DDA",
+                                            "lagerort": "DD-Regal"})
+        client.post("/api/stock/receive", json={"material": "DDA", "laenge": 2000, "anzahl": 2})
+        p = client.get("/api/printer").json()
+        assert p["verfuegbar"] and p["gefunden"] and p["band_mm"] == 24
+        r = client.post("/api/labels/pieces", json={"material": "DDA", "lagerort_etikett": "DD-Regal",
+                                                    "ausgabe": "drucker"})
+        # Standard: nach jedem Etikett schneiden – drei Stücke
+        j = r.json()
+        assert r.status_code == 200 and j["gedruckt"] == 3 and j["stuecke"] == 3
+        assert j["etiketten"] == 3 and j["band_mm"] == 24
+        assert gedruckt[0][:3] == (3, 24, True) and all(h == 128 for _, h in gedruckt[0][3])
+        assert client.get("/api/pieces/DDA-01").json()["etikett_gedruckt"] > 0
+        # Ohne Schneiden je Etikett: ein Streifen, je Etikett gut 2 cm weniger Band
+        client.put("/api/settings", json={"printer_cut": False})
+        streifen = client.post("/api/labels/pieces", json={
+            "material": "DDA", "lagerort_etikett": "DD-Regal", "ausgabe": "schaetzung"}).json()
+        assert streifen["stuecke"] == 1 and streifen["laenge_mm"] <= j["laenge_mm"] - 45
+        assert len(gedruckt) == 1                        # Schätzung druckt nichts
+        assert client.post("/api/labels/pieces", json={"material": "DDA", "ausgabe": "drucker"}
+                           ).json()["stuecke"] == 1
+        assert gedruckt[-1][0] == 1
+        assert client.post("/api/printer/test?schaetzung=true").json()["etiketten"] == 1
+        assert len(gedruckt) == 2
+        assert client.post("/api/printer/test").json()["gedruckt"] == 1
+        assert client.post("/api/labels/locations",
+                           json={"ausgabe": "fax"}).json()["detail"]["code"] == "ausgabe_unbekannt"
+
+    def test_streifen(self):
+        from PIL import Image
+        from core.labels_raster import streifen
+        from core.ptouch import bandlaenge_mm
+        bilder = [Image.new("1", (300, 70), 1) for _ in range(5)]
+        s = streifen(bilder)
+        assert len(s) == 1 and s[0].size == (5 * 300 + 4 * 21, 70)
+        assert s[0].getpixel((310, 1)) == 1 and s[0].getpixel((310, 5)) == 0   # Schnittmarke
+        assert s[0].getpixel((303, 1)) == 0                                    # Lücke
+        assert len(streifen(bilder, max_mm=100)) == 3       # je Streifen höchstens 100 mm
+        assert streifen(bilder[:1])[0] is bilder[0]
+        assert bandlaenge_mm([300] * 5) - bandlaenge_mm([5 * 300 + 4 * 21]) > 4 * 20
+
+    def test_api_druckerfehler(self, client, monkeypatch):
+        self._drucker(monkeypatch, fehler=["deckel_offen"])
+        r = client.post("/api/printer/test")
+        assert r.status_code == 409 and r.json()["detail"]["code"] == "deckel_offen"
+        self._drucker(monkeypatch, band=9)
+        r = client.post("/api/printer/test")
+        assert r.status_code == 409 and r.json()["detail"]["code"] == "band_zu_schmal"
+        from core import drucker
+        monkeypatch.setattr(drucker, "status", lambda: {"gefunden": False, "code": "drucker_fehlt"})
+        r = client.post("/api/printer/test")
+        assert r.status_code == 503 and r.json()["detail"]["code"] == "drucker_fehlt"
+        monkeypatch.setattr(drucker, "verfuegbar", lambda: False)
+        p = client.get("/api/printer").json()
+        assert not p["verfuegbar"] and not p["gefunden"] and p["code"] == "usb_fehlt"
+        assert p["druckweg"] == "" and not p["gekoppelt"]
+
+
+class TestDruckbruecke:
+    """Druckbrücke: Hilfsprogramm am Rechner mit dem Drucker holt Aufträge beim Server ab."""
+
+    HALLO = {"name": "Werkstatt-Mac", "version": "2026.11.18", "gefunden": True,
+             "modell": "PT-P710BT", "band_mm": 12, "medium": "laminiert"}
+
+    def _koppeln(self, client):
+        code = client.post("/api/printer/bridge/pair").json()["schluessel"]
+        assert len(code) == 24 and code.count("-") == 4
+        return {"X-CutStock-Bridge": code}
+
+    def _poll(self, client, kopf, **hallo):
+        r = client.post("/api/printer/bridge/poll?wait=0", json={**self.HALLO, **hallo},
+                        headers=kopf)
+        assert r.status_code == 200, r.text
+        return r.json()["auftrag"]
+
+    def test_ablauf(self, client):
+        import base64
+        client.put("/api/settings", json={"printer_direct": True, "printer_cut": True})
+        try:
+            # ohne Kopplung: kein Zugang für die Brücke
+            r = client.post("/api/printer/bridge/poll?wait=0", json=self.HALLO,
+                            headers={"X-CutStock-Bridge": "FALSCH"})
+            assert r.status_code == 401
+            kopf = self._koppeln(client)
+            # gekoppelt, aber noch nie gemeldet → nicht erreichbar
+            assert client.get("/api/printer").json()["code"] == "bruecke_offline"
+            r = client.post("/api/printer/test")
+            assert r.status_code == 503 and r.json()["detail"]["code"] == "bruecke_offline"
+            assert self._poll(client, kopf) is None
+            p = client.get("/api/printer").json()
+            assert p["druckweg"] == "bruecke" and p["gekoppelt"] and p["gefunden"]
+            assert p["band_mm"] == 12 and p["bruecke_name"] == "Werkstatt-Mac"
+            # Schätzung legt keinen Auftrag an
+            assert client.post("/api/printer/test?schaetzung=true").json()["etiketten"] == 1
+            assert self._poll(client, kopf) is None
+            # Druck → Auftrag, den die Brücke genau einmal bekommt
+            r = client.post("/api/printer/test").json()
+            assert r["zustand"] == "wartet" and r["etiketten"] == 1 and "gedruckt" not in r
+            a = self._poll(client, kopf)
+            assert a["id"] == r["auftrag"] and a["band_mm"] == 12 and a["etiketten"] == 1
+            daten = base64.b64decode(a["seiten"][0])
+            assert daten.startswith(b"\x00" * 100 + b"\x1b\x40") and daten.endswith(b"\x1a")
+            assert self._poll(client, kopf) is None                # nie ein zweites Mal
+            assert client.get(f"/api/printer/jobs/{a['id']}").json()["zustand"] == "uebernommen"
+            assert client.post(f"/api/printer/bridge/jobs/{a['id']}/result",
+                               json={"gedruckt": 1}, headers=kopf).status_code == 200
+            j = client.get(f"/api/printer/jobs/{a['id']}").json()
+            assert j["zustand"] == "fertig" and j["gedruckt"] == 1
+            # Fehler der Brücke kommt beim Auftrag an
+            r = client.post("/api/printer/test").json()
+            a = self._poll(client, kopf)
+            client.post(f"/api/printer/bridge/jobs/{a['id']}/result",
+                        json={"gedruckt": 0, "code": "deckel_offen"}, headers=kopf)
+            j = client.get(f"/api/printer/jobs/{r['auftrag']}").json()
+            assert j["zustand"] == "fehler" and j["code"] == "deckel_offen"
+            # Brücke meldet Druckerfehler → gar kein Auftrag
+            self._poll(client, kopf, fehler=["kein_band"], code="kein_band")
+            assert client.post("/api/printer/test").json()["detail"]["code"] == "kein_band"
+            self._poll(client, kopf, pausiert=True)
+            assert client.post("/api/printer/test").json()["detail"]["code"] == "bruecke_pausiert"
+            # Trennen: alter Code ungültig
+            client.delete("/api/printer/bridge/pair")
+            assert client.post("/api/printer/bridge/poll?wait=0", json=self.HALLO,
+                               headers=kopf).status_code == 401
+        finally:
+            client.delete("/api/printer/bridge/pair")
+            client.put("/api/settings", json={"printer_direct": False})
+
+    def test_bruecke_braucht_keinen_api_key(self, client):
+        kopf = self._koppeln(client)
+        client.put("/api/settings", json={"api_key": "geheim-123"})
+        try:
+            from fastapi.testclient import TestClient
+            from web.app import app
+            fremd = TestClient(app, base_url="http://10.0.0.5")
+            assert fremd.get("/api/printer").status_code == 401        # sonst alles zu
+            assert fremd.post("/api/printer/bridge/pair").status_code == 401
+            assert fremd.post("/api/printer/bridge/poll?wait=0", json=self.HALLO,
+                              headers=kopf).status_code == 200
+        finally:
+            client.put("/api/settings", json={"api_key": ""})
+            client.delete("/api/printer/bridge/pair")
+
+
+class TestWarteschlange:
+    def _q(self):
+        from core.druckwarteschlange import Warteschlange
+        self.t = 1000.0
+        return Warteschlange(uhr=lambda: self.t)
+
+    def test_verfaellt_und_unbekannt(self):
+        from core import druckwarteschlange as dw
+        q = self._q()
+        a = q.anlegen([b"x"], [100], 12, 1, {"etiketten": 1, "stuecke": 1, "laenge_mm": 40})
+        self.t += dw.ABHOLEN_S + 1
+        assert q.abholen() is None and q.auftrag(a["id"])["zustand"] == "verfallen"
+        b = q.anlegen([b"x"], [100], 12, 1, {"etiketten": 1, "stuecke": 1, "laenge_mm": 40})
+        assert q.abholen()["id"] == b["id"]
+        self.t += dw.ERGEBNIS_S + 1
+        assert q.auftrag(b["id"])["zustand"] == "unbekannt"
+        assert q.ergebnis(b["id"], 1)                       # spätes Ergebnis zählt noch
+        assert q.auftrag(b["id"])["zustand"] == "fertig"
+        assert not q.ergebnis("gibtsnicht", 1)
+
+    def test_online(self):
+        from core import druckwarteschlange as dw
+        q = self._q()
+        assert q.bruecke() is None
+        q.melden({"name": "x"})
+        assert q.bruecke()["online"]
+        self.t += dw.ONLINE_S + 1
+        assert not q.bruecke()["online"]
+
+
+class TestBrueckeProgramm:
+    """Die Druckbrücke (bruecke/verbindung.py) gegen die echte API, Drucker simuliert."""
+
+    def _bruecke(self, client, code, druckerstatus, gedruckt):
+        from bruecke.verbindung import Bruecke, Konfig
+
+        def senden(methode, pfad, daten):
+            r = client.request(methode, pfad.replace("wait=25", "wait=0"), json=daten,
+                               headers={"X-CutStock-Bridge": b.konfig.code})
+            if r.status_code == 401:
+                raise PermissionError
+            if r.status_code >= 400:
+                raise OSError(r.text)
+            return r.json()
+
+        def drucken(seiten, laengen, band_mm, medium=None):
+            gedruckt.append((len(seiten), band_mm, medium))
+            return {"gedruckt": len(seiten), "bestaetigt": True, "modell": "PT-P710BT"}
+
+        b = Bruecke(Konfig(adresse="http://test", code=code), version="t",
+                    status=lambda: druckerstatus, drucken=drucken, senden=senden)
+        return b
+
+    def test_ende_zu_ende(self, client):
+        code = client.post("/api/printer/bridge/pair").json()["schluessel"]
+        client.put("/api/settings", json={"printer_cut": True})
+        gedruckt = []
+        st = {"gefunden": True, "modell": "PT-P710BT", "band_mm": 12, "medium": "laminiert",
+              "fehler": [], "code": ""}
+        b = self._bruecke(client, code, st, gedruckt)
+        try:
+            b.einmal()
+            assert b.lage.zustand == "bereit"
+            r = client.post("/api/printer/test").json()
+            b.einmal()                                    # holt ab und druckt
+            assert gedruckt == [(1, 12, 1)] and b.lage.gedruckt == 1
+            assert client.get(f"/api/printer/jobs/{r['auftrag']}").json()["zustand"] == "fertig"
+            b.einmal()
+            assert len(gedruckt) == 1                     # kein zweiter Druck
+            # Pause: meldet sich, holt aber nichts ab
+            b.konfig.pausiert = True
+            b.einmal()
+            assert b.lage.zustand == "pausiert"
+            assert client.get("/api/printer").json()["code"] == "bruecke_pausiert"
+            # falscher Code
+            b.konfig.code = "FALSCH"
+            b.einmal()
+            assert b.lage.zustand == "code_ungueltig"
+        finally:
+            client.delete("/api/printer/bridge/pair")
+
+    def test_druckerfehler_wird_gemeldet(self, client):
+        from core.drucker import DruckerFehler
+        code = client.post("/api/printer/bridge/pair").json()["schluessel"]
+        st = {"gefunden": True, "modell": "PT-P710BT", "band_mm": 12, "medium": "laminiert",
+              "fehler": [], "code": ""}
+        b = self._bruecke(client, code, st, [])
+
+        def kaputt(*a, **k):
+            raise DruckerFehler("deckel_offen", "cover", gedruckt=0)
+        b._drucken = kaputt
+        try:
+            b.einmal()
+            r = client.post("/api/printer/test").json()
+            b.einmal()
+            j = client.get(f"/api/printer/jobs/{r['auftrag']}").json()
+            assert j["zustand"] == "fehler" and j["code"] == "deckel_offen"
+        finally:
+            client.delete("/api/printer/bridge/pair")
+
+    def test_konfig(self, tmp_path):
+        import stat
+        from bruecke.verbindung import Konfig, adresse_normalisieren
+        assert adresse_normalisieren(" cuttest.rohde.one/ ") == "https://cuttest.rohde.one"
+        from bruecke.verbindung import code_normalisieren
+        assert code_normalisieren("v36h kjd3 h6mc lqz2 yuv5") == "V36H-KJD3-H6MC-LQZ2-YUV5"
+        assert code_normalisieren("V36H-KJD3-H6MC-LQZ2-YUV5\n") == "V36H-KJD3-H6MC-LQZ2-YUV5"
+        assert code_normalisieren("V36H-KJD3-H&MC-LQZ2-YUV5") is None      # Umschalt+6
+        assert code_normalisieren("V36H-KJD3-H6MC-LQZ2") is None
+        k = Konfig(adresse="https://x", code="ABCD")
+        k.speichern(tmp_path / "c.json")
+        assert stat.S_IMODE((tmp_path / "c.json").stat().st_mode) == 0o600
+        assert Konfig.laden(tmp_path / "c.json").code == "ABCD"
+        assert not Konfig.laden(tmp_path / "fehlt.json").eingerichtet
+
+
+class TestQl:
+    """Brother QL im Netzwerk: Druckersprache, IPP, Druckerwahl (Drucker simuliert)."""
+
+    def test_auftrag_aufbau(self):
+        from PIL import Image
+        from core import ql
+        m = ql.Medium(29)
+        bild = Image.new("1", (200, 306), 0)
+        bild.putpixel((0, 305), 1)                       # unterste Bildzeile → linker Rand
+        bild.putpixel((1, 0), 1)                         # oberste Bildzeile → höchster Pin
+        z = ql.rasterzeilen(bild, m)
+        assert len(z) == 200 and all(len(x) == 90 for x in z)
+        assert z[0][ql.ZEILE_BYTES - 1 - 408 // 8] == 1 << (408 % 8)
+        assert z[1][ql.ZEILE_BYTES - 1 - 713 // 8] == 1 << (713 % 8)
+        job = ql.auftrag([bild, bild], m)
+        assert job.startswith(b"\x00" * 400 + b"\x1b\x40\x1b\x69\x61\x01")
+        info = job.index(b"\x1b\x69\x7a")
+        assert job[info + 3:info + 7] == bytes([0x02 | 0x04 | 0x80 | 0x40, 0x0A, 29, 0])
+        assert job[info + 7:info + 11] == (200).to_bytes(4, "little")
+        assert b"\x1b\x69\x4d\x40\x1b\x69\x41\x01\x1b\x69\x4b\x08" in job
+        assert b"\x1b\x69\x64\x23\x00" in job             # 3 mm Rand
+        assert job.count(b"\x0c") >= 1 and job.endswith(b"\x1a")
+
+    def test_vorgestanzt_und_rotschwarz(self):
+        import pytest
+        from PIL import Image
+        from core import ql
+        m = ql.Medium(29, 90)
+        assert m.druckpunkte == 306 and m.zeilen_fest == 991
+        with pytest.raises(ValueError):
+            ql.auftrag([Image.new("1", (500, 306))], m)   # falsche Länge
+        job = ql.auftrag([Image.new("1", (991, 306))], m)
+        info = job.index(b"\x1b\x69\x7a")
+        assert job[info + 4:info + 7] == bytes([0x0B, 29, 90])
+        assert b"\x1b\x69\x64\x00\x00" in job             # vorgestanzt: Rand 0
+        m2 = ql.Medium(62, zweifarbig=True)
+        s, r = Image.new("1", (200, 696)), Image.new("1", (200, 696))
+        job = ql.auftrag([(s, r)], m2)
+        assert b"\x1b\x69\x4b\x09" in job and b"\x4d\x00" in job
+        assert job.count(b"\x77\x01\x5a") == 200 and job.count(b"\x77\x02\x5a") == 200
+
+    def test_druckbild_ql(self):
+        from core import ql
+        from core.labels_raster import druckbild_ql
+        lab = {"title": "Alu Profil 40x40", "line1": "640 mm", "line2": "Regal", "id_text": "AP40-17",
+               "qr": "HTTPS://X/S/AP40-17"}
+        assert druckbild_ql(lab, ql.Medium(29)).size[1] == 306
+        assert druckbild_ql(lab, ql.Medium(29, 90)).size == (991, 306)
+        s, r = druckbild_ql(lab, ql.Medium(62, zweifarbig=True))
+        assert s.size == r.size and r.getbbox() is not None and s.getbbox() is not None
+
+    def test_ipp_kodierung(self):
+        import struct
+        from core import ipp
+        a = ipp.anfrage(ipp.GET_PRINTER_ATTRIBUTES, "ipp://x:631/ipp/print", 7,
+                        ipp._attr(ipp.KEYWORD, "requested-attributes", ["a", "b"]))
+        assert a[:8] == struct.pack(">BBHI", 2, 0, 0x000B, 7) and a.endswith(b"\x03")
+        antwort = (struct.pack(">BBHI", 2, 0, 0, 7) + b"\x04"
+                   + ipp._attr(ipp.ENUM, "printer-state", 3)
+                   + ipp._attr(ipp.KEYWORD, "media-ready", ["roll_current_29x0mm"])
+                   + ipp._attr(ipp.KEYWORD, "printer-state-reasons", ["none"])
+                   + bytes([0x34]) + struct.pack(">H", 15) + b"media-col-ready" + b"\x00\x00"
+                   + bytes([0x4A]) + b"\x00\x00\x00\x0a" + b"media-type"
+                   + bytes([0x37]) + b"\x00\x00\x00\x00"
+                   + ipp._attr(ipp.BOOLEAN, "color-supported", False) + b"\x03")
+        status, attr = ipp.antwort_lesen(antwort)
+        assert status == 0 and attr["printer-state"] == [3]
+        assert attr["media-ready"] == ["roll_current_29x0mm"] and attr["color-supported"] == [False]
+        assert "media-col-ready" not in attr
+
+    def test_medium_und_fehler(self):
+        from core import ql_netz
+        assert ql_netz.medium_aus(["roll_current_29x0mm"]).endlos
+        m = ql_netz.medium_aus(["roll_current_29x90.3mm"])
+        assert (m.breite_mm, m.laenge_mm) == (29, 90)
+        assert ql_netz.medium_aus(["none"]) is None
+        assert ql_netz._fehler_aus(3, ["none"]) == []
+        assert ql_netz._fehler_aus(5, ["cover-open-error"]) == ["deckel_offen"]
+        assert ql_netz._fehler_aus(5, ["media-empty-error", "other-report"]) == ["kein_band"]
+        assert ql_netz._fehler_aus(5, []) == ["drucker_fehler"]
+
+    def test_api_druckerwahl(self, client, monkeypatch):
+        from core import drucker, ql_netz
+        gedruckt = []
+        monkeypatch.setattr(ql_netz, "status", lambda adr: {
+            "gefunden": True, "modell": "QL-820NWB", "band_mm": 62, "laenge_mm": 0,
+            "zweifarbig": False, "medium": "62 mm endlos", "fehler": [], "code": ""})
+        monkeypatch.setattr(ql_netz, "drucken", lambda adr, daten, n, warten_s=None: (
+            gedruckt.append((adr, len(daten), n)) or {"gedruckt": n, "bestaetigt": True}))
+        monkeypatch.setattr(drucker, "verfuegbar", lambda: True)
+        monkeypatch.setattr(drucker, "status", lambda: {
+            "gefunden": True, "modell": "PT-P710BT", "band_mm": 12, "medium": "laminiert",
+            "fehler": [], "code": ""})
+        monkeypatch.setattr(drucker, "drucken", lambda b, band, schneiden=True, kette=False: {
+            "gedruckt": len(b), "bestaetigt": True, "modell": "PT-P710BT"})
+        assert client.put("/api/settings", json={"printer_ql_address": "bad address!"}).status_code == 400
+        client.put("/api/settings", json={"printer_ql_address": "10.10.30.96", "printer_default": "ql",
+                                          "printer_ql_red": True, "printer_cut": True})
+        try:
+            liste = client.get("/api/printers").json()
+            assert [p["drucker"] for p in liste] == ["ql", "ptouch"]
+            assert liste[0]["zweifarbig"] and liste[0]["medium_name"] == "62 mm endlos Rot/Schwarz"
+            est = client.post("/api/printer/test?schaetzung=true").json()
+            assert est["drucker"] == "ql" and est["etiketten"] == 1 and not gedruckt
+            r = client.post("/api/printer/test").json()
+            assert r["gedruckt"] == 1 and gedruckt[0][0] == "10.10.30.96"
+            r = client.post("/api/printer/test?drucker=ptouch").json()
+            assert r["drucker"] == "ptouch" and r["gedruckt"] == 1 and len(gedruckt) == 1
+            assert client.post("/api/printer/test?drucker=fax").status_code == 400
+            monkeypatch.setattr(ql_netz, "status", lambda adr: {"gefunden": False,
+                                                                "code": "drucker_nicht_erreichbar"})
+            r = client.post("/api/printer/test?drucker=ql")
+            assert r.status_code == 503 and r.json()["detail"]["code"] == "drucker_nicht_erreichbar"
+        finally:
+            client.put("/api/settings", json={"printer_ql_address": "", "printer_default": "",
+                                              "printer_ql_red": False})

@@ -629,6 +629,7 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .label-preview { position: relative; background: #fff; color: #000; border: 1px dashed #9aa3ad;
   border-radius: 3px; overflow: hidden; font-family: Helvetica, Arial, sans-serif; }
 .label-preview span { position: absolute; white-space: nowrap; line-height: 1; }
+.label-preview .label-qr { position: absolute; fill: #000; }
 
 @media (max-width: 900px) {
   .set-layout { grid-template-columns: 1fr; }
@@ -1281,3 +1282,63 @@ td.expand-toggle:hover { background: rgba(255,255,255,0.05); }
 .stock-zero { opacity: 0.5; }
 .stock-zero:hover, .stock-zero.selected { opacity: 0.8; }
 .reorder-row { cursor: pointer; }
+
+/* ---------- Code-Suche (Handscanner) in der Kopfleiste ---------- */
+.code-search { display: flex; align-items: center; }
+.code-search .fd-input { width: 11rem; height: 1.75rem; }
+@media (max-width: 700px) { .code-search .fd-input { width: 7.5rem; } }
+
+/* ---------- Lagerort-Etikett im Etiketten-Dialog ---------- */
+.lbl-ort { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; font-weight: 600; }
+
+/* ---------- Scan-Ansicht (QR-Code vom Etikett, fürs Handy) ---------- */
+/* Die übrige Oberfläche ausblenden: sonst macht ihre Mindestbreite die Seite auf dem Handy breiter */
+body.scan-open > header, body.scan-open > nav, body.scan-open > main { display: none; }
+.scan-view { position: fixed; inset: 0; z-index: 1300; overflow-y: auto;
+  background: var(--sapBackgroundColor, #f5f6f7); color: var(--sapTextColor, #1d2d3e);
+  padding: 1rem 16px calc(1rem + env(safe-area-inset-bottom)); }
+.scan-view[hidden] { display: none; }
+.scan-card { max-width: 34rem; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.scan-head { display: flex; align-items: center; justify-content: space-between; }
+.scan-kind { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--sapContent_LabelColor, #556b82); }
+.scan-close { min-width: 2.75rem; min-height: 2.75rem; font-size: 1.1rem; }
+.scan-title { display: flex; align-items: center; gap: 0.75rem; }
+.scan-img { width: 4rem; height: 4rem; object-fit: cover; border-radius: 0.5rem; flex: none; }
+.scan-code { font-size: 2rem; font-weight: 700; line-height: 1.1; word-break: break-word; }
+.scan-material { font-size: 1.1rem; color: var(--sapContent_LabelColor, #556b82); }
+.scan-facts { margin: 0; display: grid; gap: 0.1rem;
+  background: var(--sapGroup_ContentBackground, #fff); border-radius: 0.75rem; padding: 0.5rem 1rem; }
+.scan-row { display: flex; justify-content: space-between; gap: 1rem; padding: 0.55rem 0;
+  border-bottom: 1px solid var(--sapGroup_ContentBorderColor, #d9d9d9); }
+.scan-row:last-child { border-bottom: 0; }
+.scan-row dt { color: var(--sapContent_LabelColor, #556b82); }
+.scan-row dd { margin: 0; text-align: right; font-weight: 600; word-break: break-word; }
+.scan-warn { color: var(--sapCriticalTextColor, #b44f00); }
+.scan-link { color: var(--sapLinkColor, #0064d9); text-decoration: none; }
+.scan-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.scan-actions .fd-button { flex: 1 1 9rem; min-height: 2.75rem; }
+.scan-mat { background: var(--sapGroup_ContentBackground, #fff); border-radius: 0.75rem; padding: 0.75rem 1rem; }
+.scan-mat-head { font-weight: 600; margin-bottom: 0.5rem; }
+.scan-pieces { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.scan-piece { font: inherit; color: inherit; cursor: pointer; min-height: 2.5rem; padding: 0.3rem 0.65rem;
+  border-radius: 0.5rem; border: 1px solid var(--sapButton_BorderColor, #bcc3ca);
+  background: var(--sapButton_Background, #fff); }
+.scan-piece.is-reserved { border-color: var(--sapCriticalColor, #e76500); }
+.scan-empty { margin: 0; font-size: 1.05rem; }
+.scan-hint { margin: 0; color: var(--sapContent_LabelColor, #556b82); }
+.scan-loading { color: var(--sapContent_LabelColor, #556b82); }
+.scan-search { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+.scan-search .fd-input { flex: 1; min-height: 2.5rem; }
+
+/* ---------- Direktdruck ---------- */
+.printer-status { align-self: center; }
+.printer-status.is-error { color: var(--sapNegativeTextColor, #aa0808); }
+
+.bridge-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.95rem;
+  padding: 2px 8px; border-radius: 4px; background: var(--sapField_Background, #f4f4f4);
+  border: 1px solid var(--sapField_BorderColor, #ccc); user-select: all; letter-spacing: 0.04em; }
+.bridge-code.hidden, #btn-bridge-unpair.hidden, #settings-ql-red-row.hidden,
+#settings-printer-default-row.hidden { display: none; }
+.print-choice { margin: 4px 0 10px; }
+.print-choice select { width: 100%; }

@@ -45,6 +45,7 @@ Anfragen von der eigenen Web-Oberfläche (Same-Origin) und von localhost sind im
 | PUT | `/api/locations/{id oder Name}` | Lagerort umbenennen |
 | DELETE | `/api/locations/{id oder Name}?ziel=…` | Lagerort löschen; genutzt → `ziel` nötig |
 | GET | `/api/locations/{id oder Name}/contents` | Was dort liegt: Materialien mit Stücken |
+| GET | `/api/scan?code=…` | Gescannten Code auflösen: QR-Link, `AP40-07` oder `O:3` → Stück, Lagerort oder `unbekannt` (siehe unten) |
 | PUT | `/api/materials/{id oder Kuerzel}/location` | Material einem Lagerort zuweisen |
 | POST | `/api/stock/receive` | Zugang: Stücke einbuchen, liefert die neuen Codes |
 | POST | `/api/pieces/{id oder Code}/take` | Stück entnehmen (mit Grund) |
@@ -108,7 +109,10 @@ Anfragen von der eigenen Web-Oberfläche (Same-Origin) und von localhost sind im
 | POST | `/api/labels` | Etiketten-PDF aus fertigen Texten erzeugen |
 | GET | `/api/labels/formats` | Alle Etikettenformate (Gruppe, Maße, Ware, Etiketten je Bogen) |
 | GET | `/api/labels/preview?format=` | Musteretikett: Größe und Textpositionen wie im PDF |
-| POST | `/api/labels/pieces` | Etiketten für Lagerstücke (Auswahl per Code, Lagerort, Material, Filter) |
+| POST | `/api/labels/pieces` | Etiketten für Lagerstücke (Auswahl per Code, Lagerort, Material, Filter; `lagerort_etikett` = Ortsetikett vorneweg) |
+| POST | `/api/labels/locations` | Etiketten für Lagerorte `{"orte": ["Regal 3"]}` (leer = alle) |
+| GET | `/api/printer` | Direktdruck: Drucker gefunden?, Modell, eingelegtes Band (`band_mm`), Fehler |
+| POST | `/api/printer/test` | Testetikett auf den angeschlossenen Drucker |
 | **System** | | |
 | GET | `/api/version` | App-Version und Links |
 | GET | `/api/license` | Lizenzstatus |
@@ -213,6 +217,61 @@ DELETE /api/waste?material=AP40
 ```
 
 Lagerjournal: `GET /api/journal?material=AP40&seit=1767225600&limit=100` -- je Eintrag `zeit` (Unix-Zeit), `art` (`zugang`, `korrektur_ab`, `entnahme`, `plan_verbrauch`, `plan_zurueck`, `rest_ein`, `rest_zurueck`, `abfall_ein`, `abfall_zurueck`, `abfall_ab`, `abfall_leer`, `material_lagerort`, `lagerort_neu`, `lagerort_umbenannt`, `lagerort_geloescht`), `code`, Masse, `anzahl`, `quelle` (`ui`/`api`), `notiz`.
+
+### Scannen und QR-Codes
+
+Stück- und Lagerort-Etiketten tragen einen QR-Code. Mit eingestellter Adresse
+(`PUT /api/settings {"label_qr_base": "https://cutstock.example"}`) ist es ein Link
+`HTTPS://CUTSTOCK.EXAMPLE/S/AP40-07` bzw. `/O/3` (Großbuchstaben: kleinerer QR-Code); er leitet auf
+die Oberfläche um. Ohne Adresse steht nur `AP40-07` bzw. `O:3` drin. `GET /api/scan` versteht alle
+Formen:
+
+```json
+GET /api/scan?code=HTTPS://CUTSTOCK.EXAMPLE/S/AP40-07
+→ {"art": "stueck", "code": "AP40-07", "stueck": {...wie /api/pieces...}}
+GET /api/scan?code=O:3
+→ {"art": "lagerort", "code": "O:3", "lagerort": {"id": 3, "name": "Regal 3", "materialien": 4, "stuecke": 21}}
+GET /api/scan?code=AP40-09
+→ {"art": "unbekannt", "code": "AP40-09", "letzte_buchung": {"art": "entnahme", "zeit": ...}}
+```
+
+Frühere Kürzel eines Materials gelten weiter: Nach dem Umbenennen von `AP40` in `AL40` findet
+`AP40-07` dasselbe Stück (angezeigt als `AL40-07`). Vergibt man ein altes Kürzel neu, gilt es nur
+noch für das neue Material.
+
+Etiketten-Einstellungen: `label_qr` (an/aus), `label_style` (`normal`, `mini`, `qr`),
+`label_qr_base`, `label_chain` (Endlos-Band als Kette), `printer_direct`, `printer_cut`.
+
+**Direktdruck** (Brother P-touch per USB, nur Desktop-App): `/api/labels/pieces` und
+`/api/labels/locations` mit `"ausgabe": "drucker"` drucken statt ein PDF zu liefern; Antwort
+`{"gedruckt": 3, "bestaetigt": true, "modell": "PT-P710BT", "band_mm": 12, "etiketten": 3,
+"stuecke": 3, "laenge_mm": 264}` (`stuecke` = geschnittene Stücke, `laenge_mm` = ungefährer
+Bandverbrauch). `"ausgabe": "schaetzung"` druckt nichts und liefert nur `etiketten`, `stuecke`,
+`band_mm`, `laenge_mm` (ebenso `POST /api/printer/test?schaetzung=true`).
+
+**Druckbrücke** (Hilfsprogramm für macOS am Rechner mit dem Drucker, siehe Handbuch → Einstellungen):
+`POST /api/printer/bridge/pair` erzeugt den Kopplungscode `{"schluessel": "323E-…"}` (ein alter
+wird ungültig), `DELETE /api/printer/bridge/pair` trennt. Ist eine Brücke gekoppelt, antworten
+die Etiketten-Endpunkte mit `"ausgabe": "drucker"` sofort mit einem Auftrag
+`{"auftrag": "9f2c…", "zustand": "wartet", "etiketten": 3, …}`; den Stand liefert
+`GET /api/printer/jobs/{id}` (`wartet`, `uebernommen`, `fertig`, `fehler` mit `code`,
+`verfallen` = nicht innerhalb von 60 s abgeholt, `unbekannt` = keine Rückmeldung). `GET
+/api/printer` zeigt dann `druckweg: "bruecke"`, `bruecke_name`, `bruecke_alter_s`, `pausiert`;
+Fehlercodes `bruecke_offline`, `bruecke_pausiert`, `kein_druckweg` (503). Die Brücke selbst nutzt
+`POST /api/printer/bridge/poll?wait=25` (Status melden, auf Auftrag warten) und
+`POST /api/printer/bridge/jobs/{id}/result` mit dem Kopf `X-CutStock-Bridge: <Kopplungscode>` –
+diese beiden brauchen keinen API-Key, nur den Kopplungscode.
+
+**Brother QL im Netzwerk:** Einstellungen `printer_ql_address` (Host oder IP, leer = keiner),
+`printer_ql_red` (Rot/Schwarz-Rolle), `printer_default` (`ptouch` | `ql`). `GET /api/printers`
+listet die eingerichteten Drucker mit Status (Standard zuerst, Feld `drucker`, `medium_name`,
+`laenge_mm` 0 = Endlosrolle, `zweifarbig`); `GET /api/printer?drucker=ql` den QL allein. Die
+Etiketten-Endpunkte und `POST /api/printer/test` nehmen `drucker` (`ptouch` | `ql`, leer =
+Standard); Schätzung und Antwort enthalten `drucker`, `modell`, `medium_name`. Weitere
+Fehlercodes: `drucker_nicht_erreichbar` (503), `rolle_unbekannt`, `papierstau`,
+`drucker_unbekannt`. Fehler mit Code:
+`drucker_fehlt`, `drucker_belegt`, `usb_fehlt` (503) bzw. `kein_band`, `deckel_offen`,
+`band_zu_schmal`, `falsches_band`, `drucker_fehler` (409, mit `gedruckt` = bis dahin fertige).
 
 ## Sägeaufträge
 

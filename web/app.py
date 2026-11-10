@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import signal
 import sys
 import tempfile
@@ -11,7 +12,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -192,6 +193,7 @@ from starlette.requests import Request as StarletteRequest
 from starlette.responses import JSONResponse
 
 UI_COOKIE_MAX_AGE = 30 * 24 * 3600
+_BRUECKE_PFADE = ("/api/printer/bridge/poll",)
 _PROXY_HEADERS = ("x-forwarded-for", "x-real-ip", "forwarded")
 
 
@@ -257,7 +259,11 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
             return response
 
         api_key = _current_api_key()
-        if api_key and not (_has_valid_bearer(request, api_key)
+        # Die Druckbrücke meldet sich mit ihrem eigenen Schlüssel (prüft der Endpunkt), nicht
+        # mit dem API-Key – sie darf nur Aufträge abholen und Status melden.
+        bruecke = request.url.path in _BRUECKE_PFADE or request.url.path.startswith(
+            "/api/printer/bridge/jobs/")
+        if api_key and not bruecke and not (_has_valid_bearer(request, api_key)
                             or _has_valid_ui_cookie(request, api_key)
                             or _is_direct_local(request)):
             return JSONResponse(
@@ -623,6 +629,7 @@ class LabelIn(BaseModel):
     line2: str = ""
     id_text: str = ""
     kurz: str = ""      # Kurzname für sehr kleine Etiketten (leer = id_text bzw. title)
+    qr: str = ""        # Inhalt eines QR-Codes (leer = keiner)
 
 
 class LabelsRequest(BaseModel):
@@ -643,6 +650,18 @@ class PieceLabelsIn(BaseModel):
     startfeld: int = 1
     markieren: bool = True           # Stücke als gedruckt vermerken
     filename: str = ""
+    lagerort_etikett: Optional[str] = None  # zusätzlich (vorne) das Etikett dieses Lagerorts
+    ausgabe: str = "pdf"             # pdf | drucker (Direktdruck) | schaetzung (nur Bandverbrauch)
+    drucker: str = ""                # Direktdruck: ptouch | ql – leer = Standarddrucker
+
+
+class LocationLabelsIn(BaseModel):
+    """Etiketten für Lagerorte selbst (Regal, Fach, Kiste) – mit QR-Code zum Ort."""
+    orte: list[str] = []             # ID oder Name; leer = alle Lagerorte
+    startfeld: int = 1
+    filename: str = ""
+    ausgabe: str = "pdf"             # pdf | drucker | schaetzung
+    drucker: str = ""                # ptouch | ql – leer = Standarddrucker
 
 
 class SettingsIn(BaseModel):
@@ -654,6 +673,15 @@ class SettingsIn(BaseModel):
     label_format: Optional[str] = None
     label_custom_w: Optional[float] = None
     label_custom_h: Optional[float] = None
+    label_qr: Optional[bool] = None         # QR-Code auf Stück- und Lagerort-Etiketten
+    label_qr_base: Optional[str] = None     # Adresse der Instanz für den QR-Link ("" = nur Code)
+    label_style: Optional[str] = None       # normal | mini | qr
+    label_chain: Optional[bool] = None      # Endlosband: alle Etiketten auf einen Streifen
+    printer_direct: Optional[bool] = None   # Direktdruck auf Brother P-touch per USB
+    printer_cut: Optional[bool] = None      # Direktdruck: nach jedem Etikett schneiden (aus = Streifen)
+    printer_ql_address: Optional[str] = None  # Brother QL im Netzwerk: Hostname oder IP ("" = keiner)
+    printer_ql_red: Optional[bool] = None   # QL: Rot/Schwarz-Rolle (DK-22251) eingelegt
+    printer_default: Optional[str] = None   # Standarddrucker: ptouch | ql
     api_enabled: Optional[bool] = None
     api_port: Optional[int] = None
     api_key: Optional[str] = None
@@ -954,6 +982,16 @@ def _get_settings_dict() -> dict:
         "label_format": s.value("labels/format", "a4_3x8"),
         "label_custom_w": s.value("labels/custom_w", 89),
         "label_custom_h": s.value("labels/custom_h", 36),
+        "label_qr": bool(s.value("labels/qr", True)),
+        "label_qr_base": s.value("labels/qr_base", ""),
+        "label_style": s.value("labels/style", "normal"),
+        "label_chain": bool(s.value("labels/chain", False)),
+        "printer_direct": bool(s.value("printer/direct", False)),
+        "printer_cut": bool(s.value("printer/cut", True)),
+        "printer_bridge_key": s.value("printer/bridge_key", ""),
+        "printer_ql_address": s.value("printer/ql_address", ""),
+        "printer_ql_red": bool(s.value("printer/ql_red", False)),
+        "printer_default": s.value("printer/default", ""),
         "api_enabled": s.value("api/enabled", False),
         "api_port": s.value("api/port", 8421),
         "api_key": s.value("api/key", ""),
@@ -988,6 +1026,35 @@ def _update_settings(data: SettingsIn):
         s.setValue("labels/custom_w", data.label_custom_w)
     if data.label_custom_h is not None:
         s.setValue("labels/custom_h", data.label_custom_h)
+    if data.label_qr is not None:
+        s.setValue("labels/qr", data.label_qr)
+    if data.label_qr_base is not None:
+        base = data.label_qr_base.strip().rstrip("/")
+        if base and not re.match(r"^(https?://)?[^\s/]+(/\S*)?$", base):
+            raise _fehler(400, "adresse_ungueltig", "Invalid address for QR codes")
+        s.setValue("labels/qr_base", base)
+    if data.label_style is not None:
+        if data.label_style not in ("normal", "mini", "qr"):
+            raise _fehler(400, "layout_unbekannt", "Unknown label style, use normal, mini or qr")
+        s.setValue("labels/style", data.label_style)
+    if data.label_chain is not None:
+        s.setValue("labels/chain", data.label_chain)
+    if data.printer_direct is not None:
+        s.setValue("printer/direct", data.printer_direct)
+    if data.printer_cut is not None:
+        s.setValue("printer/cut", data.printer_cut)
+    if data.printer_ql_address is not None:
+        adresse = data.printer_ql_address.strip().removeprefix("ipp://").removeprefix(
+            "http://").rstrip("/")
+        if adresse and not re.match(r"^[A-Za-z0-9.\-]+(:\d{1,5})?$", adresse):
+            raise _fehler(400, "adresse_ungueltig", "Invalid printer address (host or IP)")
+        s.setValue("printer/ql_address", adresse)
+    if data.printer_ql_red is not None:
+        s.setValue("printer/ql_red", data.printer_ql_red)
+    if data.printer_default is not None:
+        if data.printer_default not in ("", "ptouch", "ql"):
+            raise _fehler(400, "drucker_unbekannt", "Unknown printer, use ptouch or ql")
+        s.setValue("printer/default", data.printer_default)
     if data.api_enabled is not None:
         s.setValue("api/enabled", data.api_enabled)
     if data.api_port is not None:
@@ -3637,7 +3704,8 @@ def _labels_pdf(labels: list[dict], filename: str, startfeld: int = 1) -> FileRe
                       fmt=str(cfg.get("label_format") or "a4_3x8"),
                       custom_w=float(cfg.get("label_custom_w") or 0),
                       custom_h=float(cfg.get("label_custom_h") or 0),
-                      start=startfeld)
+                      start=startfeld, stil=_label_stil(cfg),
+                      kette=bool(cfg.get("label_chain")))
         fname = f"CutStock-{filename}.pdf"
         return FileResponse(
             tmp_path,
@@ -3649,6 +3717,167 @@ def _labels_pdf(labels: list[dict], filename: str, startfeld: int = 1) -> FileRe
     except Exception as e:
         Path(tmp_path).unlink(missing_ok=True)
         raise HTTPException(500, f"Label generation failed: {e}")
+
+
+def _labels_ausgeben(labels: list[dict], name: str, startfeld: int, ausgabe: str,
+                     drucker: str = ""):
+    """Etiketten als PDF (Antwort: Datei), direkt auf den Drucker oder nur die
+    Bandschätzung für den Drucker (Antwort jeweils JSON)."""
+    if ausgabe in ("drucker", "schaetzung"):
+        return JSONResponse(_direkt_drucken(labels, nur_schaetzen=ausgabe == "schaetzung",
+                                            drucker=drucker))
+    if ausgabe != "pdf":
+        raise _fehler(400, "ausgabe_unbekannt", "ausgabe must be pdf, drucker or schaetzung")
+    return _labels_pdf(labels, name, startfeld)
+
+
+def _druckweg(cfg: dict) -> str:
+    """Wohin Etiketten gehen: "bruecke" (gekoppelte Druckbrücke), "lokal" (Drucker per USB an
+    diesem Rechner, Desktop-App) oder "" (kein Druckweg, nur PDF)."""
+    if cfg.get("printer_bridge_key"):
+        return "bruecke"
+    from core import drucker
+    return "lokal" if not IS_DOCKER and drucker.verfuegbar() else ""
+
+
+def _drucker_lage(cfg: dict) -> dict:
+    """Status des Druckers auf dem aktuellen Druckweg, wie core.drucker.status()."""
+    from core import drucker
+    weg = _druckweg(cfg)
+    if weg == "lokal":
+        return drucker.status()
+    if weg == "":
+        return {"gefunden": False, "code": "kein_druckweg"}
+    b = _warteschlange.bruecke()
+    if b is None or not b["online"]:
+        return {"gefunden": False, "code": "bruecke_offline"}
+    if b.get("pausiert"):
+        return {"gefunden": False, "code": "bruecke_pausiert"}
+    return b
+
+
+def _drucker_ids(cfg: dict) -> list[str]:
+    """Eingerichtete Direktdrucker: "ptouch" (USB hier oder Druckbrücke), "ql" (Netzwerk)."""
+    ids = ["ptouch"] if _druckweg(cfg) else []
+    if cfg.get("printer_ql_address"):
+        ids.append("ql")
+    return ids
+
+
+def _drucker_waehlen(cfg: dict, wunsch: str = "") -> str:
+    ids = _drucker_ids(cfg)
+    if wunsch:
+        if wunsch not in ("ptouch", "ql"):
+            raise _fehler(400, "drucker_unbekannt", "Unknown printer, use ptouch or ql")
+        if wunsch not in ids:
+            raise _fehler(503, "kein_druckweg", f"Printer {wunsch} is not set up")
+        return wunsch
+    standard = str(cfg.get("printer_default") or "")
+    return standard if standard in ids else (ids[0] if ids else "")
+
+
+def _ql_lage(cfg: dict) -> dict:
+    """Status des QL im Netzwerk (IPP); Rot/Schwarz aus der Einstellung (der QL meldet es
+    übers Netz nicht)."""
+    from core import ql_netz
+    st = ql_netz.status(str(cfg.get("printer_ql_address") or ""))
+    if st.get("gefunden") and st.get("band_mm") == 62 and not st.get("laenge_mm"):
+        st["zweifarbig"] = bool(cfg.get("printer_ql_red"))
+        st["medium"] = "62 mm endlos" + (" Rot/Schwarz" if st["zweifarbig"] else "")
+    return st
+
+
+def _ql_drucken(labels: list[dict], cfg: dict, nur_schaetzen: bool) -> dict:
+    from core import ipp, ql, ql_netz
+    from core.labels_raster import druckbild_ql
+    st = _ql_lage(cfg)
+    if not st.get("gefunden") or st.get("code"):
+        code = st.get("code") or "drucker_nicht_erreichbar"
+        raise _fehler(503 if code == "drucker_nicht_erreichbar" else 409, code,
+                      st.get("text") or code)
+    medium = ql_netz.medium_von(st)
+    stil = _label_stil(cfg)
+    bilder = [druckbild_ql(lab, medium, stil) for lab in labels]
+    einzeln = bool(cfg.get("printer_cut", True))
+    laengen = [(b[0] if isinstance(b, tuple) else b).size[0] for b in bilder]
+    info = {"etiketten": len(bilder), "stuecke": len(bilder) if einzeln else 1,
+            "band_mm": medium.breite_mm, "laenge_mm": round(ql.bandlaenge_mm(laengen, medium)),
+            "drucker": "ql", "modell": st.get("modell", ""), "medium_name": medium.name()}
+    if nur_schaetzen:
+        return info
+    daten = ql.auftrag(bilder, medium, schneiden=einzeln)
+    try:
+        erg = ql_netz.drucken(str(cfg["printer_ql_address"]), daten, len(bilder))
+    except ipp.IppFehler as e:
+        status = 503 if e.code in ("drucker_nicht_erreichbar", "drucker_antwortet_nicht") else 409
+        raise _fehler(status, e.code, e.text)
+    return dict(info, gedruckt=erg["gedruckt"], bestaetigt=True)
+
+
+def _direkt_drucken(labels: list[dict], nur_schaetzen: bool = False, drucker: str = "") -> dict:
+    """Etiketten auf den P-touch: Druckbilder für das eingelegte Band. Lokal wird sofort
+    gedruckt; über die Druckbrücke entsteht ein Auftrag, den die Brücke abholt (Antwort mit
+    `auftrag`, Fortschritt über GET /api/printer/jobs/{id}).
+    Ohne „nach jedem Etikett schneiden“ liegen alle auf einem Streifen mit Schnittmarken.
+    nur_schaetzen: nichts drucken, nur Anzahl und ungefähren Bandverbrauch liefern."""
+    cfg = _get_settings_dict()
+    wahl = _drucker_waehlen(cfg, drucker)
+    if wahl == "ql":
+        return _ql_drucken(labels, cfg, nur_schaetzen)
+    from core import drucker, ptouch
+    from core.labels_raster import druckbild, streifen
+    st = _drucker_lage(cfg)
+    if not st.get("gefunden") or st.get("code"):
+        raise _drucker_fehler(drucker.DruckerFehler(st.get("code") or "drucker_fehlt"))
+    band = st["band_mm"]
+    if band not in ptouch.BAND or band < 12:
+        raise _fehler(409, "band_zu_schmal", f"{band} mm tape is not supported (12–24 mm)",
+                      band_mm=band)
+    stil = _label_stil(cfg)
+    bilder = [druckbild(lab, band, stil) for lab in labels]
+    einzeln = bool(cfg.get("printer_cut", True))
+    seiten = bilder if einzeln else streifen(bilder)
+    info = {"etiketten": len(bilder), "stuecke": len(seiten), "band_mm": band,
+            "laenge_mm": round(ptouch.bandlaenge_mm([b.size[0] for b in seiten])),
+            "drucker": "ptouch", "modell": st.get("modell", ""), "medium_name": f"{band} mm TZe"}
+    if nur_schaetzen:
+        return info
+    if _druckweg(cfg) == "bruecke":
+        medium = 0x03 if st.get("medium") == "nicht_laminiert" else 0x01
+        daten = ptouch.seiten(seiten, band, schneiden=True, medium=medium)
+        a = _warteschlange.anlegen(daten, [b.size[0] for b in seiten], band, medium, info)
+        return dict(info, auftrag=a["id"], zustand=a["zustand"])
+    try:
+        erg = drucker.drucken(seiten, band, schneiden=True)
+    except drucker.DruckerFehler as e:
+        raise _drucker_fehler(e)
+    return dict(erg, **info, gedruckt=len(bilder) if erg["gedruckt"] == len(seiten)
+                else erg["gedruckt"])
+
+
+def _drucker_fehler(e) -> HTTPException:
+    status = 503 if e.code in ("usb_fehlt", "drucker_fehlt", "drucker_belegt",
+                               "drucker_antwortet_nicht", "kein_druckweg", "bruecke_offline",
+                               "bruecke_pausiert", "drucker_nicht_erreichbar") else 409
+    return _fehler(status, e.code, e.text, **e.extra)
+
+
+def _label_stil(cfg: dict) -> str:
+    """QR-Layout aus den Einstellungen; QR aus = nur Text."""
+    return str(cfg.get("label_style") or "normal") if cfg.get("label_qr", True) else "text"
+
+
+def _qr(cfg: dict, art: str, ref) -> str:
+    """QR-Inhalt für Stück ("s", Code) bzw. Lagerort ("o", ID) – leer, wenn QR aus ist."""
+    from core.labels import qr_text
+    return qr_text(art, ref, str(cfg.get("label_qr_base") or "")) if cfg.get("label_qr", True) else ""
+
+
+def _ort_label(db: Database, ort: dict, cfg: dict) -> dict:
+    """Etikett eines Lagerorts: Name groß, darunter die Materialien, QR zum Ort."""
+    namen = sorted({m.name for m, _ in db.lagerort_inhalt(ort["name"])}, key=str.lower)
+    return {"art": "ort", "title": ort["name"], "line1": ", ".join(namen), "line2": "",
+            "id_text": "", "kurz": ort["name"], "qr": _qr(cfg, "o", ort["id"])}
 
 
 @app.post("/api/labels")
@@ -3665,11 +3894,12 @@ def _mass_text(laenge: float, breite: float, unit: str, feet: bool = True) -> st
 
 class LabelFormatOut(BaseModel):
     key: str
-    gruppe: str          # bogen | bogen_klein | rolle | rolle_klein | endlos
+    gruppe: str          # bogen | bogen_klein | rolle | rolle_klein | endlos | ptouch
     breite: float        # mm (0 bei Endlos: Länge ergibt sich aus dem Inhalt)
-    hoehe: float         # mm
+    hoehe: float         # mm (Endlos: Bandbreite)
     ware: str            # z. B. "Brother DK-11204", "Avery L7651"
     je_bogen: int = 0    # Etiketten je A4-Bogen, 0 = Rolle
+    endlos: bool = False # Endlos-Band: Länge ergibt sich aus dem Inhalt
 
 
 class LabelPreviewItem(BaseModel):
@@ -3682,11 +3912,22 @@ class LabelPreviewItem(BaseModel):
     rechts: bool
 
 
+class LabelPreviewQr(BaseModel):
+    x: float             # mm von links
+    y: float             # mm von oben (Oberkante inkl. Ruhezone)
+    groesse: float       # Kantenlänge in mm inkl. Ruhezone
+    rand: int            # Ruhezone in Modulen
+    zeilen: list[str]    # Module je Zeile, "1" = schwarz
+
+
 class LabelPreviewOut(BaseModel):
     format: str
     breite: float
     hoehe: float
     elemente: list[LabelPreviewItem]
+    qr: Optional[LabelPreviewQr] = None
+    qr_zu_klein: bool = False   # QR gewünscht, passt aber nicht aufs Etikett → nur Text
+    stil: str = "normal"
 
 
 @app.get("/api/labels/formats", response_model=list[LabelFormatOut])
@@ -3698,23 +3939,31 @@ def label_formats():
 
 @app.get("/api/labels/preview", response_model=LabelPreviewOut)
 def label_preview(format: str = "", title: str = "Alu Profil 40x40", line1: str = "1200 mm",
-                  line2: str = "Regal 3", id_text: str = "AP40-07"):
-    """Musteretikett im eingestellten (oder angegebenen) Format: Größe und Textpositionen
-    genau wie im PDF – für die Vorschau in den Einstellungen."""
+                  line2: str = "Regal 3", id_text: str = "AP40-07", style: str = ""):
+    """Musteretikett im eingestellten (oder angegebenen) Format und Layout: Größe,
+    Textpositionen und QR-Code genau wie im PDF – für die Vorschau in den Einstellungen."""
     from reportlab.lib.units import mm as MM
-    from core.labels import ENDLESS_FORMATS, _endlos_gross, label_size, layout
+    from core.labels import label_items
     cfg = _get_settings_dict()
     fmt = format or str(cfg.get("label_format") or "a4_3x8")
-    lab = {"title": title, "line1": line1, "line2": line2, "id_text": id_text}
-    w, h = label_size(fmt, lab, float(cfg.get("label_custom_w") or 0),
-                      float(cfg.get("label_custom_h") or 0))
-    gross = _endlos_gross(h * MM) if fmt in ENDLESS_FORMATS else None
-    elemente = [LabelPreviewItem(text=i["text"], fett=i["font"].endswith("Bold"),
-                                 groesse=round(i["size"], 2), x=round(i["x"] / MM, 2),
-                                 y=round(h - i["y"] / MM, 2), grau=i["color"] != "#000000",
-                                 rechts=i["rechts"])
-                for i in layout(lab, w * MM, h * MM, gross)]
-    return LabelPreviewOut(format=fmt, breite=round(w, 2), hoehe=round(h, 2), elemente=elemente)
+    stil = style if style in ("normal", "mini", "qr", "text") else _label_stil(cfg)
+    lab = {"title": title, "line1": line1, "line2": line2, "id_text": id_text,
+           "qr": _qr(dict(cfg, label_qr=True), "s", id_text) if stil != "text" else ""}
+    w, h, items = label_items(fmt, lab, float(cfg.get("label_custom_w") or 0),
+                              float(cfg.get("label_custom_h") or 0), stil)
+    elemente, qr = [], None
+    for i in items:
+        if "qr" in i:
+            qr = LabelPreviewQr(x=round(i["x"] / MM, 2), y=round(h - (i["y"] + i["size"]) / MM, 2),
+                                groesse=round(i["size"] / MM, 2), rand=i["quiet"],
+                                zeilen=["".join("1" if d else "0" for d in z) for z in i["qr"]])
+            continue
+        elemente.append(LabelPreviewItem(text=i["text"], fett=i["font"].endswith("Bold"),
+                                         groesse=round(i["size"], 2), x=round(i["x"] / MM, 2),
+                                         y=round(h - i["y"] / MM, 2),
+                                         grau=i["color"] != "#000000", rechts=i["rechts"]))
+    return LabelPreviewOut(format=fmt, breite=round(w, 2), hoehe=round(h, 2), elemente=elemente,
+                           qr=qr, qr_zu_klein=bool(lab["qr"]) and qr is None, stil=stil)
 
 
 @app.post("/api/labels/pieces")
@@ -3739,29 +3988,303 @@ def piece_labels(req: PieceLabelsIn):
         else:
             zeilen = [(nur_mat, ls) for ls in db.list_lagerstuecke(nur_mat.id)]
         stuecke = [(m, ls, e) for m, ls in zeilen for e in db.list_einzelstuecke(ls.id)]
-    else:
+    elif not req.lagerort_etikett:
         raise _fehler(400, "auswahl_fehlt", "Give codes, lagerort or material")
+    ort_etikett = _lagerort_ref(db, req.lagerort_etikett) if req.lagerort_etikett else None
 
     stuecke = [(m, ls, e) for m, ls, e in stuecke
                if not (req.nur_reste and not ls.ist_rest)
                and not (req.nur_ganze and ls.ist_rest)
                and not (req.nur_ungedruckt and e.etikett_gedruckt)]
-    if not stuecke:
+    if not stuecke and not ort_etikett:
         raise _fehler(404, "keine_stuecke", "No pieces match the selection")
     stuecke = stuecke[:1000]
 
     cfg = _get_settings_dict()
     unit, feet = cfg["unit"], cfg["unit_feet"]
-    labels = [{"title": m.name, "line1": _mass_text(ls.laenge, ls.breite, unit, feet),
-               "line2": db.stueck_lagerort(m, ls), "id_text": stueck_code(m.kuerzel, e.nr)}
-              for m, ls, e in stuecke]
+    labels = []
+    for m, ls, e in stuecke:
+        code = stueck_code(m.kuerzel, e.nr)
+        labels.append({"title": m.name, "line1": _mass_text(ls.laenge, ls.breite, unit, feet),
+                       "line2": db.stueck_lagerort(m, ls), "id_text": code,
+                       "qr": _qr(cfg, "s", code)})
     namen = {m.name for m, _, _ in stuecke}
-    name = req.filename or (labels[0]["id_text"] if len(labels) == 1
+    name = req.filename or (ort_etikett["name"] if ort_etikett and not labels
+                            else labels[0]["id_text"] if len(labels) == 1
                             else namen.pop() if len(namen) == 1 else "Etiketten")
-    antwort = _labels_pdf(labels, name, req.startfeld)
-    if req.markieren:
+    if ort_etikett:
+        labels.insert(0, _ort_label(db, ort_etikett, cfg))
+    antwort = _labels_ausgeben(labels, name, req.startfeld, req.ausgabe, req.drucker)
+    if req.markieren and req.ausgabe != "schaetzung":
         db.etiketten_gedruckt([e.id for _, _, e in stuecke])
     return antwort
+
+
+@app.post("/api/labels/locations")
+def location_labels(req: LocationLabelsIn):
+    """Etiketten für Lagerorte (Regal, Fach, Kiste): Name, Materialien, QR-Code zum Ort.
+    Ohne `orte` alle Lagerorte."""
+    db = get_db()
+    orte = ([_lagerort_ref(db, str(r)) for r in req.orte] if req.orte
+            else db.list_lagerorte())
+    if not orte:
+        raise _fehler(404, "keine_lagerorte", "No locations")
+    cfg = _get_settings_dict()
+    labels = [_ort_label(db, o, cfg) for o in orte]
+    name = req.filename or (orte[0]["name"] if len(orte) == 1 else "Lagerorte")
+    return _labels_ausgeben(labels, name, req.startfeld, req.ausgabe, req.drucker)
+
+
+# ---------------------------------------------------------------------------
+# Direktdruck (Brother P-touch per USB)
+# ---------------------------------------------------------------------------
+
+
+class PrinterOut(BaseModel):
+    verfuegbar: bool              # es gibt einen Druckweg (USB hier oder Druckbrücke); sonst nur PDF
+    gefunden: bool = False        # unterstützter Drucker angeschlossen
+    modell: str = ""
+    band_mm: int = 0              # eingelegte Bandbreite
+    medium: str = ""              # laminiert, nicht_laminiert, kein_band …
+    fehler: list[str] = []        # kein_band, deckel_offen, falsches_band …
+    code: str = ""                # erster Fehler bzw. drucker_fehlt / bruecke_offline …
+    druckweg: str = ""            # lokal | bruecke | "" (nur PDF)
+    gekoppelt: bool = False       # eine Druckbrücke ist gekoppelt
+    bruecke_name: str = ""        # Rechnername der Brücke
+    bruecke_version: str = ""
+    bruecke_alter_s: Optional[int] = None   # Sekunden seit der letzten Meldung (None = nie)
+    pausiert: bool = False
+    drucker: str = "ptouch"       # ptouch | ql
+    laenge_mm: int = 0            # QL: Länge vorgestanzter Etiketten, 0 = Endlosrolle
+    zweifarbig: bool = False      # QL: Rot/Schwarz-Rolle
+    medium_name: str = ""         # z. B. "29 mm endlos", "62 mm endlos Rot/Schwarz", "12 mm TZe"
+
+
+def _ql_out(cfg: dict) -> PrinterOut:
+    st = _ql_lage(cfg)
+    felder = {k: v for k, v in st.items() if k in PrinterOut.model_fields and k != "medium"}
+    return PrinterOut(verfuegbar=True, druckweg="netz", drucker="ql",
+                      medium_name=str(st.get("medium") or ""), **felder)
+
+
+@app.get("/api/printer", response_model=PrinterOut)
+def printer_status(drucker: str = ""):
+    """Etikettendrucker: der P-touch (per USB an diesem Rechner oder über die Druckbrücke) bzw.
+    mit ?drucker=ql der Brother QL im Netzwerk. Liefert eingelegtes Band und Fehler."""
+    cfg = _get_settings_dict()
+    if drucker == "ql":
+        if not cfg.get("printer_ql_address"):
+            return PrinterOut(verfuegbar=False, drucker="ql", code="kein_druckweg")
+        return _ql_out(cfg)
+    weg = _druckweg(cfg)
+    if weg == "":
+        return PrinterOut(verfuegbar=False, code="usb_fehlt" if not IS_DOCKER else "kein_druckweg")
+    st = _drucker_lage(cfg)
+    felder = {k: v for k, v in st.items() if k in PrinterOut.model_fields}
+    out = PrinterOut(verfuegbar=True, druckweg=weg, **felder)
+    if out.gefunden:
+        out.medium_name = f"{out.band_mm} mm TZe"
+    if weg == "bruecke":
+        b = _warteschlange.bruecke() or {}
+        out.gekoppelt = True
+        out.bruecke_name = str(b.get("name") or "")
+        out.bruecke_version = str(b.get("version") or "")
+        out.bruecke_alter_s = b.get("alter_s")
+        out.pausiert = bool(b.get("pausiert"))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Druckbrücke: Hilfsprogramm am Rechner mit dem Drucker holt Aufträge ab
+# ---------------------------------------------------------------------------
+
+from core.druckwarteschlange import Warteschlange  # noqa: E402
+
+_warteschlange = Warteschlange()
+
+
+class BridgePairOut(BaseModel):
+    schluessel: str               # Kopplungscode, in der Druckbrücke einzugeben
+
+
+@app.post("/api/printer/bridge/pair", response_model=BridgePairOut)
+def bridge_pair():
+    """Druckbrücke koppeln: neuen Kopplungscode erzeugen (ein alter wird ungültig).
+    Ab dann gehen Etiketten über die Brücke statt an einen Drucker an diesem Rechner."""
+    import secrets
+    from core.settings import Settings
+    zeichen = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    code = "-".join("".join(secrets.choice(zeichen) for _ in range(4)) for _ in range(5))
+    Settings(SETTINGS_PATH).setValue("printer/bridge_key", code)
+    _warteschlange.leeren()
+    return BridgePairOut(schluessel=code)
+
+
+@app.delete("/api/printer/bridge/pair")
+def bridge_unpair():
+    """Druckbrücke trennen: Kopplungscode löschen, wartende Aufträge verfallen."""
+    from core.settings import Settings
+    Settings(SETTINGS_PATH).setValue("printer/bridge_key", "")
+    _warteschlange.leeren()
+    return {"ok": True}
+
+
+class BridgeHelloIn(BaseModel):
+    name: str = ""                # Rechnername
+    version: str = ""             # Version der Druckbrücke
+    pausiert: bool = False
+    gefunden: bool = False        # Drucker angeschlossen
+    modell: str = ""
+    band_mm: int = 0
+    medium: str = ""
+    fehler: list[str] = []
+    code: str = ""
+
+
+class BridgeResultIn(BaseModel):
+    gedruckt: int = 0             # fertig gedruckte Seiten
+    code: str = ""                # Fehlercode, leer = alles gedruckt
+    text: str = ""
+
+
+def _bruecke_pruefen(schluessel: str):
+    gespeichert = str(_get_settings_dict().get("printer_bridge_key") or "")
+    if not gespeichert or not hmac.compare_digest(schluessel.strip().upper().encode(),
+                                                  gespeichert.encode()):
+        raise _fehler(401, "bruecke_schluessel", "Unknown or revoked bridge pairing code")
+
+
+@app.post("/api/printer/bridge/poll")
+def bridge_poll(data: BridgeHelloIn, wait: float = 25.0,
+                x_cutstock_bridge: str = Header(default="")):
+    """Für die Druckbrücke: Status melden und auf einen Auftrag warten (bis `wait` Sekunden).
+    Antwort `{"auftrag": null}` oder der Auftrag mit den Druckdaten je Seite (Base64)."""
+    import base64
+    _bruecke_pruefen(x_cutstock_bridge)
+    hallo = data.model_dump()
+    hallo["fehler"] = [str(f)[:40] for f in hallo["fehler"]][:10]
+    for k in ("name", "version", "modell", "medium", "code"):
+        hallo[k] = str(hallo[k])[:80]
+    _warteschlange.melden(hallo)
+    if data.pausiert or not data.gefunden:
+        return {"auftrag": None}
+    a = _warteschlange.abholen(wait)
+    if a is None:
+        return {"auftrag": None}
+    return {"auftrag": {"id": a["id"], "band_mm": a["band_mm"], "medium": a["medium"],
+                        "laengen": a["laengen"], "etiketten": a["etiketten"],
+                        "seiten": [base64.b64encode(x).decode() for x in a["seiten"]]}}
+
+
+@app.post("/api/printer/bridge/jobs/{auftrag_id}/result")
+def bridge_result(auftrag_id: str, data: BridgeResultIn,
+                  x_cutstock_bridge: str = Header(default="")):
+    """Für die Druckbrücke: Ergebnis eines abgeholten Auftrags melden."""
+    _bruecke_pruefen(x_cutstock_bridge)
+    if not _warteschlange.ergebnis(auftrag_id, data.gedruckt, data.code[:40], data.text[:200]):
+        raise _fehler(404, "auftrag_unbekannt", "Unknown print job")
+    return {"ok": True}
+
+
+class PrintJobOut(BaseModel):
+    id: str
+    zustand: str                  # wartet | uebernommen | fertig | fehler | verfallen | unbekannt
+    etiketten: int = 0
+    stuecke: int = 0
+    gedruckt: int = 0             # gedruckte Etiketten (bei fertig = etiketten)
+    code: str = ""                # Fehlercode bei fehler
+    band_mm: int = 0
+    laenge_mm: int = 0
+
+
+@app.get("/api/printer/jobs/{auftrag_id}", response_model=PrintJobOut)
+def print_job(auftrag_id: str):
+    """Stand eines Druckauftrags über die Druckbrücke."""
+    a = _warteschlange.auftrag(auftrag_id)
+    if a is None:
+        raise _fehler(404, "auftrag_unbekannt", "Unknown print job")
+    gedruckt = a["etiketten"] if a["zustand"] == "fertig" and a["gedruckt"] >= a["stuecke"] \
+        else (a["gedruckt"] if a["stuecke"] == a["etiketten"] else 0)
+    return PrintJobOut(id=a["id"], zustand=a["zustand"], etiketten=a["etiketten"],
+                       stuecke=a["stuecke"], gedruckt=gedruckt, code=a["code"],
+                       band_mm=a["band_mm"], laenge_mm=a["laenge_mm"])
+
+
+@app.get("/api/printers", response_model=list[PrinterOut])
+def printers():
+    """Alle eingerichteten Direktdrucker mit Status, der Standarddrucker zuerst."""
+    cfg = _get_settings_dict()
+    ids = _drucker_ids(cfg)
+    standard = _drucker_waehlen(cfg) if ids else ""
+    ids.sort(key=lambda i: i != standard)
+    return [_ql_out(cfg) if i == "ql" else printer_status() for i in ids]
+
+
+@app.post("/api/printer/test")
+def printer_test(schaetzung: bool = False, drucker: str = ""):
+    """Testetikett (wie die Vorschau) auf den angeschlossenen Drucker.
+    ?schaetzung=true: nichts drucken, nur den Bandverbrauch melden."""
+    cfg = _get_settings_dict()
+    lab = {"title": "Alu Profil 40x40", "line1": "1200 mm", "line2": "Regal 3",
+           "id_text": "AP40-07", "qr": _qr(cfg, "s", "AP40-07")}
+    return _direkt_drucken([lab], nur_schaetzen=schaetzung, drucker=drucker)
+
+
+# ---------------------------------------------------------------------------
+# Scan: QR-Code / Handscanner → Stück oder Lagerort
+# ---------------------------------------------------------------------------
+
+
+class ScanOut(BaseModel):
+    art: str                               # stueck | lagerort | unbekannt
+    code: str = ""                         # erkannter Code ("AP40-07", "O:3")
+    stueck: Optional[EinzelstueckOut] = None
+    lagerort: Optional[LocationOut] = None
+    letzte_buchung: Optional[JournalOut] = None   # unbekanntes Stück: z. B. wann entnommen
+
+
+def _scan_zerlegen(text: str) -> tuple[str, str]:
+    """("s", Code) bzw. ("o", Ort) aus allem, was auf einem Etikett stehen kann:
+    Link ".../S/AP40-07", ".../O/3", "AP40-07", "O:3", "#7"."""
+    from urllib.parse import unquote, urlsplit
+    text = (text or "").strip()
+    if "://" in text or text.startswith("/"):
+        teile = [t for t in unquote(urlsplit(text).path).split("/") if t]
+        if len(teile) >= 2 and teile[-2].lower() in ("s", "o"):
+            return teile[-2].lower(), teile[-1]
+        query = urlsplit(text).query   # ältere Form "?s=AP40-07"
+        for art in ("s", "o"):
+            m = re.search(rf"(?:^|&){art}=([^&]+)", query, re.I)
+            if m:
+                return art, unquote(m.group(1))
+        return "s", teile[-1] if teile else ""
+    if text[:2].upper() == "O:":
+        return "o", text[2:].strip()
+    return "s", text
+
+
+@app.get("/api/scan", response_model=ScanOut)
+def scan(code: str = Query(..., description="Inhalt des QR-Codes oder eingetippter Code")):
+    """Gescannten Code auflösen: Stück (mit Material, Maß, Ort, Reservierung) oder
+    Lagerort. Unbekannte Stücke liefern die letzte Lagerbuchung zum Code mit."""
+    db = get_db()
+    art, ref = _scan_zerlegen(code)
+    if art == "o":
+        ort = db.get_lagerort(ref) if ref else None
+        if ort:
+            info = next((o for o in db.list_lagerorte() if o["id"] == ort["id"]), ort)
+            return ScanOut(art="lagerort", code=f"O:{ort['id']}", lagerort=LocationOut(**info))
+        return ScanOut(art="unbekannt", code=f"O:{ref}")
+    gefunden = db.stueck_finden(ref) if ref else None
+    if gefunden:
+        material, _, e = gefunden
+        reserviert = (db.reservierte_stuecke(material.id)
+                      if _lager_einstellungen()["reservierung"] else {})
+        out = _piece_out(db, e, material, reserviert)
+        return ScanOut(art="stueck", code=out.code, stueck=out)
+    letzte = db.journal_letzter(ref.upper()) if ref else None
+    return ScanOut(art="unbekannt", code=ref.upper(),
+                   letzte_buchung=JournalOut(**letzte) if letzte else None)
 
 
 # ---------------------------------------------------------------------------
@@ -4352,6 +4875,121 @@ WEB_EXTRA_TRANSLATIONS = {
     "labels.g_rolle": {"de": "Rollen (Etikettendrucker)", "en": "Rolls (label printer)", "fr": "Rouleaux (imprimante d’étiquettes)", "it": "Rotoli (stampante di etichette)"},
     "labels.g_rolle_klein": {"de": "Rollen, kleine Etiketten", "en": "Rolls, small labels", "fr": "Rouleaux, petites étiquettes", "it": "Rotoli, etichette piccole"},
     "labels.g_endlos": {"de": "Endlos-Band", "en": "Continuous tape", "fr": "Ruban continu", "it": "Nastro continuo"},
+    "set.printer_direct": {"de": "Direkt drucken (Brother P-touch, USB):", "en": "Print directly (Brother P-touch, USB):", "fr": "Impression directe (Brother P-touch, USB) :", "it": "Stampa diretta (Brother P-touch, USB):"},
+    "set.h_printer_direct": {"de": "Etiketten gehen ohne PDF und ohne Brother-Software an einen P-touch (getestet: PT-P710BT) – per USB an diesem Rechner (Desktop-App) oder über die gekoppelte Druckbrücke. Gedruckt wird auf das eingelegte TZe-Band (12–24 mm).", "en": "Labels go straight to a P-touch, without PDF or Brother software (tested: PT-P710BT) – via USB on this computer (desktop app) or through the paired print bridge. Prints on the loaded TZe tape (12–24 mm).", "fr": "Les étiquettes partent directement vers une P-touch, sans PDF ni logiciel Brother (testé : PT-P710BT) – en USB sur cet ordinateur (application de bureau) ou via le pont d’impression associé. Impression sur le ruban TZe chargé (12–24 mm).", "it": "Le etichette vanno direttamente a una P-touch, senza PDF né software Brother (testato: PT-P710BT) – via USB su questo computer (app desktop) o tramite il ponte di stampa associato. Stampa sul nastro TZe inserito (12–24 mm)."},
+    "set.printer": {"de": "Drucker:", "en": "Printer:", "fr": "Imprimante :", "it": "Stampante:"},
+    "set.printer_check": {"de": "Prüfen", "en": "Check", "fr": "Vérifier", "it": "Verifica"},
+    "set.printer_test": {"de": "Testdruck", "en": "Test print", "fr": "Test d’impression", "it": "Stampa di prova"},
+    "set.h_printer": {"de": "CutStock liest das eingelegte Band vom Drucker und richtet die Etiketten danach aus – das Papierformat oben gilt nur fürs PDF. Der Drucker muss eingeschaltet sein; der P-touch Editor darf ihn nicht gerade benutzen.", "en": "CutStock reads the loaded tape from the printer and lays out the labels for it – the paper format above only applies to the PDF. The printer must be switched on and not in use by P-touch Editor.", "fr": "CutStock lit le ruban chargé dans l’imprimante et adapte les étiquettes – le format ci-dessus ne vaut que pour le PDF. L’imprimante doit être allumée et non utilisée par P-touch Editor.", "it": "CutStock legge il nastro inserito e adatta le etichette – il formato sopra vale solo per il PDF. La stampante deve essere accesa e non in uso da P-touch Editor."},
+    "set.printer_cut": {"de": "Nach jedem Etikett schneiden:", "en": "Cut after each label:", "fr": "Couper après chaque étiquette :", "it": "Taglia dopo ogni etichetta:"},
+    "set.h_printer_cut": {"de": "An (Standard): jedes Etikett wird einzeln abgeschnitten, je Etikett kommen gut 2 cm Leerband dazu. Aus (spart Band): alle Etiketten eines Auftrags auf einen Streifen mit Schnittmarken, geschnitten wird nur am Ende – getrennt wird mit der Schere.", "en": "On (default): each label is cut off separately, adding about 2 cm of blank tape per label. Off (saves tape): all labels of a job on one strip with cut marks, only the end is cut – separate them with scissors.", "fr": "Activé (par défaut) : chaque étiquette est coupée séparément, environ 2 cm de ruban vierge en plus par étiquette. Désactivé (économise du ruban) : toutes les étiquettes d’un travail sur une bande avec repères de coupe, seule la fin est coupée – séparez-les aux ciseaux.", "it": "Attivato (predefinito): ogni etichetta viene tagliata separatamente, circa 2 cm di nastro vuoto in più per etichetta. Disattivato (risparmia nastro): tutte le etichette di un lavoro su una striscia con segni di taglio, si taglia solo alla fine – separale con le forbici."},
+    "prn.confirm": {"de": "{n} Etikett(en) auf {mm}-mm-Band drucken?\nVerbrauch ca. {cm} cm Band ({teile} Stück).", "en": "Print {n} label(s) on {mm} mm tape?\nUses about {cm} cm of tape ({teile} piece(s)).", "fr": "Imprimer {n} étiquette(s) sur ruban {mm} mm ?\nConsommation env. {cm} cm de ruban ({teile} morceau(x)).", "it": "Stampare {n} etichetta/e su nastro {mm} mm?\nConsumo circa {cm} cm di nastro ({teile} pezzo/i)."},
+    "prn.hint_narrow": {"de": "Tipp: Für kleine Teile reicht 12-mm-Band – das ist günstiger.", "en": "Tip: 12 mm tape is enough for small parts – and cheaper.", "fr": "Astuce : le ruban de 12 mm suffit pour les petites pièces – et coûte moins cher.", "it": "Suggerimento: per pezzi piccoli basta il nastro da 12 mm – costa meno."},
+    "set.bridge": {"de": "Druckbrücke (nur macOS):", "en": "Print bridge (macOS only):", "fr": "Pont d’impression (macOS uniquement) :", "it": "Ponte di stampa (solo macOS):"},
+    "set.bridge_pair": {"de": "Koppeln", "en": "Pair", "fr": "Associer", "it": "Associa"},
+    "set.bridge_new": {"de": "Neuer Code", "en": "New code", "fr": "Nouveau code", "it": "Nuovo codice"},
+    "set.bridge_unpair": {"de": "Trennen", "en": "Unpair", "fr": "Dissocier", "it": "Dissocia"},
+    "set.h_bridge": {"de": "Die Druckbrücke gibt es vorerst nur für macOS. Damit CutStock auf einen Etikettendrucker an einem anderen Rechner druckt (z. B. aus der Docker-Instanz oder vom Handy): Auf dem Rechner, an dem der P-touch per USB hängt, die „CutStock Druckbrücke“ installieren (Download auf cutstock.app). Sie zeigt sich als Symbol in der Menüleiste, fragt hier nach Druckaufträgen und gibt sie an den Drucker. Beim Einrichten Adresse dieser Instanz und den Kopplungscode eingeben.", "en": "The print bridge is available for macOS only for now. To print on a label printer attached to another computer (e.g. from the Docker instance or a phone): on the computer the P-touch is connected to via USB, install the “CutStock print bridge” (download on cutstock.app). It shows as an icon in the menu bar, asks this instance for print jobs and sends them to the printer. When setting it up, enter this instance’s address and the pairing code.", "fr": "Le pont d’impression n’existe pour l’instant que pour macOS. Pour imprimer sur une imprimante d’étiquettes branchée à un autre ordinateur (p. ex. depuis l’instance Docker ou un téléphone) : sur l’ordinateur auquel la P-touch est branchée en USB, installez le « pont d’impression CutStock » (téléchargement sur cutstock.app). Il apparaît comme icône dans la barre des menus, demande les travaux à cette instance et les envoie à l’imprimante. Lors de la configuration, saisissez l’adresse de cette instance et le code d’association.", "it": "Il ponte di stampa per ora esiste solo per macOS. Per stampare su una stampante di etichette collegata a un altro computer (ad es. dall’istanza Docker o dal telefono): sul computer a cui la P-touch è collegata via USB installa il “ponte di stampa CutStock” (download su cutstock.app). Appare come icona nella barra dei menu, chiede i lavori a questa istanza e li invia alla stampante. Durante la configurazione inserisci l’indirizzo di questa istanza e il codice di associazione."},
+    "set.bridge_none": {"de": "Nicht gekoppelt", "en": "Not paired", "fr": "Non associé", "it": "Non associato"},
+    "set.bridge_code": {"de": "Kopplungscode:", "en": "Pairing code:", "fr": "Code d’association :", "it": "Codice di associazione:"},
+    "set.bridge_unpair_confirm": {"de": "Druckbrücke trennen? Der Kopplungscode wird ungültig, die Brücke muss neu gekoppelt werden.", "en": "Unpair the print bridge? The pairing code becomes invalid and the bridge must be paired again.", "fr": "Dissocier le pont d’impression ? Le code devient invalide, le pont doit être associé à nouveau.", "it": "Dissociare il ponte di stampa? Il codice non sarà più valido, il ponte va riassociato."},
+    "set.bridge_new_confirm": {"de": "Neuen Kopplungscode erzeugen? Der alte wird ungültig – die Brücke muss den neuen bekommen.", "en": "Create a new pairing code? The old one becomes invalid – the bridge needs the new one.", "fr": "Créer un nouveau code ? L’ancien devient invalide – le pont a besoin du nouveau.", "it": "Creare un nuovo codice? Quello vecchio non sarà più valido – il ponte ha bisogno di quello nuovo."},
+    "prn.via_bridge": {"de": "{modell} an {name}, {mm}-mm-Band eingelegt", "en": "{modell} at {name}, {mm} mm tape loaded", "fr": "{modell} sur {name}, ruban {mm} mm chargé", "it": "{modell} su {name}, nastro {mm} mm inserito"},
+    "prn.need_bridge": {"de": "Hier ist kein Drucker angeschlossen – zum Drucken eine Druckbrücke koppeln (oben).", "en": "No printer is connected here – pair a print bridge to print (above).", "fr": "Aucune imprimante ici – associez un pont d’impression (ci-dessus).", "it": "Nessuna stampante qui – associa un ponte di stampa (sopra)."},
+    "prn.waiting": {"de": "Druckauftrag an die Druckbrücke geschickt …", "en": "Print job sent to the print bridge …", "fr": "Travail envoyé au pont d’impression …", "it": "Lavoro inviato al ponte di stampa …"},
+    "err.kein_druckweg": {"de": "Hier ist kein Drucker angeschlossen – Druckbrücke koppeln oder als PDF drucken.", "en": "No printer is connected here – pair a print bridge or print as PDF.", "fr": "Aucune imprimante ici – associez un pont d’impression ou imprimez en PDF.", "it": "Nessuna stampante qui – associa un ponte di stampa o stampa in PDF."},
+    "err.bruecke_offline": {"de": "Die Druckbrücke ist nicht erreichbar – läuft sie auf dem Rechner mit dem Drucker?", "en": "The print bridge is not reachable – is it running on the computer with the printer?", "fr": "Le pont d’impression est injoignable – tourne-t-il sur l’ordinateur de l’imprimante ?", "it": "Il ponte di stampa non è raggiungibile – è in esecuzione sul computer con la stampante?"},
+    "err.bruecke_pausiert": {"de": "Die Druckbrücke ist pausiert (Menüleiste → Fortsetzen).", "en": "The print bridge is paused (menu bar → Resume).", "fr": "Le pont d’impression est en pause (barre des menus → Reprendre).", "it": "Il ponte di stampa è in pausa (barra dei menu → Riprendi)."},
+    "err.bruecke_verfallen": {"de": "Die Druckbrücke hat den Auftrag nicht abgeholt – nichts gedruckt.", "en": "The print bridge did not pick up the job – nothing printed.", "fr": "Le pont d’impression n’a pas récupéré le travail – rien imprimé.", "it": "Il ponte di stampa non ha ritirato il lavoro – nulla stampato."},
+    "err.bruecke_unbekannt": {"de": "Keine Rückmeldung von der Druckbrücke – bitte am Drucker nachsehen, ob gedruckt wurde.", "en": "No response from the print bridge – please check the printer whether it printed.", "fr": "Pas de réponse du pont d’impression – vérifiez à l’imprimante si c’est imprimé.", "it": "Nessuna risposta dal ponte di stampa – controlla sulla stampante se ha stampato."},
+    "prn.bridge_offline": {"de": "Druckbrücke {name} nicht erreichbar (zuletzt vor {zeit})", "en": "Print bridge {name} not reachable (last seen {zeit} ago)", "fr": "Pont d’impression {name} injoignable (vu il y a {zeit})", "it": "Ponte di stampa {name} non raggiungibile (visto {zeit} fa)"},
+    "prn.bridge_never": {"de": "Druckbrücke gekoppelt, hat sich noch nicht gemeldet", "en": "Print bridge paired, has not checked in yet", "fr": "Pont d’impression associé, ne s’est pas encore manifesté", "it": "Ponte di stampa associato, non si è ancora collegato"},
+    "prn.bridge_paused": {"de": "Druckbrücke {name} ist pausiert", "en": "Print bridge {name} is paused", "fr": "Pont d’impression {name} en pause", "it": "Ponte di stampa {name} in pausa"},
+    "set.ql": {"de": "Netzwerkdrucker (Brother QL):", "en": "Network printer (Brother QL):", "fr": "Imprimante réseau (Brother QL) :", "it": "Stampante di rete (Brother QL):"},
+    "set.h_ql": {"de": "Adresse (IP oder Name) eines Brother QL-800/810W/820NWB im Netzwerk. CutStock druckt direkt über das Netz – auch aus der Docker-Instanz, ohne Treiber und ohne Druckbrücke – und liest die eingelegte DK-Rolle (endlos oder vorgestanzt). Leer = kein QL. In Docker die IP-Adresse eintragen, „….local“-Namen kennt der Container nicht.", "en": "Address (IP or name) of a Brother QL-800/810W/820NWB on the network. CutStock prints directly over the network – also from the Docker instance, without driver or print bridge – and reads the loaded DK roll (continuous or die-cut). Empty = no QL. In Docker, enter the IP address; the container does not know “….local” names.", "fr": "Adresse (IP ou nom) d’une Brother QL-800/810W/820NWB sur le réseau. CutStock imprime directement par le réseau – aussi depuis l’instance Docker, sans pilote ni pont d’impression – et lit le rouleau DK chargé. Vide = pas de QL. Sous Docker, saisir l’adresse IP.", "it": "Indirizzo (IP o nome) di una Brother QL-800/810W/820NWB in rete. CutStock stampa direttamente in rete – anche dall’istanza Docker, senza driver né ponte di stampa – e legge il rotolo DK inserito. Vuoto = nessuna QL. In Docker inserire l’indirizzo IP."},
+    "set.ql_red": {"de": "Rot/Schwarz-Rolle eingelegt:", "en": "Red/black roll loaded:", "fr": "Rouleau rouge/noir chargé :", "it": "Rotolo rosso/nero inserito:"},
+    "set.h_ql_red": {"de": "Nur für die 62-mm-Rolle DK-22251. Der QL meldet übers Netz nicht, ob sie rot/schwarz ist – bitte hier angeben. Rot gedruckt wird die fette Titelzeile (Code und Material bzw. der Lagerort).", "en": "Only for the 62 mm roll DK-22251. The QL does not report over the network whether it is red/black – please set it here. The bold title line (code and material or the location) is printed in red.", "fr": "Uniquement pour le rouleau 62 mm DK-22251. La QL n’indique pas par le réseau s’il est rouge/noir – à préciser ici. La ligne de titre en gras est imprimée en rouge.", "it": "Solo per il rotolo da 62 mm DK-22251. La QL non comunica in rete se è rosso/nero – indicarlo qui. La riga del titolo in grassetto viene stampata in rosso."},
+    "set.printer_default": {"de": "Standarddrucker:", "en": "Default printer:", "fr": "Imprimante par défaut :", "it": "Stampante predefinita:"},
+    "set.h_printer_default": {"de": "Vorauswahl beim Drucken – in der Rückfrage vor jedem Druck lässt sich der andere Drucker wählen.", "en": "Preselected when printing – the confirmation before each print lets you pick the other printer.", "fr": "Présélection à l’impression – la confirmation avant chaque impression permet de choisir l’autre imprimante.", "it": "Preselezione in stampa – la conferma prima di ogni stampa permette di scegliere l’altra stampante."},
+    "prn.name_ptouch": {"de": "P-touch (USB / Druckbrücke)", "en": "P-touch (USB / print bridge)", "fr": "P-touch (USB / pont d’impression)", "it": "P-touch (USB / ponte di stampa)"},
+    "prn.name_ql": {"de": "Brother QL (Netzwerk)", "en": "Brother QL (network)", "fr": "Brother QL (réseau)", "it": "Brother QL (rete)"},
+    "prn.choose": {"de": "Drucker:", "en": "Printer:", "fr": "Imprimante :", "it": "Stampante:"},
+    "prn.ql_found": {"de": "{modell}, {medium} eingelegt", "en": "{modell}, {medium} loaded", "fr": "{modell}, {medium} chargé", "it": "{modell}, {medium} inserito"},
+    "prn.ql_none": {"de": "Kein QL eingetragen", "en": "No QL set up", "fr": "Aucune QL configurée", "it": "Nessuna QL configurata"},
+    "prn.confirm_ql": {"de": "{n} Etikett(en) auf {medium} drucken?\nVerbrauch ca. {cm} cm.", "en": "Print {n} label(s) on {medium}?\nUses about {cm} cm.", "fr": "Imprimer {n} étiquette(s) sur {medium} ?\nConsommation env. {cm} cm.", "it": "Stampare {n} etichetta/e su {medium}?\nConsumo circa {cm} cm."},
+    "prn.printed_on": {"de": "{n} Etikett(en) gedruckt ({medium}).", "en": "{n} label(s) printed ({medium}).", "fr": "{n} étiquette(s) imprimée(s) ({medium}).", "it": "{n} etichetta/e stampata/e ({medium})."},
+    "err.drucker_nicht_erreichbar": {"de": "Der Netzwerkdrucker ist nicht erreichbar – eingeschaltet, Adresse richtig?", "en": "The network printer is not reachable – switched on, address correct?", "fr": "L’imprimante réseau est injoignable – allumée, adresse correcte ?", "it": "La stampante di rete non è raggiungibile – accesa, indirizzo corretto?"},
+    "err.rolle_unbekannt": {"de": "Diese DK-Rolle kennt CutStock noch nicht.", "en": "CutStock does not know this DK roll yet.", "fr": "CutStock ne connaît pas encore ce rouleau DK.", "it": "CutStock non conosce ancora questo rotolo DK."},
+    "err.papierstau": {"de": "Im Drucker klemmt das Etikett.", "en": "The label is jammed in the printer.", "fr": "L’étiquette est coincée dans l’imprimante.", "it": "L’etichetta è inceppata nella stampante."},
+    "err.drucker_pausiert": {"de": "Der Drucker ist angehalten.", "en": "The printer is paused.", "fr": "L’imprimante est en pause.", "it": "La stampante è in pausa."},
+    "err.drucker_unbekannt": {"de": "Unbekannter Drucker.", "en": "Unknown printer.", "fr": "Imprimante inconnue.", "it": "Stampante sconosciuta."},
+    "err.ipp_abgelehnt": {"de": "Der Drucker hat den Auftrag abgelehnt.", "en": "The printer rejected the job.", "fr": "L’imprimante a refusé le travail.", "it": "La stampante ha rifiutato il lavoro."},
+    "prn.sending": {"de": "Wird gedruckt …", "en": "Printing …", "fr": "Impression …", "it": "Stampa in corso …"},
+    "prn.printed": {"de": "{n} Etikett(en) gedruckt ({mm}-mm-Band).", "en": "{n} label(s) printed ({mm} mm tape).", "fr": "{n} étiquette(s) imprimée(s) (ruban {mm} mm).", "it": "{n} etichetta/e stampata/e (nastro {mm} mm)."},
+    "prn.searching": {"de": "Suche Drucker …", "en": "Looking for printer …", "fr": "Recherche de l’imprimante …", "it": "Ricerca stampante …"},
+    "prn.no_usb": {"de": "Direktdruck ist hier nicht möglich (nur in der Desktop-App).", "en": "Direct printing is not available here (desktop app only).", "fr": "Impression directe indisponible ici (application de bureau uniquement).", "it": "Stampa diretta non disponibile qui (solo app desktop)."},
+    "prn.not_found": {"de": "Kein Drucker gefunden – per USB anschließen und einschalten.", "en": "No printer found – connect via USB and switch on.", "fr": "Aucune imprimante trouvée – brancher en USB et allumer.", "it": "Nessuna stampante trovata – collegare via USB e accendere."},
+    "prn.found": {"de": "{modell}, {mm}-mm-Band eingelegt", "en": "{modell}, {mm} mm tape loaded", "fr": "{modell}, ruban {mm} mm chargé", "it": "{modell}, nastro {mm} mm inserito"},
+    "prn.as_pdf": {"de": "Als PDF", "en": "As PDF", "fr": "En PDF", "it": "Come PDF"},
+    "err.kein_band": {"de": "Im Drucker ist kein Band eingelegt.", "en": "No tape loaded in the printer.", "fr": "Aucun ruban dans l’imprimante.", "it": "Nessun nastro nella stampante."},
+    "err.messer_klemmt": {"de": "Das Messer des Druckers klemmt.", "en": "The printer’s cutter is jammed.", "fr": "Le massicot de l’imprimante est bloqué.", "it": "La taglierina della stampante è bloccata."},
+    "err.akku_schwach": {"de": "Der Akku des Druckers ist schwach.", "en": "The printer’s battery is low.", "fr": "La batterie de l’imprimante est faible.", "it": "La batteria della stampante è scarica."},
+    "err.falsches_band": {"de": "Falsches Band eingelegt.", "en": "Wrong tape loaded.", "fr": "Mauvais ruban chargé.", "it": "Nastro errato inserito."},
+    "err.deckel_offen": {"de": "Der Deckel des Druckers ist offen.", "en": "The printer cover is open.", "fr": "Le capot de l’imprimante est ouvert.", "it": "Il coperchio della stampante è aperto."},
+    "err.ueberhitzt": {"de": "Der Drucker ist überhitzt – kurz warten.", "en": "The printer is overheated – wait a moment.", "fr": "L’imprimante surchauffe – patienter.", "it": "La stampante è surriscaldata – attendere."},
+    "err.usb_fehlt": {"de": "Direktdruck ist hier nicht möglich (nur in der Desktop-App).", "en": "Direct printing is not available here (desktop app only).", "fr": "Impression directe indisponible ici.", "it": "Stampa diretta non disponibile qui."},
+    "err.drucker_fehlt": {"de": "Kein Drucker gefunden – per USB anschließen und einschalten.", "en": "No printer found – connect via USB and switch on.", "fr": "Aucune imprimante trouvée – brancher en USB et allumer.", "it": "Nessuna stampante trovata – collegare via USB e accendere."},
+    "err.drucker_belegt": {"de": "Der Drucker wird gerade von einem anderen Programm benutzt (z. B. P-touch Editor).", "en": "The printer is in use by another program (e.g. P-touch Editor).", "fr": "L’imprimante est utilisée par un autre programme (p. ex. P-touch Editor).", "it": "La stampante è in uso da un altro programma (es. P-touch Editor)."},
+    "err.drucker_antwortet_nicht": {"de": "Der Drucker antwortet nicht – aus- und wieder einschalten.", "en": "The printer does not respond – switch it off and on.", "fr": "L’imprimante ne répond pas – l’éteindre et la rallumer.", "it": "La stampante non risponde – spegnerla e riaccenderla."},
+    "err.drucker_fehler": {"de": "Der Drucker meldet einen Fehler.", "en": "The printer reports an error.", "fr": "L’imprimante signale une erreur.", "it": "La stampante segnala un errore."},
+    "err.band_zu_schmal": {"de": "{band_mm}-mm-Band ist zu schmal für Etiketten – bitte 12, 18 oder 24 mm einlegen.", "en": "{band_mm} mm tape is too narrow for labels – please load 12, 18 or 24 mm.", "fr": "Le ruban de {band_mm} mm est trop étroit – charger 12, 18 ou 24 mm.", "it": "Il nastro da {band_mm} mm è troppo stretto – inserire 12, 18 o 24 mm."},
+    "labels.g_ptouch": {"de": "P-touch-Band (TZe)", "en": "P-touch tape (TZe)", "fr": "Ruban P-touch (TZe)", "it": "Nastro P-touch (TZe)"},
+    "labels.qr_too_small": {"de": "Für einen QR-Code ist das Etikett zu klein – es wird nur Text gedruckt.", "en": "The label is too small for a QR code – only text is printed.", "fr": "L’étiquette est trop petite pour un code QR – seul le texte est imprimé.", "it": "L’etichetta è troppo piccola per un codice QR – viene stampato solo il testo."},
+    "set.label_qr": {"de": "QR-Code auf Etiketten:", "en": "QR code on labels:", "fr": "Code QR sur les étiquettes :", "it": "Codice QR sulle etichette:"},
+    "set.h_label_qr": {"de": "Stück- und Lagerort-Etiketten bekommen einen QR-Code. Mit dem Handy gescannt, zeigt CutStock das Stück mit aktuellem Maß, Ort und Reservierung.", "en": "Piece and location labels get a QR code. Scanned with a phone, CutStock shows the piece with its current size, location and reservation.", "fr": "Les étiquettes de pièces et d’emplacements reçoivent un code QR. Scanné avec un téléphone, CutStock affiche la pièce avec sa taille actuelle, son emplacement et sa réservation.", "it": "Le etichette di pezzi e ubicazioni ricevono un codice QR. Scansionato con il telefono, CutStock mostra il pezzo con misura attuale, ubicazione e prenotazione."},
+    "set.label_style": {"de": "Layout:", "en": "Layout:", "fr": "Mise en page :", "it": "Layout:"},
+    "set.style_normal": {"de": "Normal: QR links, Text daneben", "en": "Normal: QR on the left, text beside it", "fr": "Normal : QR à gauche, texte à côté", "it": "Normale: QR a sinistra, testo accanto"},
+    "set.style_mini": {"de": "Mini: QR und Code (für kleine Teile)", "en": "Mini: QR and code (for small parts)", "fr": "Mini : QR et code (petites pièces)", "it": "Mini: QR e codice (per pezzi piccoli)"},
+    "set.style_qr": {"de": "Nur QR, Code darunter", "en": "QR only, code underneath", "fr": "QR seul, code dessous", "it": "Solo QR, codice sotto"},
+    "set.h_label_style": {"de": "Mini passt auf 12-mm-Band und sehr kleine Etiketten. Ist ein Etikett zu klein für den QR-Code, druckt CutStock nur Text.", "en": "Mini fits 12 mm tape and very small labels. If a label is too small for the QR code, CutStock prints text only.", "fr": "Mini convient au ruban de 12 mm et aux très petites étiquettes. Si l’étiquette est trop petite pour le QR, CutStock n’imprime que le texte.", "it": "Mini sta su nastro da 12 mm ed etichette molto piccole. Se l’etichetta è troppo piccola per il QR, CutStock stampa solo testo."},
+    "set.label_qr_base": {"de": "Adresse für QR-Codes:", "en": "Address for QR codes:", "fr": "Adresse pour les codes QR :", "it": "Indirizzo per i codici QR:"},
+    "set.qr_base_here": {"de": "Diese Adresse", "en": "This address", "fr": "Cette adresse", "it": "Questo indirizzo"},
+    "set.h_label_qr_base": {"de": "Adresse, unter der das Handy CutStock erreicht (z. B. https://cutstock.example). Leer: Der QR-Code enthält nur den Code – für Handscanner am Rechner.", "en": "Address at which the phone reaches CutStock (e.g. https://cutstock.example). Empty: the QR code only holds the code – for hand scanners at the computer.", "fr": "Adresse à laquelle le téléphone atteint CutStock (p. ex. https://cutstock.example). Vide : le code QR ne contient que le code – pour les lecteurs à main sur l’ordinateur.", "it": "Indirizzo con cui il telefono raggiunge CutStock (es. https://cutstock.example). Vuoto: il codice QR contiene solo il codice – per lettori manuali al computer."},
+    "set.qr_base_local": {"de": "Achtung: Diese Adresse gilt nur auf diesem Rechner, ein Handy erreicht sie nicht.", "en": "Note: this address only works on this computer, a phone cannot reach it.", "fr": "Attention : cette adresse ne fonctionne que sur cet ordinateur, un téléphone ne peut pas l’atteindre.", "it": "Attenzione: questo indirizzo funziona solo su questo computer, un telefono non lo raggiunge."},
+    "set.label_chain": {"de": "Endlos-Band als Kette drucken:", "en": "Print continuous tape as a chain:", "fr": "Imprimer le ruban continu en chaîne :", "it": "Stampa il nastro continuo in catena:"},
+    "set.h_label_chain": {"de": "Alle Etiketten hintereinander auf einen Streifen, mit Schnittmarken. Spart Band: P-touch-Geräte lassen vor jedem einzelnen Druck etwa 2 cm stehen.", "en": "All labels one after another on one strip, with cut marks. Saves tape: P-touch printers leave about 2 cm before every single print.", "fr": "Toutes les étiquettes à la suite sur une bande, avec repères de coupe. Économise du ruban : les P-touch laissent environ 2 cm avant chaque impression.", "it": "Tutte le etichette in fila su una striscia, con segni di taglio. Risparmia nastro: le P-touch lasciano circa 2 cm prima di ogni stampa."},
+    "lbl.location_label": {"de": "Etikett für den Lagerort „{name}“", "en": "Label for the location “{name}”", "fr": "Étiquette pour l’emplacement « {name} »", "it": "Etichetta per l’ubicazione «{name}»"},
+    "loc.labels_all": {"de": "Ortsetiketten", "en": "Location labels", "fr": "Étiquettes d’emplacement", "it": "Etichette ubicazioni"},
+    "loc.labels_all_hint": {"de": "Etiketten für alle Lagerorte drucken (mit QR-Code zum Ort)", "en": "Print labels for all locations (with a QR code to the location)", "fr": "Imprimer les étiquettes de tous les emplacements (avec code QR)", "it": "Stampa le etichette di tutte le ubicazioni (con codice QR)"},
+    "err.adresse_ungueltig": {"de": "Die Adresse für QR-Codes ist ungültig (z. B. https://cutstock.example).", "en": "The address for QR codes is invalid (e.g. https://cutstock.example).", "fr": "L’adresse pour les codes QR n’est pas valide (p. ex. https://cutstock.example).", "it": "L’indirizzo per i codici QR non è valido (es. https://cutstock.example)."},
+    "err.layout_unbekannt": {"de": "Unbekanntes Etiketten-Layout.", "en": "Unknown label layout.", "fr": "Mise en page d’étiquette inconnue.", "it": "Layout dell’etichetta sconosciuto."},
+    "err.keine_lagerorte": {"de": "Es gibt keine Lagerorte.", "en": "There are no locations.", "fr": "Il n’y a aucun emplacement.", "it": "Non ci sono ubicazioni."},
+    "scan.loading": {"de": "Lädt …", "en": "Loading …", "fr": "Chargement …", "it": "Caricamento …"},
+    "scan.kind_stueck": {"de": "Stück", "en": "Piece", "fr": "Pièce", "it": "Pezzo"},
+    "scan.kind_lagerort": {"de": "Lagerort", "en": "Location", "fr": "Emplacement", "it": "Ubicazione"},
+    "scan.kind_unbekannt": {"de": "Nicht gefunden", "en": "Not found", "fr": "Introuvable", "it": "Non trovato"},
+    "scan.search": {"de": "Code eingeben oder scannen", "en": "Enter or scan a code", "fr": "Saisir ou scanner un code", "it": "Inserisci o scansiona un codice"},
+    "scan.search_short": {"de": "Code / Scan…", "en": "Code / scan…", "fr": "Code / scan…", "it": "Codice / scan…"},
+    "scan.go": {"de": "Zeigen", "en": "Show", "fr": "Afficher", "it": "Mostra"},
+    "scan.dim": {"de": "Maß", "en": "Size", "fr": "Dimension", "it": "Misura"},
+    "scan.location": {"de": "Lagerort", "en": "Location", "fr": "Emplacement", "it": "Ubicazione"},
+    "scan.reserved": {"de": "Reserviert für", "en": "Reserved for", "fr": "Réservé pour", "it": "Prenotato per"},
+    "scan.note": {"de": "Notiz", "en": "Note", "fr": "Note", "it": "Nota"},
+    "scan.defects": {"de": "Defekte", "en": "Defects", "fr": "Défauts", "it": "Difetti"},
+    "scan.label": {"de": "Etikett gedruckt", "en": "Label printed", "fr": "Étiquette imprimée", "it": "Etichetta stampata"},
+    "scan.label_never": {"de": "noch nie", "en": "never", "fr": "jamais", "it": "mai"},
+    "scan.open_stock": {"de": "Im Bestand zeigen", "en": "Show in stock", "fr": "Afficher dans le stock", "it": "Mostra nel magazzino"},
+    "scan.loc_summary": {"de": "{m} Materialien · {n} Stücke", "en": "{m} materials · {n} pieces", "fr": "{m} matériaux · {n} pièces", "it": "{m} materiali · {n} pezzi"},
+    "scan.loc_label": {"de": "Ortsetikett drucken", "en": "Print location label", "fr": "Imprimer l’étiquette d’emplacement", "it": "Stampa etichetta ubicazione"},
+    "scan.open_location": {"de": "Im Reiter Lager zeigen", "en": "Show in the Stock tab", "fr": "Afficher dans l’onglet Stock", "it": "Mostra nella scheda Magazzino"},
+    "scan.unknown": {"de": "Dieses Stück ist nicht (mehr) im Lager.", "en": "This piece is not (or no longer) in stock.", "fr": "Cette pièce n’est pas (ou plus) en stock.", "it": "Questo pezzo non è (più) in magazzino."},
+    "scan.unknown_loc": {"de": "Diesen Lagerort gibt es nicht (mehr).", "en": "This location does not exist (any more).", "fr": "Cet emplacement n’existe pas (ou plus).", "it": "Questa ubicazione non esiste (più)."},
+    "scan.last": {"de": "Letzte Buchung: {art} am {datum} ({material}).", "en": "Last entry: {art} on {datum} ({material}).", "fr": "Dernière écriture : {art} le {datum} ({material}).", "it": "Ultima registrazione: {art} il {datum} ({material})."},
+    "scan.art_entnahme": {"de": "entnommen", "en": "taken out", "fr": "retirée", "it": "prelevato"},
+    "scan.art_plan_verbrauch": {"de": "beim Sägen verbraucht", "en": "used when cutting", "fr": "utilisée à la découpe", "it": "usato nel taglio"},
+    "scan.art_rest_ein": {"de": "als Rest eingebucht", "en": "booked in as offcut", "fr": "entrée comme chute", "it": "registrato come ritaglio"},
+    "scan.art_rest_zurueck": {"de": "Rest zurückgenommen", "en": "offcut withdrawn", "fr": "chute annulée", "it": "ritaglio annullato"},
+    "scan.art_plan_zurueck": {"de": "Sägen rückgängig gemacht", "en": "cutting undone", "fr": "découpe annulée", "it": "taglio annullato"},
     # Reiter Optimierung: Arbeitsliste, Hauptaktion je Stand
     "mat.blade": {"de": "Sägeblatt", "en": "Saw blade", "fr": "Lame de scie", "it": "Lama"},
     "mat.blade_first": {"de": "– erstes Sägeblatt –", "en": "– first saw blade –", "fr": "– première lame –", "it": "– prima lama –"},
@@ -4670,6 +5308,16 @@ if STATIC_DIR.is_dir():
         if index.is_file():
             return FileResponse(str(index), headers=NO_CACHE)
         raise HTTPException(404, "index.html not found")
+
+    # Links aus QR-Codes: "/S/AP40-07" (Stück), "/O/3" (Lagerort). Relativ umleiten, damit
+    # die Oberfläche auch hinter einem Proxy mit Unterpfad ihre Dateien findet.
+    @app.get("/{art}/{ref}", include_in_schema=False)
+    def scan_link(art: str, ref: str):
+        from fastapi.responses import RedirectResponse
+        from urllib.parse import quote
+        if art.lower() not in ("s", "o"):
+            return spa_fallback(f"{art}/{ref}")
+        return RedirectResponse(f"../?{art.lower()}={quote(ref, safe='-:')}", status_code=302)
 
     @app.get("/{path:path}")
     def spa_fallback(path: str):

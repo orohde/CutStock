@@ -35,7 +35,10 @@ Mit 🔒 markierte Stücke sind von einem gespeicherten Plan reserviert.
 
 - **Code anklicken** öffnet das Stück: Notiz ändern, **Etikett drucken** oder **Entnehmen …**
 - **Zum Material** springt in den Reiter Material zu diesem Material.
-- **Etiketten …** druckt Etiketten für Stücke an diesem Ort (siehe unten).
+- **Etiketten …** druckt Etiketten für Stücke an diesem Ort (siehe unten), auf Wunsch zusammen
+  mit dem Etikett für den Lagerort selbst.
+- **Ortsetiketten** (links) druckt die Etiketten aller Lagerorte, z. B. um ein Regal neu zu
+  beschriften.
 
 ## Etiketten drucken
 
@@ -54,6 +57,31 @@ Häkchen. Ein Häkchen am Material oder am Maß wählt alle Stücke darunter.
 Ein einzelnes Etikett, z. B. als Ersatz für ein abgefallenes, druckt **Etikett drucken** im Dialog
 des Stücks; dort steht auch, wann zuletzt eines gedruckt wurde. Stücke, die vor dieser Funktion
 schon im Lager lagen, gelten als beschriftet.
+
+Im Etiketten-Dialog eines Lagerorts steht oben zusätzlich **Etikett für den Lagerort „…“**: Das
+Ortsetikett zeigt den Namen groß, darunter die Materialien, und einen QR-Code zum Ort.
+
+## QR-Codes scannen
+
+Stück- und Lagerort-Etiketten tragen einen **QR-Code** (abschaltbar unter
+[Einstellungen → Etiketten & Drucker](6-einstellungen.md#qr-codes)). Mit der Kamera des Handys
+gescannt, öffnet sich CutStock im Browser – ohne eigene App:
+
+- **Stück:** Code, Material, **aktuelles Maß** (auch nach dem Ansägen – der größte Rest behält den
+  Code), Lagerort, Reservierung, Notiz und Defekte. Knöpfe: **Entnehmen …**, **Etikett drucken**,
+  **Im Bestand zeigen**. Der Lagerort lässt sich antippen.
+- **Lagerort:** alle Materialien mit ihren Stücken an diesem Ort; ein Stück antippen öffnet es.
+- **Nicht gefunden:** Das Stück ist nicht mehr im Lager; CutStock zeigt die letzte Buchung, z. B.
+  „entnommen am 9.11.2026“.
+
+Dazu muss das Handy CutStock erreichen (WLAN in der Werkstatt) und unter *Adresse für QR-Codes*
+die Adresse der Instanz stehen. Ohne Adresse enthält der QR-Code nur den Code (`AP40-07`, für
+Lagerorte `O:3`) – das passt zu einem **Handscanner** am Rechner: Er tippt den Code in das Feld
+**Code / Scan…** oben rechts, Enter öffnet dieselbe Ansicht. Dort kann man Codes auch von Hand
+eingeben.
+
+Ändert man das Kürzel eines Materials, merkt sich CutStock das alte: Etiketten mit `AP40-07`
+finden das Stück weiter, angezeigt wird der neue Code.
 
 ## Stück entnehmen
 

@@ -394,8 +394,10 @@ const Api = {
         saveBlob(await resp.blob(), `CutStock-${data.filename || 'Etiketten'}.pdf`);
     },
 
-    // Etiketten für Lagerstücke (vermerkt sie als gedruckt); false, wenn nichts kam
-    async downloadPieceLabels(data) {
+    // Etiketten für Lagerstücke (vermerkt sie als gedruckt); false, wenn nichts kam.
+    // Mit Direktdruck gehen sie an den Etikettendrucker, außer pdf: true.
+    async downloadPieceLabels(data, { pdf = false } = {}) {
+        if (State.settings.printer_direct && !pdf) return printLabelsDirect('/api/labels/pieces', data);
         const resp = await fetch(API_BASE + '/api/labels/pieces', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -409,6 +411,27 @@ const Api = {
         saveBlob(await resp.blob(), name || 'CutStock-Etiketten.pdf');
         return true;
     },
+
+    // Etiketten für Lagerorte selbst (orte leer = alle)
+    async downloadLocationLabels(data, { pdf = false } = {}) {
+        if (State.settings.printer_direct && !pdf) return printLabelsDirect('/api/labels/locations', data);
+        const resp = await fetch(API_BASE + '/api/labels/locations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) {
+            showToast(t('error.pdf_failed'), 'error');
+            return false;
+        }
+        const name = /filename="([^"]+)"/.exec(resp.headers.get('Content-Disposition') || '')?.[1];
+        saveBlob(await resp.blob(), name || 'CutStock-Lagerorte.pdf');
+        return true;
+    },
+
+    scan: (code) => fetchJSON(`/api/scan?code=${encodeURIComponent(code)}`),
+    getPrinter: () => fetchJSON('/api/printer'),
+    printerTest: (schaetzung = false, drucker = '') => fetchJSON(`/api/printer/test?schaetzung=${schaetzung}&drucker=${drucker}`, 'POST'),
 
     getSettings: () => fetchJSON('/api/settings'),
     updateSettings: (data) => fetchJSON('/api/settings', 'PUT', data),
@@ -741,12 +764,14 @@ function openPieceDialog(piece, onChange = renderStock) {
 // ---------------------------------------------------------------------------
 
 // gruppen: [{name, kuerzel, zeilen: [{laenge, breite, ist_rest, stuecke: [piece]}]}]
-function openLabelDialog(gruppen, onDone, dateiname = '') {
+// ort: {id, name} – dann gibt es oben zusätzlich das Etikett für den Lagerort selbst
+function openLabelDialog(gruppen, onDone, dateiname = '', ort = null) {
     const alle = gruppen.flatMap(g => g.zeilen.flatMap(z => z.stuecke));
-    if (!alle.length) { showToast(t('loc.empty'), 'error'); return; }
+    if (!alle.length && !ort) { showToast(t('loc.empty'), 'error'); return; }
     const ungedruckt = alle.filter(p => !p.etikett_gedruckt);
     // Sind neue (noch nie beschriftete) Stücke da, sind nur diese vorgewählt
     const auswahl = new Set((ungedruckt.length ? ungedruckt : alle).map(p => p.id));
+    let mitOrt = !!ort && !alle.length;
     const felder = (labelFormatsCache || []).find(
         f => f.key === (State.settings.label_format || 'a4_3x8'))?.je_bogen || 0;
     let startfeld = 1;
@@ -754,8 +779,22 @@ function openLabelDialog(gruppen, onDone, dateiname = '') {
     openModal(t('lbl.title'), [], {}, async () => {
         const ids = alle.filter(p => auswahl.has(p.id)).map(p => String(p.id));
         const filename = dateiname && `${t('labels.button')}-${dateiname}`;
-        if (await Api.downloadPieceLabels({ codes: ids, startfeld, filename })) await onDone?.();
+        const body = { codes: ids, startfeld, filename };
+        if (mitOrt) body.lagerort_etikett = String(ort.id);
+        if (await Api.downloadPieceLabels(body)) await onDone?.();
     });
+    if (State.settings.printer_direct) {
+        // Direktdruck: Hauptknopf druckt, daneben das PDF wie bisher
+        document.getElementById('modal-save').closest('.fd-bar__element').insertAdjacentHTML('afterend',
+            `<div class="fd-bar__element" id="modal-extra"><button type="button" class="fd-button" id="lbl-pdf">${escHtml(t('prn.as_pdf'))}</button></div>`);
+        document.getElementById('lbl-pdf').addEventListener('click', async () => {
+            const ids = alle.filter(p => auswahl.has(p.id)).map(p => String(p.id));
+            const body = { codes: ids, startfeld, filename: dateiname && `${t('labels.button')}-${dateiname}` };
+            if (mitOrt) body.lagerort_etikett = String(ort.id);
+            closeModal();
+            if (await Api.downloadPieceLabels(body, { pdf: true })) await onDone?.();
+        });
+    }
     const saveBtn = document.getElementById('modal-save');
     const body = document.getElementById('modal-body');
 
@@ -766,7 +805,9 @@ function openLabelDialog(gruppen, onDone, dateiname = '') {
     ];
     const codeHtml = p => `<label class="lbl-code"><input type="checkbox" class="cs-checkbox" data-id="${p.id}">
         ${escHtml(p.code || '#' + p.nr)}${p.etikett_gedruckt ? '' : ` <span class="lbl-new">${escHtml(t('lbl.new_badge'))}</span>`}</label>`;
-    body.innerHTML = `<div class="lbl-quick">${schnell.map(([k]) =>
+    body.innerHTML = (ort ? `<label class="lbl-ort"><input type="checkbox" class="cs-checkbox" id="lbl-ort">
+            <span>${escHtml(t('lbl.location_label', { name: ort.name }))}</span></label>` : '')
+        + `<div class="lbl-quick">${schnell.map(([k]) =>
             `<button type="button" class="fd-button fd-button--compact" data-quick="${k}">${escHtml(t('lbl.' + k))}</button>`).join('')}</div>
         <div class="lbl-tree">${gruppen.map((g, gi) => `<div class="lbl-mat">
             <label class="lbl-mat-head"><input type="checkbox" class="cs-checkbox" data-g="${gi}">
@@ -795,9 +836,16 @@ function openLabelDialog(gruppen, onDone, dateiname = '') {
         });
         body.querySelectorAll('[data-g]').forEach(b =>
             zustand(b, zeilenVon(Number(b.dataset.g)).flatMap(z => z.stuecke)));
-        saveBtn.textContent = t('lbl.print_n', { n: auswahl.size });
-        saveBtn.disabled = !auswahl.size;
+        const n = auswahl.size + (mitOrt ? 1 : 0);
+        saveBtn.textContent = t('lbl.print_n', { n });
+        saveBtn.disabled = !n;
+        const ortBox = document.getElementById('lbl-ort');
+        if (ortBox) ortBox.checked = mitOrt;
     };
+    document.getElementById('lbl-ort')?.addEventListener('change', (e) => {
+        mitOrt = e.target.checked;
+        aktualisieren();
+    });
 
     body.querySelectorAll('[data-id]').forEach(b => b.addEventListener('change', () => {
         setze([alle.find(p => p.id === Number(b.dataset.id))], b.checked);
@@ -1071,7 +1119,351 @@ function printLocationLabels() {
     openLabelDialog((State.locationContents || []).map(m => ({
         name: m.name, kuerzel: m.kuerzel,
         zeilen: m.bestand.map(b => ({ laenge: b.laenge, breite: b.breite, ist_rest: b.ist_rest, stuecke: b.stuecke })),
-    })), renderLocations, ort.name);
+    })), renderLocations, ort.name, ort);
+}
+
+// Direktdruck: Etiketten an den angeschlossenen Drucker (Fehler zeigt fetchJSON an)
+// Vorher Anzahl und ungefähren Bandverbrauch zeigen – Band kostet Geld. Sind mehrere Drucker
+// eingerichtet (P-touch, QL), wählt man in derselben Rückfrage, wohin.
+async function printLabelsDirect(url, data) {
+    try {
+        const wahl = await confirmPrintChoice(drucker =>
+            fetchJSON(url, 'POST', { ...data, ausgabe: 'schaetzung', drucker }));
+        if (!wahl) return false;
+        showToast(t('prn.sending'), 'info');
+        const r = await fetchJSON(url, 'POST', { ...data, ausgabe: 'drucker', drucker: wahl });
+        return await finishPrint(r);
+    } catch {
+        return false;
+    }
+}
+
+function printEstimateText(est) {
+    const cm = (est.laenge_mm / 10).toLocaleString(undefined, { maximumFractionDigits: 1 });
+    let msg = est.drucker === 'ql'
+        ? t('prn.confirm_ql', { n: est.etiketten, medium: est.medium_name, cm })
+        : t('prn.confirm', { n: est.etiketten, mm: est.band_mm, teile: est.stuecke, cm });
+    if (est.drucker !== 'ql' && est.band_mm > 12 && State.settings.label_style === 'mini')
+        msg += '\n\n' + t('prn.hint_narrow');
+    return msg;
+}
+
+// Rückfrage vor dem Druck; schaetzen(drucker) liefert die Schätzung. Ergebnis: gewählter
+// Drucker ("ptouch" | "ql") oder null bei Abbruch.
+async function confirmPrintChoice(schaetzen) {
+    let liste = [];
+    try { liste = await fetchJSON('/api/printers'); } catch { liste = []; }
+    const ids = liste.map(p => p.drucker);
+    let wahl = ids[0] || '';
+    let est = await schaetzen(wahl);
+    wahl = est.drucker || wahl;
+    const ok = new Promise(resolve => {
+        openConfirmDialog(printEstimateText(est), () => resolve(wahl));
+        const cancelBtn = document.getElementById('modal-cancel');
+        const handler = cancelBtn.onclick;
+        cancelBtn.onclick = (e) => { if (handler) handler(e); resolve(null); };
+    });
+    if (ids.length > 1) {
+        const body = document.getElementById('modal-body');
+        const box = document.createElement('div');
+        box.className = 'print-choice';
+        box.innerHTML = `<label class="fd-form-label">${escHtml(t('prn.choose'))}</label>
+            <select class="cs-select">${liste.map(p => `<option value="${p.drucker}">${escHtml(
+                t(p.drucker === 'ql' ? 'prn.name_ql' : 'prn.name_ptouch'))}</option>`).join('')}</select>`;
+        body.prepend(box);
+        const sel = box.querySelector('select');
+        sel.value = wahl;
+        sel.addEventListener('change', async () => {
+            try {
+                est = await schaetzen(sel.value);
+                wahl = sel.value;
+                body.querySelector('p').textContent = printEstimateText(est);
+            } catch { sel.value = wahl; }
+        });
+    }
+    return ok;
+}
+
+// Ergebnis eines Drucks melden; über die Druckbrücke erst auf den Auftrag warten
+async function finishPrint(r) {
+    if (r.auftrag) {
+        showToast(t('prn.waiting'), 'info');
+        const ende = Date.now() + 150000;
+        while (Date.now() < ende) {
+            await new Promise(res => setTimeout(res, 1000));
+            let j;
+            try { j = await fetchJSON(`/api/printer/jobs/${r.auftrag}`); } catch { return false; }
+            if (j.zustand === 'fertig') {
+                showToast(t('prn.printed', { n: j.gedruckt, mm: j.band_mm }), 'success');
+                return true;
+            }
+            if (['fehler', 'verfallen', 'unbekannt'].includes(j.zustand)) {
+                const code = j.zustand === 'fehler' ? (j.code || 'drucker_fehler') : 'bruecke_' + j.zustand;
+                showToast(t('err.' + code), 'error');
+                return false;
+            }
+        }
+        showToast(t('err.bruecke_unbekannt'), 'error');
+        return false;
+    }
+    showToast(r.medium_name ? t('prn.printed_on', { n: r.gedruckt, medium: r.medium_name })
+        : t('prn.printed', { n: r.gedruckt, mm: r.band_mm }), 'success');
+    return true;
+}
+
+
+// Einstellungen > Etiketten & Drucker: gefundener Drucker und eingelegtes Band
+async function renderPrinterStatus() {
+    const box = document.getElementById('printer-status');
+    if (!box) return;
+    box.textContent = t('prn.searching');
+    let p;
+    try { p = await Api.getPrinter(); } catch { box.textContent = ''; return; }
+    State.printer = p;
+    const an = !!State.settings.printer_direct;
+    renderBridgeRow(p);
+    if (!p.verfuegbar) box.textContent = t(p.code === 'kein_druckweg' ? 'prn.need_bridge' : 'prn.no_usb');
+    else if (p.druckweg === 'bruecke' && !p.gefunden) {
+        const name = p.bruecke_name || '?';
+        if (p.code === 'bruecke_pausiert') box.textContent = t('prn.bridge_paused', { name });
+        else if (p.code === 'bruecke_offline') box.textContent = p.bruecke_alter_s == null
+            ? t('prn.bridge_never') : t('prn.bridge_offline', { name, zeit: formatAge(p.bruecke_alter_s) });
+        else box.textContent = t('err.' + (p.code || 'drucker_fehlt'));
+    }
+    else if (!p.gefunden) box.textContent = t('prn.not_found');
+    else {
+        const fehler = (p.fehler || []).map(f => t('err.' + f)).join(', ');
+        box.textContent = (p.druckweg === 'bruecke'
+            ? t('prn.via_bridge', { modell: p.modell, name: p.bruecke_name, mm: p.band_mm })
+            : t('prn.found', { modell: p.modell, mm: p.band_mm }))
+            + (fehler ? ` – ${fehler}` : '');
+    }
+    box.classList.toggle('is-error', !!p.code && p.verfuegbar);
+    const ql = !!State.settings.printer_ql_address;
+    setRowEnabled(document.getElementById('settings-printer-direct-row'), !!p.verfuegbar || an || ql);
+    document.querySelectorAll('.printer-field').forEach(el => setRowEnabled(el, an && !!p.verfuegbar));
+    renderLabelPreview();
+    renderQlStatus();
+}
+
+// Brother QL im Netzwerk: Status, Rot/Schwarz (nur 62 mm endlos), Standarddrucker
+async function renderQlStatus() {
+    const box = document.getElementById('ql-status');
+    if (!box) return;
+    const adr = State.settings.printer_ql_address || '';
+    const redRow = document.getElementById('settings-ql-red-row');
+    const defRow = document.getElementById('settings-printer-default-row');
+    const an = !!State.settings.printer_direct;
+    setRowEnabled(document.getElementById('btn-ql-test')?.closest('.set-row'), true);
+    document.getElementById('btn-ql-test').disabled = !adr || !an;
+    document.getElementById('btn-ql-check').disabled = !adr;
+    defRow?.classList.toggle('hidden', !(adr && State.printer?.verfuegbar));
+    const defSel = document.getElementById('settings-printer-default');
+    if (defSel) defSel.value = State.settings.printer_default || 'ptouch';
+    if (!adr) {
+        box.textContent = t('prn.ql_none');
+        box.classList.remove('is-error');
+        redRow?.classList.add('hidden');
+        return;
+    }
+    box.textContent = t('prn.searching');
+    let q;
+    try { q = await fetchJSON('/api/printer?drucker=ql'); } catch { box.textContent = ''; return; }
+    State.ql = q;
+    if (!q.gefunden) box.textContent = t('err.' + (q.code || 'drucker_nicht_erreichbar'));
+    else {
+        const fehler = (q.fehler || []).map(f => t('err.' + f)).join(', ');
+        box.textContent = t('prn.ql_found', { modell: q.modell, medium: q.medium_name })
+            + (fehler ? ` – ${fehler}` : '');
+    }
+    box.classList.toggle('is-error', !!q.code);
+    redRow?.classList.toggle('hidden', !(q.band_mm === 62 && !q.laenge_mm));
+}
+
+// Druckbrücke: Kopplungscode zeigen, koppeln, trennen
+function renderBridgeRow(p) {
+    const code = State.settings.printer_bridge_key || '';
+    const codeEl = document.getElementById('bridge-code');
+    const status = document.getElementById('bridge-status');
+    if (!codeEl || !status) return;
+    codeEl.textContent = code;
+    codeEl.classList.toggle('hidden', !code);
+    status.textContent = code ? '' : t('set.bridge_none');
+    document.getElementById('btn-bridge-pair').textContent = t(code ? 'set.bridge_new' : 'set.bridge_pair');
+    document.getElementById('btn-bridge-unpair').classList.toggle('hidden', !code);
+}
+
+function formatAge(sek) {
+    if (sek < 90) return `${sek} s`;
+    if (sek < 5400) return `${Math.round(sek / 60)} min`;
+    if (sek < 172800) return `${Math.round(sek / 3600)} h`;
+    return `${Math.round(sek / 86400)} d`;
+}
+
+async function pairBridge() {
+    if (State.settings.printer_bridge_key && !await confirmAsync(t('set.bridge_new_confirm'))) return;
+    try {
+        const r = await fetchJSON('/api/printer/bridge/pair', 'POST');
+        State.settings.printer_bridge_key = r.schluessel;
+    } catch { return; }
+    renderPrinterStatus();
+}
+
+async function unpairBridge() {
+    if (!await confirmAsync(t('set.bridge_unpair_confirm'))) return;
+    try { await fetchJSON('/api/printer/bridge/pair', 'DELETE'); } catch { return; }
+    State.settings.printer_bridge_key = '';
+    renderPrinterStatus();
+}
+
+// Etiketten aller Lagerorte (Regal neu beschriften)
+async function printAllLocationLabels() {
+    await Api.downloadLocationLabels({ filename: t('loc.title') });
+}
+
+// ---------------------------------------------------------------------------
+// Scan-Ansicht: QR-Code vom Etikett (Link ".../S/AP40-07" → "?s=AP40-07"), Handscanner
+// oder eingetippter Code. Schmal, fürs Handy in der Werkstatt.
+// ---------------------------------------------------------------------------
+
+async function openScanView(code) {
+    code = String(code || '').trim();
+    if (!code) return;
+    let r;
+    try { r = await Api.scan(code); } catch { return; }
+    State.scan = r;
+    renderScanView();
+}
+
+function closeScanView() {
+    State.scan = null;
+    const view = document.getElementById('scan-view');
+    if (view) view.hidden = true;
+    document.body.classList.remove('scan-open');
+    if (/[?&][so]=/.test(location.search)) history.replaceState(null, '', location.pathname);
+    window.dispatchEvent(new Event('resize'));   // Schnittpläne waren ausgeblendet: neu zeichnen
+}
+
+function scanDatum(zeit) {
+    return new Date(zeit * 1000).toLocaleDateString(State.settings.language || undefined);
+}
+
+function renderScanView() {
+    const view = document.getElementById('scan-view');
+    const r = State.scan;
+    if (!view || !r) return;
+    let inhalt;
+    if (r.art === 'stueck') inhalt = scanPieceHtml(r.stueck);
+    else if (r.art === 'lagerort') inhalt = `<div class="scan-loading">${escHtml(t('scan.loading'))}</div>`;
+    else inhalt = scanUnknownHtml(r);
+    view.innerHTML = `<div class="scan-card">
+        <div class="scan-head">
+            <span class="scan-kind">${escHtml(t('scan.kind_' + r.art))}</span>
+            <button type="button" class="fd-button scan-close" id="scan-close" aria-label="${escAttr(t('btn.close'))}">&#10005;</button>
+        </div>
+        ${inhalt}
+        <form class="scan-search" id="scan-search">
+            <input type="search" class="fd-input" id="scan-search-input" placeholder="${escAttr(t('scan.search'))}"
+                autocapitalize="characters" autocomplete="off" spellcheck="false">
+            <button type="submit" class="fd-button">${escHtml(t('scan.go'))}</button>
+        </form>
+    </div>`;
+    view.hidden = false;
+    document.body.classList.add('scan-open');
+    view.scrollTop = 0;
+    document.getElementById('scan-close').addEventListener('click', closeScanView);
+    document.getElementById('scan-search').addEventListener('submit', (e) => {
+        e.preventDefault();
+        openScanView(document.getElementById('scan-search-input').value);
+    });
+    if (r.art === 'stueck') setupScanPiece(r.stueck);
+    if (r.art === 'lagerort') renderScanLocation(r.lagerort);
+}
+
+function scanPieceHtml(p) {
+    const zeile = (label, wert) => wert ? `<div class="scan-row"><dt>${escHtml(label)}</dt><dd>${wert}</dd></div>` : '';
+    const ort = p.lagerort
+        ? `<a href="#" class="scan-link" data-ort="${escAttr(p.lagerort)}">&#128205; ${escHtml(p.lagerort)}</a>` : '';
+    const gedruckt = p.etikett_gedruckt > 1 ? scanDatum(p.etikett_gedruckt) : '';
+    return `<div class="scan-title">
+            <img class="scan-img" src="/api/materials/${p.material_id}/image" alt="" onerror="this.remove()">
+            <div><div class="scan-code">${escHtml(p.code)}</div>
+            <div class="scan-material">${escHtml(p.material)}</div></div>
+        </div>
+        <dl class="scan-facts">
+            ${zeile(t('scan.dim'), escHtml(dimText(p.laenge, p.breite))
+                + (p.ist_rest ? ` <span class="rest-badge">${escHtml(t('labels.rest'))}</span>` : ''))}
+            ${zeile(t('scan.location'), ort)}
+            ${p.reserviert_fuer ? zeile(t('scan.reserved'), `<span class="scan-warn">${escHtml(p.reserviert_fuer)}</span>`) : ''}
+            ${zeile(t('scan.note'), escHtml(p.notiz))}
+            ${p.defekt_count ? zeile(t('scan.defects'), String(p.defekt_count)) : ''}
+            ${zeile(t('scan.label'), gedruckt ? escHtml(gedruckt) : escHtml(t('scan.label_never')))}
+        </dl>
+        <div class="scan-actions">
+            <button type="button" class="fd-button fd-button--negative" id="scan-take">${escHtml(t('piece.take'))}</button>
+            <button type="button" class="fd-button" id="scan-label">${escHtml(t('lbl.piece'))}</button>
+            <button type="button" class="fd-button" id="scan-open">${escHtml(t('scan.open_stock'))}</button>
+        </div>`;
+}
+
+function setupScanPiece(p) {
+    const neu = () => openScanView(p.code);
+    document.getElementById('scan-take').addEventListener('click', () => openTakeDialog(p, neu));
+    document.getElementById('scan-label').addEventListener('click', async () => {
+        if (await Api.downloadPieceLabels({ codes: [p.code] })) neu();
+    });
+    document.getElementById('scan-open').addEventListener('click', () => {
+        closeScanView();
+        document.querySelector('.tab-btn[data-tab="material"]')?.click();
+        selectMaterialRow(p.material_id);
+        document.querySelector(`#material-table tr[data-id="${p.material_id}"]`)?.scrollIntoView({ block: 'nearest' });
+    });
+    document.querySelector('#scan-view [data-ort]')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        openScanView('O:' + e.currentTarget.dataset.ort);
+    });
+}
+
+async function renderScanLocation(ort) {
+    let inhalt = [];
+    try { inhalt = await Api.getLocationContents(ort.id); } catch { /* Fehler angezeigt */ }
+    if (State.scan?.lagerort?.id !== ort.id) return;   // inzwischen etwas anderes gescannt
+    const box = document.querySelector('#scan-view .scan-loading');
+    if (!box) return;
+    const mats = inhalt.filter(m => m.bestand.some(b => b.stuecke.length));
+    box.outerHTML = `<div class="scan-title"><div>
+            <div class="scan-code">&#128205; ${escHtml(ort.name)}</div>
+            <div class="scan-material">${escHtml(t('scan.loc_summary', { m: ort.materialien, n: ort.stuecke }))}</div>
+        </div></div>
+        ${mats.length ? mats.map(m => `<div class="scan-mat">
+            <div class="scan-mat-head">${escHtml(m.name)}${m.rolle === 'reste'
+                ? ` <span class="rest-badge">${escHtml(t('labels.rest'))}</span>` : ''}</div>
+            <div class="scan-pieces">${m.bestand.flatMap(b => b.stuecke.map(p => `<button type="button"
+                class="scan-piece${p.reserviert_fuer ? ' is-reserved' : ''}" data-code="${escAttr(p.code)}">
+                <strong>${escHtml(p.code)}</strong> ${escHtml(dimText(b.laenge, b.breite))}</button>`)).join('')}</div>
+        </div>`).join('') : `<p class="scan-empty">${escHtml(t('loc.empty'))}</p>`}
+        <div class="scan-actions">
+            <button type="button" class="fd-button" id="scan-loc-label">${escHtml(t('scan.loc_label'))}</button>
+            <button type="button" class="fd-button" id="scan-loc-open">${escHtml(t('scan.open_location'))}</button>
+        </div>`;
+    document.querySelectorAll('#scan-view [data-code]').forEach(b =>
+        b.addEventListener('click', () => openScanView(b.dataset.code)));
+    document.getElementById('scan-loc-label').addEventListener('click', () =>
+        Api.downloadLocationLabels({ orte: [String(ort.id)] }));
+    document.getElementById('scan-loc-open').addEventListener('click', () => {
+        closeScanView();
+        document.querySelector('.tab-btn[data-tab="stock"]')?.click();
+        selectLocation(ort.name);
+    });
+}
+
+function scanUnknownHtml(r) {
+    const j = r.letzte_buchung;
+    const key = j && `scan.art_${j.art}`;
+    const art = j ? (State.translations[key] ? t(key) : j.art) : '';
+    return `<div class="scan-title"><div><div class="scan-code">${escHtml(r.code)}</div></div></div>
+        <p class="scan-empty">${escHtml(t(r.code.startsWith('O:') ? 'scan.unknown_loc' : 'scan.unknown'))}</p>
+        ${j ? `<p class="scan-hint">${escHtml(t('scan.last', { art, datum: scanDatum(j.zeit), material: j.material }))}</p>` : ''}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -2206,7 +2598,7 @@ async function labelFormats() {
     return labelFormatsCache;
 }
 
-const LABEL_GROUPS = ['bogen', 'bogen_klein', 'rolle', 'rolle_klein', 'endlos'];
+const LABEL_GROUPS = ['bogen', 'bogen_klein', 'rolle', 'rolle_klein', 'endlos', 'ptouch'];
 
 function labelFormatText(f) {
     const loc = State.settings.language || undefined;
@@ -2236,13 +2628,16 @@ async function renderLabelPreview() {
     const box = document.getElementById('label-preview');
     if (!box) return;
     let p;
-    try { p = await Api.getLabelPreview(State.settings.label_format || 'a4_3x8'); } catch { return; }
+    // Direktdruck mit gefundenem Drucker: Vorschau für das eingelegte Band
+    const band = State.settings.printer_direct && [12, 18, 24].includes(State.printer?.band_mm)
+        ? `tze_${State.printer.band_mm}` : '';
+    try { p = await Api.getLabelPreview(band || State.settings.label_format || 'a4_3x8'); } catch { return; }
     // Höchstens 320 × 160 px, kleine Etiketten groß genug zum Erkennen
     const pxMm = Math.min(320 / p.breite, 160 / p.hoehe, 8);
     const ptMm = 25.4 / 72;
     box.style.width = `${p.breite * pxMm}px`;
     box.style.height = `${p.hoehe * pxMm}px`;
-    box.innerHTML = p.elemente.map(e => {
+    box.innerHTML = (p.qr ? qrSvg(p.qr, pxMm) : '') + p.elemente.map(e => {
         const size = e.groesse * ptMm * pxMm;
         const top = (e.y - e.groesse * ptMm * 0.78) * pxMm;
         const pos = e.rechts ? `right:${(p.breite - e.x) * pxMm}px` : `left:${e.x * pxMm}px`;
@@ -2253,7 +2648,27 @@ async function renderLabelPreview() {
     const fmt = (await labelFormats()).find(f => f.key === p.format);
     document.getElementById('label-preview-info').textContent = t('labels.preview_info', {
         mass: `${n(p.breite)} × ${n(p.hoehe)} mm`,
-    }) + (fmt?.endlos ? ' ' + t('labels.endless_hint') : '');
+    }) + (fmt?.endlos ? ' ' + t('labels.endless_hint') : '')
+        + (p.qr_zu_klein ? ' ' + t('labels.qr_too_small') : '');
+}
+
+// QR-Code der Vorschau als SVG (Module vom Server, Ruhezone inklusive)
+function qrSvg(qr, pxMm) {
+    const n = qr.zeilen.length;
+    const voll = n + 2 * qr.rand;
+    const rects = [];
+    qr.zeilen.forEach((z, r) => {
+        for (let c = 0; c < n; c++) {
+            if (z[c] !== '1') continue;
+            let e = c;
+            while (e < n && z[e] === '1') e++;
+            rects.push(`<rect x="${c + qr.rand}" y="${r + qr.rand}" width="${e - c}" height="1"/>`);
+            c = e;
+        }
+    });
+    const px = qr.groesse * pxMm;
+    return `<svg class="label-qr" viewBox="0 0 ${voll} ${voll}" shape-rendering="crispEdges"
+        style="left:${qr.x * pxMm}px;top:${qr.y * pxMm}px;width:${px}px;height:${px}px">${rects.join('')}</svg>`;
 }
 
 // Gruppen der Einstellungen: immer nur eine sichtbar (gemerkt im Browser)
@@ -2314,6 +2729,23 @@ function renderSettings() {
     const hInp = document.getElementById('settings-label-h');
     if (wInp) wInp.value = State.settings.label_custom_w ?? 89;
     if (hInp) hInp.value = State.settings.label_custom_h ?? 36;
+    const qrChk = document.getElementById('settings-label-qr');
+    if (qrChk) qrChk.checked = State.settings.label_qr !== false;
+    const styleSel = document.getElementById('settings-label-style');
+    if (styleSel) styleSel.value = State.settings.label_style || 'normal';
+    const qrBase = document.getElementById('settings-label-qr-base');
+    if (qrBase) qrBase.value = State.settings.label_qr_base || '';
+    const chainChk = document.getElementById('settings-label-chain');
+    if (chainChk) chainChk.checked = !!State.settings.label_chain;
+    const prnChk = document.getElementById('settings-printer-direct');
+    if (prnChk) prnChk.checked = !!State.settings.printer_direct;
+    const cutChk = document.getElementById('settings-printer-cut');
+    if (cutChk) cutChk.checked = State.settings.printer_cut !== false;
+    const qlAdr = document.getElementById('settings-ql-address');
+    if (qlAdr) qlAdr.value = State.settings.printer_ql_address || '';
+    const qlRed = document.getElementById('settings-ql-red');
+    if (qlRed) qlRed.checked = !!State.settings.printer_ql_red;
+    renderPrinterStatus();
     updateLabelCustomVisibility();
 
     // API settings
@@ -2433,8 +2865,13 @@ function updateWasteMinVisibility() {
 }
 
 function updateLabelCustomVisibility() {
-    const isCustom = document.getElementById('settings-label-format')?.value === 'custom';
+    const fmtKey = document.getElementById('settings-label-format')?.value;
+    const isCustom = fmtKey === 'custom';
     document.querySelectorAll('.label-custom-field').forEach(el => setRowEnabled(el, isCustom));
+    document.querySelectorAll('.label-qr-field').forEach(el =>
+        setRowEnabled(el, State.settings.label_qr !== false));
+    const endlos = (labelFormatsCache || []).find(f => f.key === fmtKey)?.endlos;
+    setRowEnabled(document.getElementById('settings-label-chain-row'), !!endlos);
 }
 
 // Port/Key nur bei eingeschalteter API bearbeitbar
@@ -4527,6 +4964,7 @@ function onBackdropClick(el, fn) {
 }
 
 function closeModal() {
+    document.getElementById('modal-extra')?.remove();
     const overlay = document.getElementById('modal-overlay');
     overlay.classList.remove('active');
     overlay.classList.add('hidden');
@@ -5858,6 +6296,15 @@ function initEvents() {
     document.getElementById('btn-loc-edit')?.addEventListener('click', () => renameLocation());
     document.getElementById('btn-loc-del')?.addEventListener('click', () => deleteLocation());
     document.getElementById('btn-loc-labels')?.addEventListener('click', () => printLocationLabels());
+    document.getElementById('btn-loc-labels-all')?.addEventListener('click', () => printAllLocationLabels());
+    // Code suchen (Handscanner tippt den QR-Inhalt + Enter)
+    document.getElementById('code-search')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const inp = document.getElementById('code-search-input');
+        openScanView(inp.value);
+        inp.value = '';
+    });
+
     document.getElementById('btn-waste-clear')?.addEventListener('click', () => {
         openConfirmDialog(t('loc.waste_clear_confirm'), async () => {
             try { await Api.emptyWaste(); renderLocations(); } catch { /* handled */ }
@@ -6171,6 +6618,72 @@ function initEvents() {
         });
     });
 
+    // ----- QR-Codes auf Etiketten -----
+    const saveLabelSetting = async (key, value) => {
+        try {
+            Object.assign(State.settings, await Api.updateSettings({ [key]: value }));
+        } catch {   // fetchJSON zeigt den Fehler schon an
+            renderSettings();
+            return;
+        }
+        updateLabelCustomVisibility();
+        renderLabelPreview();
+    };
+    document.getElementById('settings-label-qr')?.addEventListener('change', e =>
+        saveLabelSetting('label_qr', e.target.checked));
+    document.getElementById('settings-label-style')?.addEventListener('change', e =>
+        saveLabelSetting('label_style', e.target.value));
+    document.getElementById('settings-label-chain')?.addEventListener('change', e =>
+        saveLabelSetting('label_chain', e.target.checked));
+    document.getElementById('settings-label-qr-base')?.addEventListener('change', e =>
+        saveLabelSetting('label_qr_base', e.target.value.trim()));
+    document.getElementById('settings-printer-direct')?.addEventListener('change', async e => {
+        await saveLabelSetting('printer_direct', e.target.checked);
+        renderPrinterStatus();
+    });
+    document.getElementById('settings-printer-cut')?.addEventListener('change', e =>
+        saveLabelSetting('printer_cut', e.target.checked));
+    document.getElementById('btn-printer-check')?.addEventListener('click', () => renderPrinterStatus());
+    document.getElementById('btn-bridge-pair')?.addEventListener('click', pairBridge);
+    document.getElementById('settings-ql-address')?.addEventListener('change', async e => {
+        await saveLabelSetting('printer_ql_address', e.target.value.trim());
+        renderPrinterStatus();
+    });
+    document.getElementById('btn-ql-check')?.addEventListener('click', () => renderQlStatus());
+    document.getElementById('settings-ql-red')?.addEventListener('change', async e => {
+        await saveLabelSetting('printer_ql_red', e.target.checked);
+        renderQlStatus();
+    });
+    document.getElementById('settings-printer-default')?.addEventListener('change', e =>
+        saveLabelSetting('printer_default', e.target.value));
+    document.getElementById('btn-ql-test')?.addEventListener('click', async () => {
+        try {
+            const est = await Api.printerTest(true, 'ql');
+            if (!await confirmAsync(printEstimateText(est))) return;
+            showToast(t('prn.sending'), 'info');
+            await finishPrint(await Api.printerTest(false, 'ql'));
+        } catch { /* fetchJSON zeigt den Fehler */ }
+        renderQlStatus();
+    });
+    document.getElementById('btn-bridge-unpair')?.addEventListener('click', unpairBridge);
+    document.getElementById('btn-printer-test')?.addEventListener('click', async () => {
+        try {
+            const est = await Api.printerTest(true, 'ptouch');
+            if (!await confirmAsync(printEstimateText(est))) return;
+            showToast(t('prn.sending'), 'info');
+            await finishPrint(await Api.printerTest(false, 'ptouch'));
+        } catch { /* fetchJSON zeigt den Fehler */ }
+        renderPrinterStatus();
+    });
+    document.getElementById('btn-qr-base-here')?.addEventListener('click', () => {
+        // Adresse, unter der diese Oberfläche gerade läuft (ohne Pfad zur Datei)
+        const here = (location.origin + location.pathname).replace(/\/(index\.html)?$/, '');
+        const inp = document.getElementById('settings-label-qr-base');
+        if (inp) inp.value = here;
+        saveLabelSetting('label_qr_base', here);
+        if (/^https?:\/\/(localhost|127\.|\[::1\])/.test(here)) showToast(t('set.qr_base_local'), 'info');
+    });
+
     // ----- API Settings -----
     document.getElementById('settings-api-enabled')?.addEventListener('change', async (e) => {
         State.settings.api_enabled = e.target.checked;
@@ -6287,6 +6800,7 @@ function initEvents() {
             }
             const overlay = document.getElementById('modal-overlay');
             if (overlay?.classList.contains('active')) closeModal();
+            else if (State.scan) closeScanView();
         }
     });
 
@@ -6565,6 +7079,11 @@ async function init() {
         if (lastTab && lastTab !== 'material') {
             document.querySelector(`.tab-btn[data-tab="${CSS.escape(lastTab)}"]`)?.click();
         }
+
+        // Gescannter QR-Code: "/S/AP40-07" leitet auf "?s=AP40-07" um, "/O/3" auf "?o=3"
+        const params = new URLSearchParams(location.search);
+        if (params.get('s')) openScanView(params.get('s'));
+        else if (params.get('o')) openScanView('O:' + params.get('o'));
     } catch (e) {
         console.error('Init failed:', e);
         showToast('Initialization failed. Is the server running?', 'error');

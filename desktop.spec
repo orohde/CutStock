@@ -11,7 +11,9 @@ hiddenimports = (
     collect_submodules("uvicorn")
     + [
         "core", "core.db", "core.models", "core.optimize", "core.pdf",
-        "core.lock", "core.settings",
+        "core.lock", "core.settings", "core.labels", "core.labels_raster",
+        "core.ptouch", "core.drucker", "core.druckwarteschlange", "core.ql", "core.ipp",
+        "core.ql_netz",
         "web", "web.app", "ui", "ui.i18n",
         "anyio", "click", "h11", "httptools", "websockets",
         "reportlab",
@@ -26,10 +28,14 @@ datas = [
     ("THIRD_PARTY_NOTICES.txt", "."),
 ]
 
+# libusb für den Direktdruck auf Brother P-touch (core/drucker.py lädt sie per ctypes)
+LIBUSB = Path("/opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib")
+binaries = [(str(LIBUSB), ".")] if LIBUSB.is_file() else []
+
 a = Analysis(
     ["desktop.py"],
     pathex=[],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

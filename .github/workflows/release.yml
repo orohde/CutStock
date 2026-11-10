@@ -17,21 +17,32 @@ jobs:
 
       - name: Install dependencies
         run: |
+          # libusb für den Direktdruck auf Brother P-touch (desktop.spec / bruecke.spec)
+          brew install libusb
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
+          pip install -r requirements.txt pyinstaller certifi
 
       - name: Build macOS app
         run: pyinstaller desktop.spec --noconfirm
 
-      - name: Create ZIP
+      - name: Build print bridge
+        run: pyinstaller bruecke.spec --noconfirm
+
+      - name: Check bundles
+        run: |
+          test -f "dist/CutStock.app/Contents/Frameworks/libusb-1.0.0.dylib"
+          test -f "dist/CutStock Druckbrücke.app/Contents/Frameworks/libusb-1.0.0.dylib"
+
+      - name: Create ZIPs
         run: |
           cd dist
-          zip -r ../CutStock-macOS-${{ github.ref_name }}.zip CutStock.app
+          ditto -c -k --keepParent CutStock.app ../CutStock-macOS-${{ github.ref_name }}.zip
+          ditto -c -k --keepParent "CutStock Druckbrücke.app" ../CutStock-Druckbruecke-macOS-${{ github.ref_name }}.zip
 
       - uses: actions/upload-artifact@v5
         with:
           name: macos-build
-          path: CutStock-macOS-*.zip
+          path: CutStock-*macOS-*.zip
 
   build-windows:
     runs-on: windows-latest
@@ -84,6 +95,11 @@ jobs:
             |----------|------|------|
             | **macOS** | `CutStock-macOS-${{ github.ref_name }}.zip` | Unsigned — see below |
             | **Windows** | `CutStock-Windows-${{ github.ref_name }}.zip` | Unsigned — see below |
+            | **macOS** | `CutStock-Druckbruecke-macOS-${{ github.ref_name }}.zip` | Print bridge (optional, **macOS only**) — see below |
+
+            ### Print bridge (macOS only)
+
+            The **CutStock print bridge** (Druckbrücke) is an optional, separate menu-bar app for the Mac a Brother P-touch label printer (PT-P710BT) is connected to via USB. It lets a CutStock Docker instance — and any browser or phone using it — print labels on that printer. Only needed if you print labels from the Docker instance. Setup: Settings → Labels & printer → Print bridge → Pair, then enter the address and pairing code in the bridge. Windows is not supported yet.
 
             ### Important: Unsigned builds
 

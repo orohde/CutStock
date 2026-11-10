@@ -16,6 +16,10 @@
       <span class="fd-shellbar__title" data-i18n="app.title">CutStock</span>
     </div>
     <div class="fd-shellbar__group fd-shellbar__group--actions">
+      <form id="code-search" class="code-search" role="search">
+        <input type="search" id="code-search-input" class="fd-input" placeholder="Code / Scan…" data-i18n-placeholder="scan.search_short"
+          aria-label="Code suchen" data-i18n-aria-label="scan.search" autocomplete="off" spellcheck="false">
+      </form>
       <button id="btn-update-available" class="fd-button fd-button--attention fd-shellbar__button" type="button" data-i18n="upd.button" style="display:none">Update verfügbar</button>
       <span id="footer-license-badge" class="footer-license license-community">Community (PolyForm Noncommercial)</span>
       <button id="btn-quit" class="fd-button fd-button--negative fd-shellbar__button" type="button" data-i18n="app.quit" style="display:none">Beenden</button>
@@ -124,6 +128,7 @@
               <button id="btn-loc-new" class="fd-button fd-button--emphasized" type="button" data-i18n="btn.new">Neu</button>
               <button id="btn-loc-edit" class="fd-button" type="button" data-i18n="loc.rename_btn">Umbenennen</button>
               <button id="btn-loc-del" class="fd-button fd-button--negative" type="button" data-i18n="btn.delete">Entfernen</button>
+              <button id="btn-loc-labels-all" class="fd-button" type="button" data-i18n="loc.labels_all" data-i18n-title="loc.labels_all_hint">Ortsetiketten</button>
             </div>
           </div>
           <div class="panel-content">
@@ -525,6 +530,88 @@
             </div>
             <p class="set-hint" data-i18n="set.h_label_custom"></p>
           </div>
+          <div class="set-row set-row--check">
+            <label class="fd-form-label" for="settings-label-qr" data-i18n="set.label_qr">QR-Code auf Etiketten:</label>
+            <div class="set-field"><input type="checkbox" id="settings-label-qr" class="cs-checkbox"></div>
+            <p class="set-hint" data-i18n="set.h_label_qr"></p>
+          </div>
+          <div class="set-row set-dep label-qr-field">
+            <label class="fd-form-label" for="settings-label-style" data-i18n="set.label_style">Layout:</label>
+            <div class="set-field"><select id="settings-label-style" class="cs-select set-wide">
+              <option value="normal" data-i18n="set.style_normal">Normal: QR links, Text daneben</option>
+              <option value="mini" data-i18n="set.style_mini">Mini: QR und Code (für kleine Teile)</option>
+              <option value="qr" data-i18n="set.style_qr">Nur QR, Code darunter</option>
+            </select></div>
+            <p class="set-hint" data-i18n="set.h_label_style"></p>
+          </div>
+          <div class="set-row set-dep label-qr-field">
+            <label class="fd-form-label" for="settings-label-qr-base" data-i18n="set.label_qr_base">Adresse für QR-Codes:</label>
+            <div class="set-field set-pair">
+              <input type="text" id="settings-label-qr-base" class="cs-input set-wide" placeholder="https://cutstock.example" spellcheck="false" autocomplete="off">
+              <button id="btn-qr-base-here" class="fd-button fd-button--compact" type="button" data-i18n="set.qr_base_here">Diese Adresse</button>
+            </div>
+            <p class="set-hint" data-i18n="set.h_label_qr_base"></p>
+          </div>
+          <div class="set-row set-row--check set-dep" id="settings-label-chain-row">
+            <label class="fd-form-label" for="settings-label-chain" data-i18n="set.label_chain">Endlos-Band als Kette drucken:</label>
+            <div class="set-field"><input type="checkbox" id="settings-label-chain" class="cs-checkbox"></div>
+            <p class="set-hint" data-i18n="set.h_label_chain"></p>
+          </div>
+          <div class="set-row" id="settings-bridge-row">
+            <span class="fd-form-label" data-i18n="set.bridge">Druckbrücke (nur macOS):</span>
+            <div class="set-field set-pair">
+              <span id="bridge-status" class="printer-status"></span>
+              <code id="bridge-code" class="bridge-code hidden"></code>
+              <button id="btn-bridge-pair" class="fd-button fd-button--compact" type="button" data-i18n="set.bridge_pair">Koppeln</button>
+              <button id="btn-bridge-unpair" class="fd-button fd-button--compact hidden" type="button" data-i18n="set.bridge_unpair">Trennen</button>
+            </div>
+            <p class="set-hint" data-i18n="set.h_bridge"></p>
+          </div>
+          <div class="set-row set-row--check" id="settings-printer-direct-row">
+            <label class="fd-form-label" for="settings-printer-direct" data-i18n="set.printer_direct">Direkt drucken (Brother P-touch, USB):</label>
+            <div class="set-field"><input type="checkbox" id="settings-printer-direct" class="cs-checkbox"></div>
+            <p class="set-hint" data-i18n="set.h_printer_direct"></p>
+          </div>
+          <div class="set-row set-dep printer-field">
+            <span class="fd-form-label" data-i18n="set.printer">Drucker:</span>
+            <div class="set-field set-pair">
+              <span id="printer-status" class="printer-status"></span>
+              <button id="btn-printer-check" class="fd-button fd-button--compact" type="button" data-i18n="set.printer_check">Prüfen</button>
+              <button id="btn-printer-test" class="fd-button fd-button--compact" type="button" data-i18n="set.printer_test">Testdruck</button>
+            </div>
+            <p class="set-hint" data-i18n="set.h_printer"></p>
+          </div>
+          <div class="set-row set-row--check set-dep printer-field">
+            <label class="fd-form-label" for="settings-printer-cut" data-i18n="set.printer_cut">Nach jedem Etikett schneiden:</label>
+            <div class="set-field"><input type="checkbox" id="settings-printer-cut" class="cs-checkbox"></div>
+            <p class="set-hint" data-i18n="set.h_printer_cut"></p>
+          </div>
+          <div class="set-row" id="settings-ql-row">
+            <label class="fd-form-label" for="settings-ql-address" data-i18n="set.ql">Netzwerkdrucker (Brother QL):</label>
+            <div class="set-field set-pair">
+              <input type="text" id="settings-ql-address" class="cs-input" placeholder="10.10.30.96" spellcheck="false" autocomplete="off">
+              <button id="btn-ql-check" class="fd-button fd-button--compact" type="button" data-i18n="set.printer_check">Prüfen</button>
+              <button id="btn-ql-test" class="fd-button fd-button--compact" type="button" data-i18n="set.printer_test">Testdruck</button>
+            </div>
+            <p class="set-hint" data-i18n="set.h_ql"></p>
+          </div>
+          <div class="set-row" id="settings-ql-status-row">
+            <span class="fd-form-label" data-i18n="set.printer">Drucker:</span>
+            <div class="set-field"><span id="ql-status" class="printer-status"></span></div>
+          </div>
+          <div class="set-row set-row--check hidden" id="settings-ql-red-row">
+            <label class="fd-form-label" for="settings-ql-red" data-i18n="set.ql_red">Rot/Schwarz-Rolle eingelegt:</label>
+            <div class="set-field"><input type="checkbox" id="settings-ql-red" class="cs-checkbox"></div>
+            <p class="set-hint" data-i18n="set.h_ql_red"></p>
+          </div>
+          <div class="set-row hidden" id="settings-printer-default-row">
+            <label class="fd-form-label" for="settings-printer-default" data-i18n="set.printer_default">Standarddrucker:</label>
+            <div class="set-field"><select id="settings-printer-default" class="cs-select set-wide">
+              <option value="ptouch" data-i18n="prn.name_ptouch">P-touch (USB / Druckbrücke)</option>
+              <option value="ql" data-i18n="prn.name_ql">Brother QL (Netzwerk)</option>
+            </select></div>
+            <p class="set-hint" data-i18n="set.h_printer_default"></p>
+          </div>
           <div class="set-row">
             <span class="fd-form-label" data-i18n="labels.preview">Vorschau:</span>
             <div class="set-field"><div id="label-preview" class="label-preview"></div></div>
@@ -689,6 +776,8 @@
       <ol id="saw-piece-list"></ol>
     </div>
   </div>
+
+  <div id="scan-view" class="scan-view" hidden></div>
 
   <script src="app.js"></script>
 </body>

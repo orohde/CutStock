@@ -34,7 +34,9 @@ Pieces marked 🔒 are reserved by a saved plan.
 
 - **Click a code** to open the piece: change its note, **Print label** or **Take out …**
 - **Go to material** jumps to that material in the Material tab.
-- **Labels …** prints labels for pieces at this location (see below).
+- **Labels …** prints labels for pieces at this location (see below), optionally together with
+  the label for the location itself.
+- **Location labels** (left) prints the labels of all locations, e.g. to relabel a rack.
 
 ## Printing labels
 
@@ -53,6 +55,30 @@ checkbox. A checkbox on a material or size selects every piece below it.
 A single label, e.g. to replace one that fell off, is printed with **Print label** in the piece's
 dialog, which also shows when a label was last printed. Pieces that were already in stock before
 this feature count as labelled.
+
+In the label dialog of a location there is also **Label for the location "…"** at the top: the
+location label shows the name in large type, the materials below it, and a QR code to the location.
+
+## Scanning QR codes
+
+Piece and location labels carry a **QR code** (can be switched off under
+[Settings → Labels & printer](6-settings.md#qr-codes)). Scanned with a phone camera, CutStock
+opens in the browser – no app needed:
+
+- **Piece:** code, material, **current size** (also after cutting – the largest offcut keeps the
+  code), location, reservation, note and defects. Buttons: **Take out …**, **Print label**,
+  **Show in stock**. Tap the location to open it.
+- **Location:** all materials with their pieces at this location; tap a piece to open it.
+- **Not found:** the piece is no longer in stock; CutStock shows the last entry, e.g.
+  "taken out on 11/9/2026".
+
+The phone must be able to reach CutStock (workshop Wi-Fi) and *Address for QR codes* must contain
+the instance's address. Without an address the QR code only holds the code (`AP40-07`, for
+locations `O:3`) – which suits a **hand scanner** at the computer: it types the code into the
+**Code / scan…** field at the top right, Enter opens the same view. Codes can be typed there too.
+
+If you change a material's short code, CutStock remembers the old one: labels with `AP40-07`
+still find the piece, the new code is shown.
 
 ## Taking a piece out
 
