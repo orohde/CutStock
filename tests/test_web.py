@@ -1130,9 +1130,10 @@ class TestSammelplanImReiterProjekte:
         s = r.json()
         assert (s["name"], s["mitglieder"], s["plaene"]) == ("Sammelplan Alu 40x40", [a, b], [])
         assert client.get(f"/api/projects/{a}").json()["sammel"] == {str(mid): s["name"]}
-        # Je Material nur einer – der bestehende wird genannt
+        # Ein Projekt steckt je Material nur in einem Sammelplan – der bestehende wird genannt
         r = client.post("/api/sammel", json={"material": str(mid), "projekte": [str(a)]})
-        assert r.status_code == 409 and r.json()["detail"]["sammel_id"] == s["id"]
+        d = r.json()["detail"]
+        assert r.status_code == 409 and (d["code"], d["sammel_id"]) == ("projekt_in_sammel", s["id"])
         # Danach rechnet die Optimierung mit diesen Mitgliedern
         plan = self._sammel(client, mid, bid, [a, b])
         assert plan["projekt_id"] == s["id"]
@@ -1199,6 +1200,90 @@ class TestSammelplanImReiterProjekte:
         frei = client.get("/api/stock", params={"material_id": mid}).json()
         assert sum(s["stueckzahl"] for s in frei if s["laenge"] == 2000) == 9
 
+
+
+class TestMehrereSammelplaene:
+    """Mehrere Sammelpläne je Material: jeder rechnet mit dem Lager, das die anderen
+    nicht reservieren; ein Projekt steckt je Material nur in einem."""
+
+    def _setup(self, client):
+        mid = client.post("/api/materials", json={"name": "Flach 30", "typ": "Stange"}).json()["id"]
+        client.post("/api/stock", json={"material_id": mid, "laenge": 2000, "stueckzahl": 2})
+        bid = client.post("/api/blades", json={"name": "B", "schnittbreite": 3}).json()["id"]
+        ids = []
+        for name in ("P1", "P2", "P3", "P4"):
+            pid = client.post("/api/projects", json={"name": name}).json()["id"]
+            client.post(f"/api/projects/{pid}/parts", json={
+                "label": "Leiste", "typ": "Stange", "material_id": mid,
+                "laenge": 900, "stueckzahl": 1})
+            ids.append(pid)
+        return mid, bid, ids
+
+    def _opt(self, client, mid, bid, pids, **kw):
+        return client.post("/api/sammel/optimize", json={
+            "material_id": mid, "blade_id": bid, "projekt_ids": pids, **kw})
+
+    def test_zweiter_rechnet_mit_restlager(self, client):
+        mid, bid, (p1, p2, p3, p4) = self._setup(client)
+        s1 = self._opt(client, mid, bid, [p1, p2]).json()
+        s2 = self._opt(client, mid, bid, [p3, p4], sammel_id=0)
+        assert s2.status_code == 200, s2.text
+        s2 = s2.json()
+        assert s1["projekt_id"] != s2["projekt_id"]
+        stangen1 = {(b["lagerstueck_id"], b["stueck_nr"]) for b in s1["schnittplaene"]}
+        stangen2 = {(b["lagerstueck_id"], b["stueck_nr"]) for b in s2["schnittplaene"]}
+        assert len(stangen1) == len(stangen2) == 1 and not stangen1 & stangen2
+        info = client.get(f"/api/sammel/{mid}").json()
+        assert [x["name"] for x in info["sammelplaene"]] == ["Sammelplan Flach 30",
+                                                            "Sammelplan Flach 30 2"]
+        # Arbeitsliste: beide Sammelpläne, jedes Mitglied zeigt auf seinen
+        wl = client.get("/api/worklist").json()
+        assert {e["projekt_id"] for e in wl if e["art"] == "sammel"} >= {
+            s1["projekt_id"], s2["projekt_id"]}
+        zeile = next(z for e in wl if e["projekt_id"] == p4 for z in e["materialien"])
+        assert (zeile["status"], zeile["sammelplan_id"]) == ("sammel", s2["projekt_id"])
+
+    def test_ohne_id_bei_mehreren_mehrdeutig(self, client):
+        mid, bid, (p1, p2, p3, _) = self._setup(client)
+        self._opt(client, mid, bid, [p1])
+        self._opt(client, mid, bid, [p2], sammel_id=0)
+        r = self._opt(client, mid, bid, [p3])
+        d = r.json()["detail"]
+        assert r.status_code == 409 and d["code"] == "sammel_mehrdeutig"
+        assert len(d["sammelplaene"]) == 2
+
+    def test_projekt_nur_in_einem(self, client):
+        mid, bid, (p1, p2, p3, _) = self._setup(client)
+        s1 = self._opt(client, mid, bid, [p1, p2]).json()
+        r = self._opt(client, mid, bid, [p2, p3], sammel_id=0)
+        assert r.status_code == 409 and r.json()["detail"]["code"] == "projekt_in_sammel"
+        neu = client.post("/api/sammel", json={"material": str(mid), "projekte": [str(p3)]}).json()
+        r = client.put(f"/api/sammel/{mid}/members?sammel_id={neu['id']}",
+                       json={"projekte": [str(p3), str(p1)]})
+        assert r.status_code == 409 and r.json()["detail"]["sammel_id"] == s1["projekt_id"]
+        # Kandidaten für einen neuen: Mitglieder anderer Sammelpläne sind markiert
+        k = {x["projekt_id"]: x for x in client.get(f"/api/sammel/{mid}?sammel_id=0").json()["kandidaten"]}
+        assert k[p1]["anderer_sammel_id"] == s1["projekt_id"] and k[p1]["offen"] == 0
+        assert k[p3]["anderer_sammel_id"] == neu["id"]
+
+    def test_mitglieder_und_neustart_per_id(self, client):
+        mid, bid, (p1, p2, p3, _) = self._setup(client)
+        s1 = self._opt(client, mid, bid, [p1]).json()["projekt_id"]
+        s2 = self._opt(client, mid, bid, [p2], sammel_id=0).json()["projekt_id"]
+        r = client.put(f"/api/sammel/{mid}/members", json={"projekte": [str(p3)]})
+        assert r.status_code == 409 and r.json()["detail"]["code"] == "sammel_mehrdeutig"
+        r = client.put(f"/api/sammel/{mid}/members?sammel_id={s2}",
+                       json={"projekte": [str(p2), str(p3)]})
+        assert r.status_code == 200 and r.json()["mitglieder"] == [p2, p3]
+        assert client.post(f"/api/sammel/{mid}/restart?sammel_id={s1}").status_code == 200
+        assert client.get(f"/api/sammel/{mid}?sammel_id={s2}").json()["sammel_id"] == s2
+        assert client.get(f"/api/sammel/{mid}?sammel_id=99999").status_code == 404
+
+    def test_lagerschaetzung_ohne_reservierte(self, client):
+        mid, bid, (p1, p2, p3, p4) = self._setup(client)
+        self._opt(client, mid, bid, [p1, p2])
+        m = next(x for x in client.get("/api/parts/materials").json() if x["material_id"] == mid)
+        assert m["lager"] == 2000.0      # eine der zwei Stangen ist reserviert
 
 class TestRegalKorrektur:
     """Teil-Dialog: Regal-Bestand von Hand setzen (Inventur)."""

@@ -38,6 +38,8 @@ Webseite und Handbuch: **[cutstock.app](https://cutstock.app/)** · [Handbuch](h
 - **Schnittfolge** -- nummerierte, massgenaue Schrittliste pro Schnittplan (Kerf eingerechnet, auch im PDF)
 - **Werkstatt-Modus** -- Vollbild-Touch-Ansicht fuers Tablet an der Saege: welches Stueck wo liegt ("Nimm SP19-01 · Plattenstaender"), grosse Ziele, Fortschritt, Teile beim Saegen abhaken, entstehende Reste direkt beschriften und Etiketten drucken
 - **Etiketten** -- druckbare Etiketten fuer Teile und Reste (A4-Boegen wie Avery 3475/L7160 oder Dymo/Brother-Etikettendrucker, freie Masse)
+- **QR-Codes und Scan** -- Stueck- und Lagerort-Etiketten mit QR-Code; mit dem Handy gescannt zeigt CutStock das Stueck mit aktuellem Mass, Ort und Reservierung
+- **Direktdruck** -- ohne PDF und ohne Treiber auf Brother P-touch (PT-P710BT, per USB oder ueber die Druckbruecke fuer macOS) und Brother QL im Netzwerk (QL-820NWB, auch Rot/Schwarz) -- auch aus der Docker-Instanz und vom Handy
 - **PDF-Export** -- kompaktes mehrseitiges Layout: Teileliste mit Anzahl, gleiche Schnittmuster zusammengefasst, Materialbedarf mit Stueck-Codes, Lagerort und Materialbild
 - **Statistik** -- detaillierte Verschnittanalyse pro Lagerstueck und Gesamtwerte
 - **Backup/Restore** -- komplette Datenbank + Einstellungen als ZIP; vor jedem Update legt CutStock automatisch eine Sicherung an

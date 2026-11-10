@@ -93,11 +93,11 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | POST | `/api/plans/{id}/confirm-all` | Mark all open pieces of the plan as cut |
 | DELETE | `/api/plans/{id}` | Discard plan (releases reserved pieces) |
 | GET | `/api/projects/{id}/fill-candidates/{material_id}` | Possible filler parts from other projects |
-| GET | `/api/sammel/{material_id}` | Combined plan status and eligible projects |
-| POST | `/api/sammel` | Create a combined plan (material and projects, no cutting plan yet) |
-| PUT | `/api/sammel/{id or code}/members` | Replace the members of a material's combined plan |
-| POST | `/api/sammel/{id or code}/restart` | Restart combined plan (parts of this material open again in all members, plans removed, stock unchanged) |
-| POST | `/api/sammel/optimize` | Create/replace and compute the combined plan |
+| GET | `/api/sammel/{material_id}` | Combined plan and eligible projects; `?sammel_id=` picks one of several, `?sammel_id=0` shows the candidates for a new one; `sammelplaene` lists all of the material |
+| POST | `/api/sammel` | Create a combined plan (material and projects, no cutting plan yet); also a further one for the same material |
+| PUT | `/api/sammel/{id or code}/members` | Replace the members of a material's combined plan (with several: `?sammel_id=`) |
+| POST | `/api/sammel/{id or code}/restart` | Restart combined plan (parts of this material open again in all members, plans removed, stock unchanged; with several: `?sammel_id=`) |
+| POST | `/api/sammel/optimize` | Compute a combined plan; `sammel_id` picks it, `0` creates a new one, omitted = the material's only one |
 | GET | `/api/parts` | Parts of all projects with planning state: `beauftragt` (in cut jobs), `auftraege`, `verplant`, `sammelplan`, `verfuegbar` ("Parts" tab) |
 | GET | `/api/parts/materials` | Available parts per material with a rough stock estimate (`bedarf`, `lager`, `reicht`, `fehlt_stueck`) |
 | POST | `/api/parts/{id}/take-stock` | Count a part's finished parts as cut `{"anzahl": 0}` (0 = as many as possible) |
@@ -111,8 +111,14 @@ Requests from the web UI (same-origin) and from localhost are always allowed wit
 | GET | `/api/labels/preview?format=` | Sample label: size and text positions as in the PDF |
 | POST | `/api/labels/pieces` | Labels for stock pieces (select by code, location, material, filters; `lagerort_etikett` = location label first) |
 | POST | `/api/labels/locations` | Labels for locations `{"orte": ["Rack 3"]}` (empty = all) |
-| GET | `/api/printer` | Direct printing: printer found?, model, loaded tape (`band_mm`), errors |
-| POST | `/api/printer/test` | Test label on the connected printer |
+| GET | `/api/printer` | Direct printing: printer found?, model, loaded tape (`band_mm`), errors; `?drucker=ql` = Brother QL on the network |
+| GET | `/api/printers` | All set-up direct printers (P-touch, QL) with status, default printer first |
+| POST | `/api/printer/test` | Test label (`?drucker=ptouch\|ql`, `?schaetzung=true` = tape estimate only) |
+| GET | `/api/printer/jobs/{id}` | State of a print job via the print bridge |
+| POST | `/api/printer/bridge/pair` | Pair the print bridge: new pairing code |
+| DELETE | `/api/printer/bridge/pair` | Unpair the print bridge |
+| POST | `/api/printer/bridge/poll?wait=25` | Print bridge only: report status, pick up a job (header `X-CutStock-Bridge`) |
+| POST | `/api/printer/bridge/jobs/{id}/result` | Print bridge only: report the result of a job |
 | **System** | | |
 | GET | `/api/version` | App version and links |
 | GET | `/api/license` | License status |
@@ -158,7 +164,9 @@ The saw blade used becomes the material's default saw blade (`saegeblatt_id` in 
    "auch_in": [{"projekt_id": 8, "name": "CNC router"}]}]}
 ```
 
-`status`: `kein_plan` (no plan yet), `bereit` (ready), `in_arbeit` (in progress), `veraltet` (outdated), `fertig` (finished), `sammel` (material is cut in combined plan `sammelplan_id`) or `verplant` (everything open is in cut jobs or other plans). With `verplant`, `auftraege` names the cut jobs (`projekt_id`, `name`) holding the open parts. `auch_in` lists other projects with open parts in this material as long as there is no combined plan (the "cut together?" suggestion → `POST /api/sammel`). Finished lines and entries are left out unless `?fertige=true`.
+`status`: `kein_plan` (no plan yet), `bereit` (ready), `in_arbeit` (in progress), `veraltet` (outdated), `fertig` (finished), `sammel` (material is cut in combined plan `sammelplan_id`) or `verplant` (everything open is in cut jobs or other plans). With `verplant`, `auftraege` names the cut jobs (`projekt_id`, `name`) holding the open parts. `auch_in` lists other projects with open parts in this material that are not in a combined plan yet (the "cut together?" suggestion → `POST /api/sammel`). Finished lines and entries are left out unless `?fertige=true`.
+
+**Several combined plans per material:** a project is in only one combined plan per material – otherwise `409` with `code: "projekt_in_sammel"`, `sammel_id` and `sammel`. If a material has several combined plans and `sammel_id` is missing, the answer is `409` with `code: "sammel_mehrdeutig"` and the list `sammelplaene`. Each combined plan works with the stock the others do not reserve. Names are assigned automatically: "Sammelplan <material>", then "… 2".
 
 ## Stock commands
 

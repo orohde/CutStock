@@ -347,15 +347,17 @@ const Api = {
     setPieceSawn: (pieceId, gesaegt) => fetchJSON(`/api/plan-pieces/${pieceId}`, 'POST', { gesaegt }),
     confirmAllPieces: (planId) => fetchJSON(`/api/plans/${planId}/confirm-all`, 'POST'),
     restartProject: (projectId) => fetchJSON(`/api/projects/${projectId}/restart`, 'POST'),
-    restartSammel: (materialId) => fetchJSON(`/api/sammel/${materialId}/restart`, 'POST'),
+    restartSammel: (materialId, sammelId) => fetchJSON(`/api/sammel/${materialId}/restart?sammel_id=${sammelId || 0}`, 'POST'),
     discardPlan: (planId) => fetchJSON(`/api/plans/${planId}`, 'DELETE'),
-    getSammel: (materialId) => fetchJSON(`/api/sammel/${materialId}`),
+    // sammelId: undefined = ältester, 0 = Kandidaten für einen neuen, sonst dieser
+    getSammel: (materialId, sammelId) => fetchJSON(`/api/sammel/${materialId}`
+        + (sammelId === undefined || sammelId === null ? '' : `?sammel_id=${sammelId}`)),
     getLabelFormats: () => fetchJSON('/api/labels/formats'),
     getLabelPreview: (fmt) => fetchJSON(`/api/labels/preview?format=${encodeURIComponent(fmt)}`),
     getWorklist: (fertige) => fetchJSON(`/api/worklist${fertige ? '?fertige=true' : ''}`),
     createSammel: (data) => fetchJSON('/api/sammel', 'POST', data),
-    setSammelMembers: (material, projekte) =>
-        fetchJSON(`/api/sammel/${encodeURIComponent(material)}/members`, 'PUT', { projekte }),
+    setSammelMembers: (material, projekte, sammelId) =>
+        fetchJSON(`/api/sammel/${encodeURIComponent(material)}/members?sammel_id=${sammelId || 0}`, 'PUT', { projekte }),
     optimizeSammel: (data) => fetchJSON('/api/sammel/optimize', 'POST', data),
     compareSammel: (data) => fetchJSON('/api/sammel/compare', 'POST', data),
     getFillCandidates: (projectId, materialId) =>
@@ -1555,8 +1557,9 @@ function renderSammelList() {
 }
 
 // Sammelplan eines Materials im Reiter Projekte auswählen (Link aus Teile-Tabelle)
-function selectSammelOfMaterial(matId) {
-    const s = (State.sammelPlans || []).find(x => x.sammel_material_id === matId);
+function selectSammelOfMaterial(matId, projId) {
+    const plans = (State.sammelPlans || []).filter(x => x.sammel_material_id === matId);
+    const s = plans.find(x => (x.mitglieder || []).includes(projId)) || plans[0];
     if (!s) return;
     selectProjectRow(s.id);
     document.querySelector(`#sammel-list tr[data-id="${s.id}"]`)?.scrollIntoView({ block: 'nearest' });
@@ -1617,7 +1620,7 @@ async function renderParts() {
 
     tbody.querySelectorAll('.part-sammel-link').forEach(btn => btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        selectSammelOfMaterial(parseInt(btn.dataset.sammelMat));
+        selectSammelOfMaterial(parseInt(btn.dataset.sammelMat), State.selectedProjectId);
     }));
     tbody.querySelectorAll('tr[data-id]').forEach(row => {
         row.addEventListener('click', () => selectPartRow(parseInt(row.dataset.id)));
@@ -1668,13 +1671,14 @@ async function renderSammelParts(sammel) {
     const detail = document.getElementById('sammel-detail');
     const mid = sammel.sammel_material_id;
     let info = null;
-    try { info = await Api.getSammel(mid); } catch { return; }
+    try { info = await Api.getSammel(mid, sammel.id); } catch { return; }
     if (State.selectedProjectId !== sammel.id) return;
     State.parts = [];
     State.selectedPartId = null;
 
     const mitglieder = new Set(sammel.mitglieder);
-    const kandidaten = info.kandidaten.map(k => ({ id: k.projekt_id, name: k.name, offen: k.offen }));
+    const kandidaten = info.kandidaten.map(k => ({ id: k.projekt_id, name: k.name, offen: k.offen,
+        anderer: k.anderer_sammel_id ? k.anderer_sammel : '' }));
     // Mitglieder ohne Teile in diesem Material stehen nicht unter den Kandidaten
     sammel.mitglieder.forEach(pid => {
         if (kandidaten.some(k => k.id === pid)) return;
@@ -1686,9 +1690,10 @@ async function renderSammelParts(sammel) {
     detail.innerHTML = `<p class="sammel-note">${escHtml(t('opt.material'))} <b>${escHtml(mat?.name || `#${mid}`)}</b> · ${escHtml(t('sammel.readonly'))}</p>
         <h4 class="fd-title fd-title--h6">${escHtml(t('sammel.members'))}</h4>
         <div class="sammel-members">${kandidaten.map(k => `<label>
-            <input type="checkbox" class="cs-checkbox sammel-member-check" data-pid="${k.id}"${mitglieder.has(k.id) ? ' checked' : ''}>
+            <input type="checkbox" class="cs-checkbox sammel-member-check" data-pid="${k.id}"${mitglieder.has(k.id) ? ' checked' : ''}${k.anderer ? ' disabled' : ''}>
             <button type="button" class="cs-link" data-goto="${k.id}">${escHtml(k.name)}</button>
-            <span class="sammel-note">${escHtml(t('sammel.col_open'))}: ${k.offen}</span></label>`).join('')}</div>`;
+            <span class="sammel-note">${k.anderer ? escHtml(t('sammel.in_other', { name: k.anderer }))
+                : `${escHtml(t('sammel.col_open'))}: ${k.offen}`}</span></label>`).join('')}</div>`;
 
     const rows = kandidaten.filter(k => mitglieder.has(k.id)).map(k => {
         const teile = (State.projects.find(p => p.id === k.id)?.teile || []).filter(tl => tl.material_id === mid);
@@ -1706,7 +1711,7 @@ async function renderSammelParts(sammel) {
     detail.querySelectorAll('.sammel-member-check').forEach(cb => cb.addEventListener('change', async () => {
         const ids = [...detail.querySelectorAll('.sammel-member-check:checked')].map(c => c.dataset.pid);
         if (!ids.length) { cb.checked = true; showToast(t('sammel.select_projects'), 'error'); return; }
-        try { await Api.setSammelMembers(String(mid), ids); } catch { cb.checked = !cb.checked; return; }
+        try { await Api.setSammelMembers(String(mid), ids, sammel.id); } catch { cb.checked = !cb.checked; return; }
         await renderProjects();
     }));
 }
@@ -1933,14 +1938,22 @@ function maxPerBar() {
 
 async function loadSammel(matId) {
     let info = null;
-    try { info = await Api.getSammel(matId); } catch { /* offline o.ä. */ }
+    const wahl = State.optSammelId;      // undefined = ältester, 0 = neuer Sammelplan
+    try { info = await Api.getSammel(matId, wahl); } catch { /* offline o.ä. */ }
+    if (!info && wahl) {                 // gewählter Sammelplan inzwischen gelöscht
+        State.optSammelId = undefined;
+        try { info = await Api.getSammel(matId); } catch { /* offline o.ä. */ }
+    }
     if (!info) { State.sammel = null; return; }
-    const alt = State.sammel?.material_id === matId ? State.sammel : null;
+    State.optSammelId = info.sammel_id;
+    storageSet('localStorage', 'cutstock_opt_sammel', String(info.sammel_id));
+    const alt = State.sammel?.material_id === matId && State.sammel?.sammel_id === info.sammel_id
+        ? State.sammel : null;
     // Auswahl: bisherige Haken behalten, sonst Mitglieder bzw. alle mit offenen Teilen
     const mitglieder = info.kandidaten.filter(k => k.mitglied).map(k => k.projekt_id);
     const auswahl = alt?.auswahl
         || new Set(mitglieder.length ? mitglieder
-            : info.kandidaten.filter(k => k.offen > 0).map(k => k.projekt_id));
+            : info.kandidaten.filter(k => k.offen > 0 && !k.anderer_sammel_id).map(k => k.projekt_id));
     State.sammel = { ...info, material_id: matId, auswahl, vergleich: null };
 }
 
@@ -1970,7 +1983,9 @@ function renderSammelPanel() {
             <span>&#128279; ${escHtml(t('sammel.in_plan_hint', { name }))}</span>
             <button id="btn-open-sammel" class="fd-button fd-button--compact" type="button">${escHtml(t('sammel.open'))}</button></div>` : '';
         document.getElementById('btn-open-sammel')?.addEventListener('click', () => {
-            setOptMode('material', matId);
+            const s = (State.sammelPlans || []).find(x => x.sammel_material_id === matId
+                && (x.mitglieder || []).includes(proj?.id));
+            setOptMode('material', matId, s?.id);
         });
         return;
     }
@@ -1978,8 +1993,19 @@ function renderSammelPanel() {
     el.classList.remove('hidden');
     const s = State.sammel;
     if (!s || s.material_id !== matId) { el.innerHTML = ''; return; }
+    // Mehrere Sammelpläne dieses Materials (oder ein neuer neben einem bestehenden): wählen
+    const plaene = s.sammelplaene || [];
+    const wahlHtml = plaene.length > 1 || (plaene.length && !s.sammel_id)
+        ? `<div class="form-group sammel-choose"><label class="fd-form-label" for="sammel-choose">${escHtml(t('sammel.choose'))}</label>
+            <select id="sammel-choose" class="cs-select">${plaene.map(x =>
+                `<option value="${x.sammel_id}"${x.sammel_id === s.sammel_id ? ' selected' : ''}>${escHtml(x.name)}</option>`).join('')}
+                <option value="0"${s.sammel_id ? '' : ' selected'}>${escHtml(t('sammel.new_option'))}</option></select></div>` : '';
+    const bindWahl = () => document.getElementById('sammel-choose')?.addEventListener('change', e => {
+        setOptMode('material', matId, parseInt(e.target.value));
+    });
     if (!s.kandidaten.length) {
-        el.innerHTML = `<p class="sammel-note">${escHtml(t('sammel.none'))}</p>`;
+        el.innerHTML = wahlHtml + `<p class="sammel-note">${escHtml(t('sammel.none'))}</p>`;
+        bindWahl();
         return;
     }
     const mat = State.materials.find(m => m.id === matId);
@@ -1988,8 +2014,9 @@ function renderSammelPanel() {
         const notes = [];
         if (k.mitglied) notes.push(t('sammel.member'));
         if (k.einzelplan === 'offen') notes.push(t('sammel.replaces_single'));
-        if (k.gesperrt > 0) notes.push(t('sammel.locked', { n: k.gesperrt }));
-        const disabled = k.offen <= 0 && !k.mitglied;
+        if (k.gesperrt > 0 && !k.anderer_sammel_id) notes.push(t('sammel.locked', { n: k.gesperrt }));
+        if (k.anderer_sammel_id) notes.push(t('sammel.in_other', { name: k.anderer_sammel }));
+        const disabled = (k.offen <= 0 && !k.mitglied) || !!k.anderer_sammel_id;
         return `<tr class="fd-table__row${disabled ? ' sammel-row-disabled' : ''}" data-pid="${k.projekt_id}">
             <td class="fd-table__cell"><input type="checkbox" class="cs-checkbox sammel-check"${s.auswahl.has(k.projekt_id) ? ' checked' : ''}${disabled ? ' disabled' : ''}></td>
             <td class="fd-table__cell">${escHtml(k.name)}</td>
@@ -1998,7 +2025,7 @@ function renderSammelPanel() {
             <td class="fd-table__cell sammel-note">${escHtml(notes.join(' · '))}</td>
         </tr>`;
     }).join('');
-    el.innerHTML = `
+    el.innerHTML = wahlHtml + `
         <h4 class="fd-title fd-title--h6">${escHtml(t('sammel.projects'))}</h4>
         <table class="fd-table"><thead class="fd-table__header"><tr class="fd-table__row">
             <th class="fd-table__cell"></th>
@@ -2018,6 +2045,7 @@ function renderSammelPanel() {
         document.getElementById('sammel-compare').innerHTML = '';
     }));
     document.getElementById('btn-sammel-compare')?.addEventListener('click', () => compareSammel());
+    bindWahl();
 }
 
 function sammelRequest() {
@@ -2028,6 +2056,7 @@ function sammelRequest() {
         blade_id: parseInt(document.getElementById('opt-blade')?.value),
         algorithm: document.getElementById('opt-algorithm')?.value || 'greedy',
         reste_zuerst: !!document.getElementById('opt-rests-first')?.checked,
+        sammel_id: s.sammel_id || 0,       // 0 = neuen Sammelplan anlegen
     };
 }
 
@@ -2072,7 +2101,9 @@ async function optimizeSammel() {
         (cur.schnittplaene || []).some(p => p.verbraucht);
     if (started && !(await confirmAsync(t('plan.reoptimize_started')))) return;
     const plan = await Api.optimizeSammel(sammelRequest());
+    State.optSammelId = plan.projekt_id;          // neu angelegt: jetzt dieser
     await loadSammel(s.material_id);
+    try { State.projects = await Api.getProjects(); } catch { /* ignore */ }
     State.sammel.auswahl = s.auswahl;
     State.sammel.vergleich = s.vergleich;
     renderSammelPanel();
@@ -2080,8 +2111,10 @@ async function optimizeSammel() {
     renderOptResults();
 }
 
-function setOptMode(mode, matId) {
+// sammelId (nur Material-Modus): welcher Sammelplan; 0 = neuer, weglassen = bisheriger
+function setOptMode(mode, matId, sammelId) {
     State.optMode = mode;
+    if (sammelId !== undefined) State.optSammelId = sammelId;
     storageSet('localStorage', 'cutstock_opt_mode', mode);
     State.optimizationResult = null;
     applyOptMode();
@@ -2329,7 +2362,10 @@ async function refreshWorklist() {
 function currentWork() {
     const matId = parseInt(document.getElementById('opt-material')?.value) || 0;
     if (State.optMode === 'material') {
-        const e = State.worklist.find(x => x.art === 'sammel' && x.materialien[0]?.material_id === matId);
+        // optSammelId gilt sofort beim Wechsel, State.sammel erst nach dem Laden
+        const sid = State.optSammelId ?? (State.sammel?.material_id === matId ? State.sammel.sammel_id : 0);
+        const e = State.worklist.find(x => x.art === 'sammel' && x.projekt_id === sid
+            && x.materialien[0]?.material_id === matId);
         return { entry: e || null, line: e?.materialien[0] || null };
     }
     const pid = parseInt(document.getElementById('opt-project')?.value) || 0;
@@ -2363,7 +2399,7 @@ function renderWorklist() {
     const cur = currentWork();
     const zeile = (e, z, nurMaterial) => `<div class="wl-row${cur.entry === e && cur.line === z ? ' selected' : ''}"
         data-pid="${e.projekt_id}" data-mid="${z.material_id}" data-art="${e.art}" data-status="${z.status}"
-        data-job="${z.auftraege?.[0]?.projekt_id || ''}" role="button" tabindex="0">
+        data-job="${z.auftraege?.[0]?.projekt_id || ''}" data-sammel="${e.art === 'sammel' ? e.projekt_id : (z.sammelplan_id || '')}" role="button" tabindex="0">
         <span class="wl-name">${escHtml(nurMaterial ? z.material : e.name)}${nurMaterial || e.art === 'sammel' ? ''
             : `<span class="wl-sub">${escHtml(z.material)}</span>`}</span>${wlStatusHtml(z)}</div>`;
     const eintrag = e => {
@@ -2396,7 +2432,9 @@ function renderWorklist() {
             }
             const mid = parseInt(row.dataset.mid);
             // Im Sammelplan bzw. Sägeauftrag: die Zeile führt dorthin
-            if (row.dataset.art === 'sammel' || row.dataset.status === 'sammel') setOptMode('material', mid);
+            if (row.dataset.art === 'sammel' || row.dataset.status === 'sammel') {
+                setOptMode('material', mid, parseInt(row.dataset.sammel) || undefined);
+            }
             else if (row.dataset.status === 'verplant' && row.dataset.job) selectWork(parseInt(row.dataset.job), mid);
             else selectWork(parseInt(row.dataset.pid), mid);
         };
@@ -2502,9 +2540,10 @@ function renderOptHead() {
 // „Zusammen sägen?“: Sammelplan mit den Projekten anlegen und auswählen
 async function createSammelFromHint(projId, line) {
     const ids = [projId, ...line.auch_in.map(r => r.projekt_id)].map(String);
-    try { await Api.createSammel({ material: String(line.material_id), projekte: ids }); } catch { return; }
+    let neu;
+    try { neu = await Api.createSammel({ material: String(line.material_id), projekte: ids }); } catch { return; }
     await renderProjects();
-    setOptMode('material', line.material_id);
+    setOptMode('material', line.material_id, neu.id);
     refreshWorklist();
 }
 
@@ -3975,9 +4014,8 @@ function restartSammel(sammel) {
     const projekte = sammel.mitglieder
         .map(id => State.projects.find(p => p.id === id)?.name).filter(Boolean).join(', ');
     openConfirmDialog(t('sammel.restart_confirm', { name: sammel.name, projekte, material }), async () => {
-        try { await Api.restartSammel(sammel.sammel_material_id); } catch { return; }
-        if (State.optMode === 'material'
-            && parseInt(document.getElementById('opt-material')?.value) === sammel.sammel_material_id) {
+        try { await Api.restartSammel(sammel.sammel_material_id, sammel.id); } catch { return; }
+        if (State.optMode === 'material' && optProjId() === sammel.id) {
             clearOptResult();
         }
         await renderProjects();
@@ -5372,7 +5410,7 @@ function openProjectDialog(project = null) {
 // ----- Sammelpläne im Reiter Projekte -----
 
 // Neuer Sammelplan: Material wählen, dann Projekte mit offenen Teilen ankreuzen.
-// Gibt es für das Material schon einen, wird der bestehende geöffnet.
+// Hat das Material schon Sammelpläne, wahlweise zu einem davon hinzufügen.
 function openSammelNewDialog() {
     const overlay = document.getElementById('modal-overlay');
     const body = document.getElementById('modal-body');
@@ -5396,27 +5434,41 @@ function openSammelNewDialog() {
                 return `<option value="${m.id}">${escHtml(m.name)} (${escHtml(t(n === 1 ? 'sammel.one_project' : 'sammel.n_projects', { n }))})</option>`;
             }).join('')}</select>
         </div>
+        <div id="sn-target" class="form-group"></div>
         <div class="form-group">
             <label class="fd-form-label">${escHtml(t('sammel.projects'))}</label>
             <div id="sn-projects" class="sammel-dialog-projects"></div>
         </div>`;
     const matSel = body.querySelector('#sn-material');
     const liste = body.querySelector('#sn-projects');
+    const zielBox = body.querySelector('#sn-target');
+    // Gibt es schon Sammelpläne für das Material: neuen anlegen (Standard) oder Projekte zu
+    // einem noch nicht angefangenen hinzufügen. Projekte in einem anderen Sammelplan
+    // dieses Materials sind nicht wählbar (sonst würden Teile doppelt gesägt).
     const ladeProjekte = async () => {
         const mid = parseInt(matSel.value);
-        const vorhanden = State.sammelPlans.find(x => x.sammel_material_id === mid);
-        if (vorhanden) {
-            liste.innerHTML = `<p class="sammel-note">${escHtml(t('sammel.exists', { name: vorhanden.name }))}</p>`;
-            return;
-        }
         liste.innerHTML = '…';
+        zielBox.innerHTML = '';
         let info = null;
-        try { info = await Api.getSammel(mid); } catch { liste.innerHTML = ''; return; }
+        try { info = await Api.getSammel(mid, 0); } catch { liste.innerHTML = ''; return; }
         if (parseInt(matSel.value) !== mid) return;
-        liste.innerHTML = info.kandidaten.map(k => `<label>
-            <input type="checkbox" class="cs-checkbox" value="${k.projekt_id}"${k.offen > 0 ? ' checked' : ' disabled'}>
-            ${escHtml(k.name)} <span class="sammel-note">${escHtml(t('sammel.col_open'))}: ${k.offen}</span></label>`).join('')
-            || `<p class="sammel-note">${escHtml(t('sammel.none'))}</p>`;
+        const plaene = info.sammelplaene || [];
+        if (plaene.length) {
+            zielBox.innerHTML = `<label class="fd-form-label">${escHtml(t('sammel.target'))}</label>
+                <label class="opt-check sammel-target"><input type="radio" name="sn-ziel" value="0" checked>
+                    <span>${escHtml(t('sammel.create_new'))}</span></label>
+                ${plaene.map(x => `<label class="opt-check sammel-target"><input type="radio" name="sn-ziel" value="${x.sammel_id}"${x.angefangen ? ' disabled' : ''}>
+                    <span>${escHtml(t('sammel.add_to', { name: x.name }))}${x.angefangen
+                        ? ` <span class="sammel-note">(${escHtml(t('sammel.started_no_add'))})</span>` : ''}</span></label>`).join('')}`;
+        }
+        liste.innerHTML = info.kandidaten.map(k => {
+            const frei = k.offen > 0 && !k.anderer_sammel_id;
+            const note = k.anderer_sammel_id ? t('sammel.in_other', { name: k.anderer_sammel })
+                : `${t('sammel.col_open')}: ${k.offen}`;
+            return `<label>
+            <input type="checkbox" class="cs-checkbox" value="${k.projekt_id}"${frei ? ' checked' : ' disabled'}>
+            ${escHtml(k.name)} <span class="sammel-note">${escHtml(note)}</span></label>`;
+        }).join('') || `<p class="sammel-note">${escHtml(t('sammel.none'))}</p>`;
     };
     matSel.addEventListener('change', ladeProjekte);
     ladeProjekte();
@@ -5428,13 +5480,19 @@ function openSammelNewDialog() {
     overlay.classList.add('active');
     saveBtn.onclick = async () => {
         const mid = parseInt(matSel.value);
-        const vorhanden = State.sammelPlans.find(x => x.sammel_material_id === mid);
-        let ziel = vorhanden;
-        if (!vorhanden) {
-            const ids = [...liste.querySelectorAll('input:checked')].map(cb => cb.value);
-            if (!ids.length) { showToast(t('sammel.select_projects'), 'error'); return; }
-            try { ziel = await Api.createSammel({ material: String(mid), projekte: ids }); } catch { return; }
-        }
+        const ids = [...liste.querySelectorAll('input:checked')].map(cb => cb.value);
+        if (!ids.length) { showToast(t('sammel.select_projects'), 'error'); return; }
+        const zielId = parseInt(zielBox.querySelector('input[name="sn-ziel"]:checked')?.value) || 0;
+        let ziel;
+        try {
+            if (zielId) {
+                const alt = State.sammelPlans.find(x => x.id === zielId);
+                const alle = [...new Set([...(alt?.mitglieder || []).map(String), ...ids])];
+                ziel = await Api.setSammelMembers(String(mid), alle, zielId);
+            } else {
+                ziel = await Api.createSammel({ material: String(mid), projekte: ids });
+            }
+        } catch { return; }
         closeModal();
         State.selectedProjectId = ziel.id;
         await renderProjects();
@@ -5470,7 +5528,7 @@ function deleteSammel(sammel) {
 // „Optimieren“: in die Optimierung (Material-Modus) mit diesem Sammelplan
 function optimizeSelectedSammel(sammel) {
     document.querySelector('.tab-btn[data-tab="optimization"]')?.click();
-    setOptMode('material', sammel.sammel_material_id);
+    setOptMode('material', sammel.sammel_material_id, sammel.id);
 }
 
 // Projekt als JSON exportieren – Format kompatibel mit der Desktop-App
@@ -7065,6 +7123,8 @@ async function init() {
 
         State.optMode = storageGet('localStorage', 'cutstock_opt_mode') === 'material'
             ? 'material' : 'project';
+        const sid = parseInt(storageGet('localStorage', 'cutstock_opt_sammel'));
+        State.optSammelId = Number.isFinite(sid) && sid > 0 ? sid : undefined;
         initEvents();
         renderMaterials();
         renderSettings();

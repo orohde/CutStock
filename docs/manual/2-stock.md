@@ -61,6 +61,8 @@ location label shows the name in large type, the materials below it, and a QR co
 
 ## Scanning QR codes
 
+![Scan view on the phone](../screenshot_scan_en.png)
+
 Piece and location labels carry a **QR code** (can be switched off under
 [Settings → Labels & printer](6-settings.md#qr-codes)). Scanned with a phone camera, CutStock
 opens in the browser – no app needed:

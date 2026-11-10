@@ -51,7 +51,9 @@ gedruckt wird.
 40 cm, dann der nächste) mit gestrichelten Schnittmarken. Das spart Band, denn P-touch-Geräte
 lassen vor jedem einzelnen Druck etwa 2 cm stehen.
 
-## Direkt drucken (Brother P-touch)
+## Direkt drucken (Brother P-touch und QL)
+
+![Etiketten & Drucker: Druckbrücke, Direktdruck, Netzwerkdrucker](../screenshot_drucker.png)
 
 Für den **Brother PT-P710BT** (P-touch Cube Plus) gibt es am Mac keinen Druckertreiber, nur
 Brothers eigene Apps. CutStock steuert den Drucker deshalb selbst an – ohne PDF und ohne
@@ -85,7 +87,7 @@ Einen **Brother QL-800/810W/820NWB** im Netzwerk spricht CutStock direkt an – 
 Docker-Instanz, ohne Treiber und ohne Druckbrücke:
 
 1. Unter Einstellungen → Etiketten & Drucker bei **Netzwerkdrucker (Brother QL)** die Adresse
-   eintragen, am besten die **IP-Adresse** (z. B. `10.10.30.96`; die Docker-Instanz kennt
+   eintragen, am besten die **IP-Adresse** (z. B. `192.168.1.50`; die Docker-Instanz kennt
    „….local“-Namen nicht). **Prüfen** zeigt dann z. B. „QL-820NWB, 29 mm endlos eingelegt“.
 2. **Direkt drucken** einschalten.
 

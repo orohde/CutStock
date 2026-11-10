@@ -93,11 +93,11 @@ Anfragen von der eigenen Web-Oberfläche (Same-Origin) und von localhost sind im
 | POST | `/api/plans/{id}/confirm-all` | Alle offenen Stücke des Plans als gesägt markieren |
 | DELETE | `/api/plans/{id}` | Plan verwerfen (gibt reservierte Stücke frei) |
 | GET | `/api/projects/{id}/fill-candidates/{material_id}` | Mögliche Füllteile aus anderen Projekten |
-| GET | `/api/sammel/{material_id}` | Sammelplan-Status und mögliche Projekte |
-| POST | `/api/sammel` | Sammelplan anlegen (Material und Projekte, noch ohne Schnittplan) |
-| PUT | `/api/sammel/{id oder Kuerzel}/members` | Mitglieder des Sammelplans eines Materials ersetzen |
-| POST | `/api/sammel/{id oder Kuerzel}/restart` | Sammelplan neu starten (Teile dieses Materials in allen Mitgliedern wieder offen, Pläne weg, Lager bleibt) |
-| POST | `/api/sammel/optimize` | Sammelplan anlegen/ersetzen und berechnen |
+| GET | `/api/sammel/{material_id}` | Sammelplan und mögliche Projekte; `?sammel_id=` wählt einen von mehreren, `?sammel_id=0` zeigt die Kandidaten für einen neuen; `sammelplaene` listet alle des Materials |
+| POST | `/api/sammel` | Sammelplan anlegen (Material und Projekte, noch ohne Schnittplan); auch ein weiterer für dasselbe Material |
+| PUT | `/api/sammel/{id oder Kuerzel}/members` | Mitglieder des Sammelplans eines Materials ersetzen (bei mehreren `?sammel_id=`) |
+| POST | `/api/sammel/{id oder Kuerzel}/restart` | Sammelplan neu starten (Teile dieses Materials in allen Mitgliedern wieder offen, Pläne weg, Lager bleibt; bei mehreren `?sammel_id=`) |
+| POST | `/api/sammel/optimize` | Sammelplan berechnen; `sammel_id` wählt ihn, `0` legt einen neuen an, ohne Angabe der einzige des Materials |
 | GET | `/api/parts` | Teile aller Projekte mit Verplanung: `beauftragt`, `auftraege`, `verplant`, `sammelplan`, `verfuegbar` (Reiter "Teile") |
 | GET | `/api/parts/materials` | Verfügbare Teile je Material mit grober Lager-Schätzung (`bedarf`, `lager`, `reicht`, `fehlt_stueck`) |
 | POST | `/api/parts/{id}/take-stock` | Fertigteile eines Teils als gesägt übernehmen `{"anzahl": 0}` (0 = so viele wie möglich) |
@@ -111,8 +111,14 @@ Anfragen von der eigenen Web-Oberfläche (Same-Origin) und von localhost sind im
 | GET | `/api/labels/preview?format=` | Musteretikett: Größe und Textpositionen wie im PDF |
 | POST | `/api/labels/pieces` | Etiketten für Lagerstücke (Auswahl per Code, Lagerort, Material, Filter; `lagerort_etikett` = Ortsetikett vorneweg) |
 | POST | `/api/labels/locations` | Etiketten für Lagerorte `{"orte": ["Regal 3"]}` (leer = alle) |
-| GET | `/api/printer` | Direktdruck: Drucker gefunden?, Modell, eingelegtes Band (`band_mm`), Fehler |
-| POST | `/api/printer/test` | Testetikett auf den angeschlossenen Drucker |
+| GET | `/api/printer` | Direktdruck: Drucker gefunden?, Modell, eingelegtes Band (`band_mm`), Fehler; `?drucker=ql` = Brother QL im Netzwerk |
+| GET | `/api/printers` | Alle eingerichteten Direktdrucker (P-touch, QL) mit Status, Standarddrucker zuerst |
+| POST | `/api/printer/test` | Testetikett (`?drucker=ptouch\|ql`, `?schaetzung=true` = nur Bandverbrauch) |
+| GET | `/api/printer/jobs/{id}` | Stand eines Druckauftrags über die Druckbrücke |
+| POST | `/api/printer/bridge/pair` | Druckbrücke koppeln: neuer Kopplungscode |
+| DELETE | `/api/printer/bridge/pair` | Druckbrücke trennen |
+| POST | `/api/printer/bridge/poll?wait=25` | Nur für die Druckbrücke: Status melden, Auftrag abholen (Kopf `X-CutStock-Bridge`) |
+| POST | `/api/printer/bridge/jobs/{id}/result` | Nur für die Druckbrücke: Ergebnis eines Auftrags melden |
 | **System** | | |
 | GET | `/api/version` | App-Version und Links |
 | GET | `/api/license` | Lizenzstatus |
@@ -158,7 +164,9 @@ Das verwendete Sägeblatt wird zum Standard-Sägeblatt des Materials (`saegeblat
    "auch_in": [{"projekt_id": 8, "name": "CNC-Fräse"}]}]}
 ```
 
-`status`: `kein_plan`, `bereit`, `in_arbeit`, `veraltet`, `fertig`, `sammel` (Material wird im Sammelplan `sammelplan_id` gesägt) oder `verplant` (alles Offene steckt in Sägeaufträgen oder anderen Plänen). Bei `verplant` nennt `auftraege` die Sägeaufträge (`projekt_id`, `name`), in denen die offenen Teile stecken. `auch_in` nennt andere Projekte mit offenen Teilen in diesem Material, solange es noch keinen Sammelplan gibt (Vorschlag „zusammen sägen?“ → `POST /api/sammel`). Fertige Zeilen und Einträge fehlen, außer mit `?fertige=true`.
+`status`: `kein_plan`, `bereit`, `in_arbeit`, `veraltet`, `fertig`, `sammel` (Material wird im Sammelplan `sammelplan_id` gesägt) oder `verplant` (alles Offene steckt in Sägeaufträgen oder anderen Plänen). Bei `verplant` nennt `auftraege` die Sägeaufträge (`projekt_id`, `name`), in denen die offenen Teile stecken. `auch_in` nennt andere Projekte mit offenen Teilen in diesem Material, die noch in keinem Sammelplan stecken (Vorschlag „zusammen sägen?“ → `POST /api/sammel`). Fertige Zeilen und Einträge fehlen, außer mit `?fertige=true`.
+
+**Mehrere Sammelpläne je Material:** Ein Projekt steckt je Material nur in einem Sammelplan – sonst `409` mit `code: "projekt_in_sammel"`, `sammel_id` und `sammel`. Hat ein Material mehrere Sammelpläne und fehlt `sammel_id`, kommt `409` mit `code: "sammel_mehrdeutig"` und der Liste `sammelplaene`. Jeder Sammelplan rechnet mit dem Lager, das die anderen nicht reservieren. Der Name wird automatisch vergeben: „Sammelplan <Material>“, dann „… 2“.
 
 ## Lager-Befehle
 

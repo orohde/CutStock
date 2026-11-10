@@ -77,6 +77,7 @@ EN = {
     "Schuhregal Buche": "Beech shoe rack",
     "Regalleiste": "Shelf batten",
     "Stütze": "Support",
+    "Werkstatt-Mac": "Workshop Mac",
 }
 
 
@@ -482,6 +483,42 @@ def shoot(ids: dict):
         page.evaluate("document.activeElement && document.activeElement.blur()")
         page.wait_for_timeout(400)
         page.screenshot(path=shot("einstellungen"))
+
+        # 9) Einstellungen: Drucker – QR-Adresse, gekoppelte Druckbrücke (simuliert: meldet
+        # einen PT-P710BT mit 12-mm-Band), Direktdruck an
+        api("PUT", "/api/settings", {"label_qr_base": "https://cutstock.example.com",
+                                     "printer_direct": True, "label_format": "a4_3x8"})
+        code = api("POST", "/api/printer/bridge/pair")["schluessel"]
+        req = urllib.request.Request(
+            BASE + "/api/printer/bridge/poll?wait=0", method="POST",
+            data=json.dumps({"name": tr("Werkstatt-Mac"), "version": "2026.11.19",
+                             "gefunden": True, "modell": "PT-P710BT", "band_mm": 12,
+                             "medium": "laminiert"}).encode(),
+            headers={"Content-Type": "application/json", "X-CutStock-Bridge": code})
+        urllib.request.urlopen(req).read()
+        page.set_viewport_size({"width": 1280, "height": 900})
+        page.reload()
+        page.wait_for_selector('.tab-btn[data-tab="settings"]')
+        page.wait_for_timeout(800)
+        page.click('.tab-btn[data-tab="settings"]')
+        page.click('.set-nav-item[data-group="etiketten"]')
+        page.wait_for_function("document.getElementById('printer-status')?.textContent.includes('PT-P710BT')")
+        page.wait_for_function("document.getElementById('ql-status')?.textContent.length > 0")
+        page.evaluate("""document.querySelector('[for=settings-label-qr]')
+                         ?.closest('.set-row')?.scrollIntoView({block: 'start'})""")
+        page.evaluate("document.activeElement && document.activeElement.blur()")
+        hide_toasts(page)
+        page.wait_for_timeout(400)
+        page.screenshot(path=shot("drucker"))
+
+        # 10) Scan-Ansicht fürs Handy: QR-Code eines Stücks gescannt
+        handy = browser.new_page(viewport={"width": 390, "height": 760}, device_scale_factor=3)
+        handy.goto(BASE + "/?s=EI18-01")
+        handy.wait_for_selector("#scan-view:not([hidden]) .scan-card",
+                                timeout=15000)
+        handy.wait_for_timeout(700)
+        hide_toasts(handy)
+        handy.screenshot(path=shot("scan"))
 
         browser.close()
 

@@ -36,14 +36,20 @@ ein schon berechneter Sammelplan gilt danach als veraltet.
 ## Sammelpläne
 
 Ein Sammelplan sägt die Teile mehrerer Projekte aus **einem Material** gemeinsam – das spart
-oft ganze Stangen oder Platten. Je Material gibt es höchstens einen Sammelplan. Die Einträge im
-Kasten „Sammelpläne“ tragen ein 🔗 und das Etikett „Sammelplan“.
+oft ganze Stangen oder Platten. Ein Material kann **mehrere** Sammelpläne haben, z. B. einen für
+die Projekte dieser Woche und später einen weiteren: Jeder rechnet mit dem Lager, das die anderen
+nicht schon reserviert haben. Ein Projekt steckt je Material aber nur in **einem** Sammelplan,
+sonst würden seine Teile doppelt gesägt. Die Einträge im Kasten „Sammelpläne“ tragen ein 🔗 und
+das Etikett „Sammelplan“.
 
 ![Sammelplan im Reiter Projekte](../screenshot_sammelplaene.png)
 
 - **Neu**: Material wählen, dann die Projekte mit offenen Teilen in diesem Material ankreuzen.
-  Hat das Material schon einen Sammelplan, wird dieser geöffnet. Der Name lautet
-  „Sammelplan“ plus Materialname, z. B. „Sammelplan Buchenleiste 20x40“.
+  Projekte, die schon in einem anderen Sammelplan dieses Materials stecken, sind ausgegraut
+  („in ‚Sammelplan …‘“). Hat das Material schon Sammelpläne, wählst du: **neuen Sammelplan
+  anlegen** (Standard) oder die Projekte **zu einem bestehenden hinzufügen** – das geht nur,
+  solange dort noch nichts gesägt ist. Der Name lautet „Sammelplan“ plus Materialname, z. B.
+  „Sammelplan Buchenleiste 20x40“, weitere heißen „… 2“, „… 3“.
 - **Bearbeiten**: umbenennen.
 - **Ausgewählt** zeigt der rechte Kasten die Mitglieder mit Häkchen (dort ändern) und darunter
   ihre Teile in diesem Material, nach Projekt gruppiert und nur zur Ansicht. Projektnamen sind

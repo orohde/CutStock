@@ -50,8 +50,8 @@ und das Menü **Mehr** mit *Neu berechnen*, *Alles als gesägt markieren…* (mi
 **Projekt neu starten** (Fortschritt auf 0, Pläne weg, Lager bleibt) steht im Reiter
 [Projekte](3-projekte.md).
 
-Wird das Material des gewählten Projekts auch in anderen Projekten gebraucht und gibt es noch
-keinen Sammelplan, erscheint der Hinweis „… wird auch in ‚X‘ gebraucht – zusammen sägen?“.
+Wird das Material des gewählten Projekts auch in anderen Projekten gebraucht, die noch in keinem
+Sammelplan stecken, erscheint der Hinweis „… wird auch in ‚X‘ gebraucht – zusammen sägen?“.
 **Sammelplan anlegen** legt ihn mit diesen Projekten an und wählt ihn aus.
 
 ### Einstellungen
@@ -123,7 +123,10 @@ Wird dasselbe Material in mehreren Projekten gebraucht, sägt ein Sammelplan sie
 steht oben in der Arbeitsliste; gewählt zeigt er seine Projekte mit Häkchen. **Vergleichen** zeigt
 die Ersparnis gegenüber getrennten Plänen, **Schnittplan berechnen** rechnet die angehakten
 Projekte zusammen. Jedes Projekt bekommt eine eigene Farbe; abgehakte Teile zählen in ihrem
-Projekt. Anlegen, umbenennen, Mitglieder ändern und löschen geht auch im Reiter
+Projekt. Hat das Material mehrere Sammelpläne, wählst du oben im Kasten, welcher gemeint ist;
+**+ Neuer Sammelplan** rechnet die angehakten Projekte als weiteren Sammelplan mit dem übrigen
+Lager. Projekte aus einem anderen Sammelplan dieses Materials sind dort nicht wählbar. Anlegen,
+umbenennen, Mitglieder ändern und löschen geht auch im Reiter
 [Projekte](3-projekte.md#sammelpläne), Kasten „Sammelpläne“.
 
 ![Sammelplan](../screenshot_sammelplan.png)

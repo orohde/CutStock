@@ -1860,20 +1860,27 @@ def parts_by_material():
         if x.verfuegbar > 0:
             je_mat.setdefault(x.material_id, []).append(x)
     erg = []
+    reservierung = _lager_einstellungen()["reservierung"]
     for mid, teile in je_mat.items():
         m = db.get_material(mid)
         if not m:
             continue
         stange = m.typ == MaterialTyp.STANGE
         rand = 2 * (m.besaeumung or 0)
+        # Was gespeicherte Pläne (Sägeaufträge, Sammelpläne …) reservieren, ist nicht frei
+        belegt: dict[int, int] = {}
+        if reservierung:
+            for ls_id, _nr in db.reservierte_stuecke(mid):
+                belegt[ls_id] = belegt.get(ls_id, 0) + 1
+        frei = [(ls, max(0, ls.stueckzahl - belegt.get(ls.id, 0)))
+                for ls in db.list_lagerstuecke(mid)]
         if stange:
             bedarf = sum((x.laenge + kerf) * x.verfuegbar for x in teile)
-            groessen = [(max(0.0, ls.laenge - rand), ls.stueckzahl)
-                        for ls in db.list_lagerstuecke(mid)]
+            groessen = [(max(0.0, ls.laenge - rand), n) for ls, n in frei if n]
         else:
             bedarf = sum(x.laenge * x.breite * x.verfuegbar for x in teile)
-            groessen = [(max(0.0, ls.laenge - rand) * max(0.0, ls.breite - rand), ls.stueckzahl)
-                        for ls in db.list_lagerstuecke(mid)]
+            groessen = [(max(0.0, ls.laenge - rand) * max(0.0, ls.breite - rand), n)
+                        for ls, n in frei if n]
         lager = sum(g * n for g, n in groessen)
         groesste = max((g for g, _ in groessen), default=0.0)
         if not groesste:   # leeres Lager: nach dem Teil schätzen
@@ -2467,12 +2474,23 @@ class SammelKandidatOut(BaseModel):
     gesperrt: int = 0       # Stück, die ungesägt in einem anderen Plan liegen
     einzelplan: str = ""    # "" | "offen" (nicht angefangen) | "angefangen"
     mitglied: bool = False
+    # Mitglied eines anderen Sammelplans dieses Materials → hier nicht wählbar
+    anderer_sammel_id: int = 0
+    anderer_sammel: str = ""
+
+
+class SammelRefOut(BaseModel):
+    sammel_id: int
+    name: str
+    mitglieder: int
+    angefangen: bool = False     # schon etwas gesägt
 
 
 class SammelOut(BaseModel):
-    sammel_id: int = 0      # 0 = noch kein Sammelplan für dieses Material
+    sammel_id: int = 0      # 0 = (noch) kein Sammelplan gewählt bzw. neuer
     name: str = ""
     kandidaten: list[SammelKandidatOut] = []
+    sammelplaene: list[SammelRefOut] = []   # alle Sammelpläne dieses Materials
 
 
 class SammelRequest(BaseModel):
@@ -2481,6 +2499,9 @@ class SammelRequest(BaseModel):
     blade_id: int
     algorithm: str = "greedy"
     reste_zuerst: bool = False
+    # None = der einzige Sammelplan des Materials (bzw. neu, wenn es keinen gibt);
+    # 0 = neuen Sammelplan anlegen; sonst dieser Sammelplan
+    sammel_id: Optional[int] = None
 
 
 class VergleichOut(BaseModel):
@@ -2529,21 +2550,74 @@ def _sammel_teile(db: Database, material: Material, projekt_ids: list[int],
     return teile, offen
 
 
+def _sammel_waehlen(db: Database, material: Material, sammel_id: Optional[int]
+                    ) -> Projekt | None:
+    """Sammelplan eines Materials: per ID, oder ohne ID der einzige vorhandene.
+    None = keiner (neu). Mehrere ohne ID → 409 sammel_mehrdeutig mit der Liste."""
+    if sammel_id == 0:
+        return None
+    if sammel_id is not None:
+        s = db.get_projekt(sammel_id)
+        if not s or s.art != "sammel" or s.sammel_material_id != material.id:
+            raise _fehler(404, "sammel_unbekannt",
+                          f"Combined plan {sammel_id} not found for “{material.name}”")
+        return s
+    liste = db.sammel_liste(material.id)
+    if len(liste) > 1:
+        raise _fehler(409, "sammel_mehrdeutig",
+                      f"“{material.name}” has several combined plans; give sammel_id",
+                      sammelplaene=[{"sammel_id": s.id, "name": s.name} for s in liste])
+    return liste[0] if liste else None
+
+
+def _sammel_exklusiv(db: Database, material: Material, projekt_ids: list[int],
+                     sammel_id: int):
+    """Ein Projekt steckt je Material in höchstens einem Sammelplan (sonst doppelt gesägt)."""
+    belegt = db.sammel_mitglied_in(material.id)
+    for pid in projekt_ids:
+        sid, name = belegt.get(pid, (0, ""))
+        if sid and sid != sammel_id:
+            pr = db.get_projekt(pid)
+            raise _fehler(409, "projekt_in_sammel",
+                          f"“{pr.name if pr else pid}” is already in combined plan “{name}”",
+                          projekt_id=pid, sammel_id=sid, sammel=name)
+
+
+def _sammel_name(db: Database, material: Material) -> str:
+    """„Sammelplan Alu“, dann „Sammelplan Alu 2“, „… 3“ (erster freier Name)."""
+    basis = f"Sammelplan {material.name}"
+    namen = {s.name for s in db.sammel_liste(material.id)}
+    if basis not in namen:
+        return basis
+    n = 2
+    while f"{basis} {n}" in namen:
+        n += 1
+    return f"{basis} {n}"
+
+
 def _verbrauch(erg: OptimierungsErgebnis, is_1d: bool) -> float:
     return sum(sp.lager_laenge if is_1d else sp.lager_laenge * sp.lager_breite
                for sp in erg.schnittplaene)
 
 
 @app.get("/api/sammel/{mid}", response_model=SammelOut)
-def get_sammel(mid: int):
-    """Sammelplan-Status eines Materials und alle Projekte, die mitmachen können."""
+def get_sammel(mid: int, sammel_id: Optional[int] = None):
+    """Sammelplan eines Materials und alle Projekte, die mitmachen können.
+
+    ?sammel_id=… wählt einen von mehreren Sammelplänen, ?sammel_id=0 zeigt die Kandidaten
+    für einen neuen. Ohne Angabe: der älteste. sammelplaene listet alle des Materials."""
     db = get_db()
     material = db.get_material(mid)
     if not material:
         raise HTTPException(404, "Material not found")
     is_1d = material.typ == MaterialTyp.STANGE
-    sammel = db.get_sammel(mid)
+    alle = db.sammel_liste(mid)
+    if sammel_id is None:
+        sammel = alle[0] if alle else None
+    else:
+        sammel = _sammel_waehlen(db, material, sammel_id)
     sammel_id = sammel.id if sammel else 0
+    belegt = db.sammel_mitglied_in(mid)
     mitglieder = set(db.sammel_mitglieder(sammel_id)) if sammel else set()
     # Gesperrt = ungesägt in Plänen außer dem Sammelplan und dem eigenen, nicht
     # angefangenen Einzelplan (den verwirft das Optimieren)
@@ -2565,12 +2639,24 @@ def get_sammel(mid: int):
             bedarf += n * (t.laenge if is_1d else t.laenge * t.breite)
         if offen == 0 and gesperrt == 0 and pr.id not in mitglieder:
             continue
+        anderer = belegt.get(pr.id, (0, ""))
+        if anderer[0] == sammel_id:
+            anderer = (0, "")
         kandidaten.append(SammelKandidatOut(
-            projekt_id=pr.id, name=pr.name, offen=offen, bedarf=bedarf, gesperrt=gesperrt,
+            projekt_id=pr.id, name=pr.name, offen=0 if anderer[0] else offen,
+            bedarf=0.0 if anderer[0] else bedarf, gesperrt=gesperrt,
             einzelplan="angefangen" if angefangen else ("offen" if einzel else ""),
-            mitglied=pr.id in mitglieder))
+            mitglied=pr.id in mitglieder,
+            anderer_sammel_id=anderer[0], anderer_sammel=anderer[1]))
+    refs = []
+    for s in alle:
+        plan = db.get_plan(s.id, mid)
+        refs.append(SammelRefOut(
+            sammel_id=s.id, name=s.name, mitglieder=len(db.sammel_mitglieder(s.id)),
+            angefangen=bool(plan and any(st.gesaegt for b in plan.bretter
+                                         for st in b.stuecke))))
     return SammelOut(sammel_id=sammel_id, name=sammel.name if sammel else "",
-                     kandidaten=kandidaten)
+                     kandidaten=kandidaten, sammelplaene=refs)
 
 
 class SammelCreateIn(BaseModel):
@@ -2599,27 +2685,27 @@ def _mitglieder_ref(db: Database, refs: list[str]) -> list[int]:
 def create_sammel(data: SammelCreateIn):
     """Sammelplan anlegen (noch ohne Schnittplan – gerechnet wird mit /api/sammel/optimize).
 
-    Je Material gibt es höchstens einen; ist schon einer da, kommt 409 mit seiner ID.
+    Ein Material darf mehrere Sammelpläne haben; jeder rechnet mit dem Lager, das die
+    anderen nicht reserviert haben. Ein Projekt steckt je Material aber nur in einem
+    (sonst 409 projekt_in_sammel). Ohne Name: „Sammelplan <Material>“, dann „… 2“.
     """
     db = get_db()
     material = _material_ref(db, data.material)
-    if alt := db.get_sammel(material.id):
-        raise _fehler(409, "sammel_vorhanden",
-                      f"“{material.name}” already has a combined plan", sammel_id=alt.id)
     ids = _mitglieder_ref(db, data.projekte)
-    sammel = db.sammel_anlegen(material.id, data.name.strip() or f"Sammelplan {material.name}")
+    _sammel_exklusiv(db, material, ids, 0)
+    sammel = db.sammel_anlegen(material.id, data.name.strip() or _sammel_name(db, material))
     db.sammel_mitglieder_setzen(sammel.id, ids)
     return _projekt_to_out(db.get_projekt(sammel.id))
 
 
 @app.post("/api/sammel/{material}/restart", response_model=ProjectOut)
-def restart_sammel(material: str):
+def restart_sammel(material: str, sammel_id: Optional[int] = None):
     """Sammelplan noch einmal sägen: In allen Mitglieds-Projekten geht der Fortschritt
     der Teile dieses Materials auf 0, der Sammelplan und die Einzelpläne der Mitglieder
     für dieses Material werden gelöscht. Andere Materialien und das Lager bleiben."""
     db = get_db()
     mat = _material_ref(db, material)
-    sammel = db.get_sammel(mat.id)
+    sammel = _sammel_waehlen(db, mat, sammel_id or None)
     if not sammel:
         raise _fehler(404, "sammel_unbekannt", f"“{mat.name}” has no combined plan")
     db.sammel_neu_starten(sammel.id, mat.id)
@@ -2627,16 +2713,19 @@ def restart_sammel(material: str):
 
 
 @app.put("/api/sammel/{material}/members", response_model=ProjectOut)
-def set_sammel_members(material: str, data: SammelMembersIn):
-    """Mitglieder des Sammelplans eines Materials (ID oder Kürzel) ersetzen.
+def set_sammel_members(material: str, data: SammelMembersIn, sammel_id: Optional[int] = None):
+    """Mitglieder des Sammelplans eines Materials (ID oder Kürzel) ersetzen; bei mehreren
+    Sammelplänen mit ?sammel_id=….
 
     Ein schon berechneter Plan bleibt stehen und gilt danach als veraltet."""
     db = get_db()
     mat = _material_ref(db, material)
-    sammel = db.get_sammel(mat.id)
+    sammel = _sammel_waehlen(db, mat, sammel_id or None)
     if not sammel:
         raise _fehler(404, "sammel_unbekannt", f"“{mat.name}” has no combined plan")
-    db.sammel_mitglieder_setzen(sammel.id, _mitglieder_ref(db, data.projekte))
+    ids = _mitglieder_ref(db, data.projekte)
+    _sammel_exklusiv(db, mat, ids, sammel.id)
+    db.sammel_mitglieder_setzen(sammel.id, ids)
     return _projekt_to_out(db.get_projekt(sammel.id))
 
 
@@ -2660,10 +2749,11 @@ def optimize_sammel(req: SammelRequest):
     if not projekt_ids:
         raise HTTPException(400, "No projects selected")
 
+    vorhanden = _sammel_waehlen(db, material, req.sammel_id)
+    _sammel_exklusiv(db, material, projekt_ids, vorhanden.id if vorhanden else 0)
     _saegeblatt_merken(db, material, blade)
     is_1d = material.typ == MaterialTyp.STANGE
-    sammel = db.get_sammel(material.id) or db.sammel_anlegen(
-        material.id, f"Sammelplan {material.name}")
+    sammel = vorhanden or db.sammel_anlegen(material.id, _sammel_name(db, material))
 
     # Erst prüfen, ob es etwas zu sägen gibt – vorher nichts verwerfen. Ein fertig
     # gesägter Plan bleibt sonst stehen (früher war er danach weg).
@@ -2717,7 +2807,7 @@ def compare_sammel(req: SammelRequest):
     if not blade:
         raise HTTPException(404, "Saw blade not found")
     is_1d = material.typ == MaterialTyp.STANGE
-    sammel = db.get_sammel(material.id)
+    sammel = _sammel_waehlen(db, material, req.sammel_id)
     ausser = sammel.id if sammel else 0
     # Nicht angefangene Einzelpläne verschwinden mit dem Sammelplan → ihr Lager zählt mit
     ersetzt = tuple(pid for pid in req.projekt_ids
@@ -3272,19 +3362,18 @@ def get_worklist(fertige: bool = False):
     mit Status und Fortschritt des Plans. ?fertige=true zeigt auch fertig Gesägtes."""
     db = get_db()
     materialien = {m.id: m for m in db.list_materials()}
-    sammel_je_mat = {}
     eintraege: list[WorklistEntryOut] = []
+    mitglied_in: dict[tuple[int, int], tuple[int, str]] = {}
     for s in db.list_projekte(sammel=True):
         mat = materialien.get(s.sammel_material_id)
         if not mat:
             continue
-        sammel_je_mat[mat.id] = (s.id, s.name)
+        for pid in db.sammel_mitglieder(s.id):
+            mitglied_in[(pid, mat.id)] = (s.id, s.name)
         teile = _plan_teile(s, mat.id)
         eintraege.append(WorklistEntryOut(art="sammel", projekt_id=s.id, name=s.name,
                                           status="", materialien=[
                                               _arbeits_zeile(db, s, mat, teile, None)]))
-    mitglied_in = {(pid, mid): sammel_je_mat[mid] for mid in sammel_je_mat
-                   for pid in db.sammel_mitglieder(sammel_je_mat[mid][0])}
     projekte = db.list_projekte()
     for p in sorted(projekte, key=lambda p: p.art != "liste"):
         zeilen = []
@@ -3296,12 +3385,13 @@ def get_worklist(fertige: bool = False):
         eintraege.append(WorklistEntryOut(art="liste" if p.art == "liste" else "projekt",
                                           projekt_id=p.id, name=p.name, status="",
                                           materialien=zeilen))
-    # Vorschlag Sammelplan: gleiches Material in mehreren Projekten, noch ohne Sammelplan
+    # Vorschlag Sammelplan: gleiches Material in mehreren Projekten, die noch in keinem
+    # Sammelplan stecken (Status „sammel“ fällt hier schon heraus)
     frei: dict[int, list[WorkProjectRef]] = {}
     for e in eintraege:
         if e.art == "projekt":
             for z in e.materialien:
-                if z.status in ("kein_plan", "bereit") and z.material_id not in sammel_je_mat:
+                if z.status in ("kein_plan", "bereit"):
                     frei.setdefault(z.material_id, []).append(
                         WorkProjectRef(projekt_id=e.projekt_id, name=e.name))
     for e in eintraege:
@@ -5115,12 +5205,13 @@ WEB_EXTRA_TRANSLATIONS = {
     "sammel.rename_title": {"de": "Sammelplan umbenennen", "en": "Rename combined plan", "fr": "Renommer le plan groupé", "it": "Rinomina piano combinato"},
     "sammel.select": {"de": "Bitte einen Sammelplan auswählen.", "en": "Please select a combined plan.", "fr": "Veuillez choisir un plan groupé.", "it": "Seleziona un piano combinato."},
     "sammel.no_material": {"de": "Kein Projekt hat offene Teile.", "en": "No project has open parts.", "fr": "Aucun projet n’a de pièces ouvertes.", "it": "Nessun progetto ha pezzi aperti."},
-    "sammel.exists": {
-        "de": "Für dieses Material gibt es schon „{name}“ – er wird geöffnet.",
-        "en": "This material already has “{name}” – opening it.",
-        "fr": "Ce matériau a déjà « {name} » – il est ouvert.",
-        "it": "Questo materiale ha già «{name}» – viene aperto.",
-    },
+    "sammel.in_other": {"de": "in „{name}“", "en": "in “{name}”", "fr": "dans « {name} »", "it": "in «{name}»"},
+    "sammel.choose": {"de": "Sammelplan:", "en": "Combined plan:", "fr": "Plan groupé :", "it": "Piano combinato:"},
+    "sammel.new_option": {"de": "+ Neuer Sammelplan", "en": "+ New combined plan", "fr": "+ Nouveau plan groupé", "it": "+ Nuovo piano combinato"},
+    "sammel.target": {"de": "Für dieses Material gibt es schon Sammelpläne", "en": "This material already has combined plans", "fr": "Ce matériau a déjà des plans groupés", "it": "Questo materiale ha già piani combinati"},
+    "sammel.create_new": {"de": "Neuen Sammelplan anlegen (rechnet mit dem übrigen Lager)", "en": "Create a new combined plan (uses the remaining stock)", "fr": "Créer un nouveau plan groupé (avec le stock restant)", "it": "Crea un nuovo piano combinato (con il magazzino rimanente)"},
+    "sammel.add_to": {"de": "Zu „{name}“ hinzufügen", "en": "Add to “{name}”", "fr": "Ajouter à « {name} »", "it": "Aggiungi a «{name}»"},
+    "sammel.started_no_add": {"de": "schon angefangen", "en": "already started", "fr": "déjà commencé", "it": "già iniziato"},
     "sammel.members": {"de": "Mitglieder", "en": "Members", "fr": "Membres", "it": "Membri"},
     "sammel.readonly": {
         "de": "Nur Ansicht – die Teile bearbeitest du im jeweiligen Projekt.",

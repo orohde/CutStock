@@ -1342,3 +1342,7 @@ body.scan-open > header, body.scan-open > nav, body.scan-open > main { display: 
 #settings-printer-default-row.hidden { display: none; }
 .print-choice { margin: 4px 0 10px; }
 .print-choice select { width: 100%; }
+
+/* Neu-Dialog: neuer Sammelplan oder zu bestehendem hinzufügen – je Zeile ein Knopf */
+.sammel-target { display: flex; align-items: center; gap: .4rem; width: 100%; margin: .15rem 0; }
+.sammel-choose { margin-bottom: .5rem; }

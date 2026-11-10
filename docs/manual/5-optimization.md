@@ -51,8 +51,8 @@ and the **More** menu with *Recalculate*, *Mark everything as cut…* (asks firs
 **Restart project** (progress back to 0, plans removed, stock stays) is in the
 [Projects](3-projects.md) tab.
 
-If the material of the selected project is also needed in other projects and there is no combined
-plan yet, a hint appears: "… is also needed in 'X' – cut together?". **Create combined plan**
+If the material of the selected project is also needed in other projects that are not in a
+combined plan yet, a hint appears: "… is also needed in 'X' – cut together?". **Create combined plan**
 creates it with these projects and selects it.
 
 ### Settings
@@ -121,7 +121,10 @@ If the same material is needed in several projects, a combined plan cuts them to
 the top of the work list; when selected it shows its projects with checkboxes. **Compare** shows
 the savings against separate plans, **Calculate cutting plan** calculates the ticked projects
 together.
-Every project gets its own color; ticked-off parts count in their project. Creating,
+Every project gets its own color; ticked-off parts count in their project. If the material has
+several combined plans, choose the one you mean at the top of the box; **+ New combined plan**
+calculates the ticked projects as a further combined plan with the remaining stock. Projects from
+another combined plan of this material cannot be ticked there. Creating,
 renaming, changing members and deleting also works in the [Projects](3-projects.md#combined-plans)
 tab, box "Combined plans".
 

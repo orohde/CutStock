@@ -36,14 +36,19 @@ already been calculated is then marked as outdated.
 ## Combined plans
 
 A combined plan cuts the parts of several projects from **one material** together – this often
-saves whole bars or panels. There is at most one combined plan per material. The entries in the
-"Combined plans" box carry a 🔗 and the label "Combined plan".
+saves whole bars or panels. A material can have **several** combined plans, e.g. one for this
+week's projects and another one later: each works with the stock the others have not reserved yet.
+A project is in only **one** combined plan per material, though – otherwise its parts would be cut
+twice. The entries in the "Combined plans" box carry a 🔗 and the label "Combined plan".
 
 ![Combined plan in the Projects tab](../screenshot_sammelplaene_en.png)
 
-- **New**: choose the material, then tick the projects with open parts in this material. If the
-  material already has a combined plan, that one is opened. It is named
-  "Sammelplan" plus the material name, e.g. "Sammelplan Beech batten 20x40".
+- **New**: choose the material, then tick the projects with open parts in this material.
+  Projects already in another combined plan of this material are greyed out ("in 'Sammelplan …'").
+  If the material already has combined plans, you choose: **create a new combined plan** (default)
+  or **add** the projects **to an existing one** – only while nothing has been cut there yet. It is
+  named "Sammelplan" plus the material name, e.g. "Sammelplan Beech batten 20x40"; further ones
+  are called "… 2", "… 3".
 - **Edit**: rename.
 - **When selected**, the right box shows the members with checkboxes (change them there) and
   below their parts in this material, grouped by project and read-only. Project names link to

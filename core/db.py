@@ -1135,11 +1135,24 @@ class Database:
     # Sammelplan: ein Plan je Material über mehrere Projekte
     # ------------------------------------------------------------------
 
+    def sammel_liste(self, material_id: int) -> list[Projekt]:
+        """Alle Sammelpläne eines Materials (ältester zuerst). Ein Projekt steckt je
+        Material in höchstens einem davon."""
+        return [self.get_projekt(r["id"]) for r in self.conn.execute(
+            "SELECT id FROM projekt WHERE art='sammel' AND sammel_material_id=? ORDER BY id",
+            (material_id,))]
+
     def get_sammel(self, material_id: int) -> Projekt | None:
-        row = self.conn.execute(
-            "SELECT id FROM projekt WHERE art='sammel' AND sammel_material_id=?",
-            (material_id,)).fetchone()
-        return self.get_projekt(row["id"]) if row else None
+        """Ältester Sammelplan des Materials (für Aufrufe ohne Sammelplan-ID)."""
+        liste = self.sammel_liste(material_id)
+        return liste[0] if liste else None
+
+    def sammel_mitglied_in(self, material_id: int) -> dict[int, tuple[int, str]]:
+        """{projekt_id: (sammel_id, name)} für alle Sammelpläne eines Materials."""
+        return {r["projekt_id"]: (r["id"], r["name"]) for r in self.conn.execute(
+            """SELECT m.projekt_id, p.id, p.name FROM sammel_mitglied m
+               JOIN projekt p ON p.id = m.sammel_id
+               WHERE p.art='sammel' AND p.sammel_material_id=?""", (material_id,))}
 
     def sammel_anlegen(self, material_id: int, name: str) -> Projekt:
         cur = self.conn.execute(

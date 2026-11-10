@@ -50,7 +50,9 @@ material/location. Code and size are never cut off. On very flat labels one line
 then the next one) with dashed cut marks. This saves tape, as P-touch printers leave about 2 cm
 before every single print.
 
-## Direct printing (Brother P-touch)
+## Direct printing (Brother P-touch and QL)
+
+![Labels & printer: print bridge, direct printing, network printer](../screenshot_drucker_en.png)
 
 There is no Mac printer driver for the **Brother PT-P710BT** (P-touch Cube Plus), only Brother's
 own apps. So CutStock drives the printer itself – no PDF, no Brother software:
@@ -81,7 +83,7 @@ CutStock talks to a **Brother QL-800/810W/820NWB** on the network directly – a
 instance, without driver or print bridge:
 
 1. Under Settings → Labels & printer, enter the address next to **Network printer (Brother QL)**,
-   preferably the **IP address** (e.g. `10.10.30.96`; the Docker instance does not know “….local”
+   preferably the **IP address** (e.g. `192.168.1.50`; the Docker instance does not know “….local”
    names). **Check** then shows e.g. "QL-820NWB, 29 mm continuous loaded".
 2. Turn on **Print directly**.
 

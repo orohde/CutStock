@@ -63,6 +63,8 @@ Ortsetikett zeigt den Namen groß, darunter die Materialien, und einen QR-Code z
 
 ## QR-Codes scannen
 
+![Scan-Ansicht auf dem Handy](../screenshot_scan.png)
+
 Stück- und Lagerort-Etiketten tragen einen **QR-Code** (abschaltbar unter
 [Einstellungen → Etiketten & Drucker](6-einstellungen.md#qr-codes)). Mit der Kamera des Handys
 gescannt, öffnet sich CutStock im Browser – ohne eigene App:

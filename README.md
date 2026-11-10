@@ -38,6 +38,8 @@ Website and manual: **[cutstock.app](https://cutstock.app/en/)** · [Manual](htt
 - **Cutting Sequence** -- numbered, kerf-accurate step-by-step sawing order per cut plan (on screen and in the PDF)
 - **Workshop Mode** -- full-screen touch view for a tablet at the saw: which piece to take and where it is ("Take SP19-01 · Panel rack"), big targets, progress bar, tap pieces as you cut, label new remnants right away and print their labels
 - **Labels** -- printable labels for sawn parts and remnants (A4 sheets like Avery 3475/L7160 or Dymo/Brother label printers, custom sizes)
+- **QR Codes and Scanning** -- piece and location labels with a QR code; scanned with a phone, CutStock shows the piece with its current size, location and reservation
+- **Direct Printing** -- no PDF, no driver: Brother P-touch (PT-P710BT, via USB or the print bridge for macOS) and Brother QL on the network (QL-820NWB, red/black too) -- also from the Docker instance and the phone
 - **PDF Export** -- compact multi-page layout: parts list with quantities, identical cutting patterns combined, material requirements with piece codes, storage location and material image
 - **Statistics** -- detailed waste analysis per stock piece and totals
 - **Backup/Restore** -- full database + settings as ZIP; before every update, CutStock automatically creates a backup copy
