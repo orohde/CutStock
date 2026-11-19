@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions & ideas
+    url: https://github.com/orohde/CutStock/discussions
+    about: Ask how to use CutStock or discuss ideas before opening an issue.
+  - name: Commercial license
+    url: https://cutstock.app/en/#download
+    about: Using CutStock in a business? Please request a license on cutstock.app -- not issues or discussions.

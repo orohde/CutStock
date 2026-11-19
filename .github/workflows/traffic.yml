@@ -1,0 +1,120 @@
+name: Weekly Traffic Report
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'  # Montag 8:00 UTC
+  workflow_dispatch:       # manuell auslösbar
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  traffic-report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Collect traffic data
+        id: traffic
+        env:
+          GH_TOKEN: ${{ secrets.TRAFFIC_TOKEN }}
+        run: |
+          REPO="${{ github.repository }}"
+          DATE=$(date -u +%Y-%m-%d)
+
+          VIEWS=$(gh api repos/$REPO/traffic/views --jq '{count, uniques}')
+          CLONES=$(gh api repos/$REPO/traffic/clones --jq '{count, uniques}')
+          REFERRERS=$(gh api repos/$REPO/traffic/popular/referrers)
+          PATHS=$(gh api repos/$REPO/traffic/popular/paths --jq '.[0:5]')
+          STARS=$(gh api repos/$REPO --jq '.stargazers_count')
+          FORKS=$(gh api repos/$REPO --jq '.forks_count')
+          ISSUES=$(gh api repos/$REPO --jq '.open_issues_count')
+
+          DOWNLOADS=""
+          while IFS= read -r line; do
+            DOWNLOADS="${DOWNLOADS}${line}\n"
+          done < <(gh api repos/$REPO/releases --jq '.[] | .assets[] | "| \(.name) | \(.download_count) |"')
+
+          VIEW_COUNT=$(echo $VIEWS | jq -r '.count')
+          VIEW_UNIQ=$(echo $VIEWS | jq -r '.uniques')
+          CLONE_COUNT=$(echo $CLONES | jq -r '.count')
+          CLONE_UNIQ=$(echo $CLONES | jq -r '.uniques')
+
+          REF_TABLE=""
+          while IFS= read -r line; do
+            REF_TABLE="${REF_TABLE}${line}\n"
+          done < <(echo "$REFERRERS" | jq -r '.[] | "| \(.referrer) | \(.count) | \(.uniques) |"')
+
+          PATH_TABLE=""
+          while IFS= read -r line; do
+            PATH_TABLE="${PATH_TABLE}${line}\n"
+          done < <(echo "$PATHS" | jq -r '.[] | "| \(.path) | \(.count) | \(.uniques) |"')
+
+          # Markdown report
+          cat > /tmp/report.md << REPORT
+          ## CutStock Traffic Report – $DATE
+
+          ### Overview (last 14 days)
+          | Metric | Total | Unique |
+          |--------|-------|--------|
+          | Views | $VIEW_COUNT | $VIEW_UNIQ |
+          | Clones | $CLONE_COUNT | $CLONE_UNIQ |
+
+          **Stars:** $STARS | **Forks:** $FORKS | **Open Issues:** $ISSUES
+
+          ### Referring Sites
+          | Site | Views | Unique |
+          |------|-------|--------|
+          $(echo -e "$REF_TABLE")
+
+          ### Popular Content
+          | Path | Views | Unique |
+          |------|-------|--------|
+          $(echo -e "$PATH_TABLE")
+
+          ### Downloads
+          | File | Downloads |
+          |------|-----------|
+          $(echo -e "$DOWNLOADS")
+          REPORT
+
+          # remove leading whitespace from heredoc
+          sed -i 's/^          //' /tmp/report.md
+
+          # Archive as JSON
+          mkdir -p docs/traffic
+          jq -n \
+            --arg date "$DATE" \
+            --argjson views "$VIEWS" \
+            --argjson clones "$CLONES" \
+            --argjson referrers "$REFERRERS" \
+            --arg stars "$STARS" \
+            --arg forks "$FORKS" \
+            '{date: $date, views: $views, clones: $clones, referrers: $referrers, stars: ($stars|tonumber), forks: ($forks|tonumber)}' \
+            > "docs/traffic/$DATE.json"
+
+          echo "report_file=/tmp/report.md" >> $GITHUB_OUTPUT
+          echo "date=$DATE" >> $GITHUB_OUTPUT
+
+      - name: Commit traffic archive
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/traffic/
+          git diff --staged --quiet && echo "No changes" || git commit -m "Traffic-Daten ${{ steps.traffic.outputs.date }}" && git push
+
+      - name: Post report to issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="${{ github.repository }}"
+          ISSUE_TITLE="Weekly Traffic Report"
+
+          ISSUE_NUM=$(gh issue list --repo $REPO --state open --search "$ISSUE_TITLE" --json number,title --jq '.[] | select(.title == "Weekly Traffic Report") | .number' | head -1)
+
+          if [ -z "$ISSUE_NUM" ]; then
+            ISSUE_NUM=$(gh issue create --repo $REPO --title "$ISSUE_TITLE" --body "Automated weekly traffic reports. A new comment is added every Monday." | grep -o '[0-9]*$')
+          fi
+
+          gh issue comment $ISSUE_NUM --repo $REPO --body-file /tmp/report.md
