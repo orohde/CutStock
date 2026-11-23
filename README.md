@@ -33,7 +33,8 @@ Website and manual: **[cutstock.app](https://cutstock.app/en/)** · [Manual](htt
 - **Filler Parts** -- cut parts from other projects to fill up the waste of bars and panels (no extra material); once cut they count directly for their own project, any extra go to the finished parts
 - **Open Parts and Cut Jobs** -- "Parts" tab with everything still to be cut, grouped by material with a stock estimate; cut selected parts with "Cut now" as a cut job or take them into another project's remnants; finished parts per part
 - **Templates** -- fixed parts lists for repeat work: save a cut job or project as a template, edit it in the "Parts" tab, create a fresh cut job each time with "Cut ×N" (recalculated with current stock), history of all runs
-- **Project Management** -- organize parts by project, build a project several times (number of copies), import/export as JSON, import part lists from CSV
+- **Project Management** -- organize parts by project, build a project several times (number of copies), type parts straight into the table (Enter adds), status per material at a glance, import/export as JSON, import part lists from CSV
+- **Cutting in Bundles** -- cut bars with the same pattern together, up to the set bundle size, with a squaring cut at the front; optimization looks for the fewest bundles with the same material, workshop mode goes bundle by bundle
 - **Visual Cut Plans** -- color-coded cutting diagrams with labels and dimensions
 - **Cutting Sequence** -- numbered, kerf-accurate step-by-step sawing order per cut plan (on screen and in the PDF)
 - **Workshop Mode** -- full-screen touch view for a tablet at the saw: which piece to take and where it is ("Take SP19-01 · Panel rack"), big targets, progress bar, tap pieces as you cut, label new remnants right away and print their labels
@@ -79,6 +80,8 @@ docker compose up -d
 ```
 
 Then open `http://localhost:8420` in your browser.
+
+Several devices can work with CutStock at the same time (office, tablet at the saw). For that the database runs in WAL mode, so the `data` folder also holds `cutstock.db-wal` and `cutstock.db-shm` next to `cutstock.db` -- don't delete them. If the volume's file system can't do WAL (some network shares), `CUTSTOCK_DB_WAL=0` switches it off.
 
 ### Quick start with docker run
 

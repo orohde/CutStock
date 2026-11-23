@@ -33,7 +33,8 @@ Webseite und Handbuch: **[cutstock.app](https://cutstock.app/)** · [Handbuch](h
 - **Fuellteile** -- Teile anderer Projekte mitsaegen, um den Abfall von Stangen und Platten aufzufuellen (ohne zusaetzliches Material); gesaegt zaehlen sie direkt beim eigenen Projekt, Ueberzaehliges kommt zu den Fertigteilen
 - **Offene Teile und Saegeauftraege** -- Reiter "Teile" mit allem, was noch zu saegen ist, nach Material gruppiert mit Lager-Schaetzung; ausgewaehlte Teile mit "Jetzt saegen" als Saegeauftrag saegen oder in die Reste eines anderen Projekts mitnehmen; Fertigteile je Teil
 - **Vorlagen** -- feste Stuecklisten fuer Wiederholungen: Saegeauftrag oder Projekt als Vorlage speichern, im Reiter "Teile" bearbeiten, mit "Saegen ×N" jedes Mal einen neuen Saegeauftrag anlegen (neu berechnet mit dem aktuellen Lager), Verlauf aller Durchgaenge
-- **Projektverwaltung** -- Teile nach Projekten organisieren, Projekt mehrfach bauen (Anzahl Exemplare), Import/Export als JSON, Teilelisten-Import aus CSV
+- **Projektverwaltung** -- Teile nach Projekten organisieren, Projekt mehrfach bauen (Anzahl Exemplare), Teile direkt in die Tabelle tippen (Enter legt an), Stand je Material auf einen Blick, Import/Export als JSON, Teilelisten-Import aus CSV
+- **Buendel saegen** -- Stangen gleichen Schnittmusters bis zur eingestellten Buendelgroesse gemeinsam saegen, mit Korrekturschnitt vorne; der Optimierer sucht bei gleichem Material die wenigsten Buendel, der Werkstatt-Modus geht buendelweise
 - **Visuelle Schnittplaene** -- farbkodierte Zuschnittschemata mit Labels und Massen
 - **Schnittfolge** -- nummerierte, massgenaue Schrittliste pro Schnittplan (Kerf eingerechnet, auch im PDF)
 - **Werkstatt-Modus** -- Vollbild-Touch-Ansicht fuers Tablet an der Saege: welches Stueck wo liegt ("Nimm SP19-01 · Plattenstaender"), grosse Ziele, Fortschritt, Teile beim Saegen abhaken, entstehende Reste direkt beschriften und Etiketten drucken
@@ -79,6 +80,8 @@ docker compose up -d
 ```
 
 Danach `http://localhost:8420` im Browser oeffnen.
+
+Mehrere Geraete koennen gleichzeitig mit CutStock arbeiten (Buero, Tablet an der Saege). Die Datenbank laeuft dafuer im WAL-Modus; im Ordner `data` liegen deshalb neben `cutstock.db` auch `cutstock.db-wal` und `cutstock.db-shm` -- nicht loeschen. Kann das Dateisystem des Volumes kein WAL (manche Netzlaufwerke), schaltet `CUTSTOCK_DB_WAL=0` es ab.
 
 ### Schnellstart mit docker run
 

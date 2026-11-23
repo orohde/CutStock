@@ -16,3 +16,5 @@ services:
       - ./data:/data
     environment:
       - CUTSTOCK_DB=/data/cutstock.db
+      # WAL abschalten, falls das Volume es nicht kann (manche Netzlaufwerke):
+      # - CUTSTOCK_DB_WAL=0
