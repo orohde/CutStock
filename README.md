@@ -28,7 +28,7 @@ Website and manual: **[cutstock.app](https://cutstock.app/en/)** · [Manual](htt
 - **Offcut Bin** -- optionally, offcuts below the minimum remnant size (above a lower limit) are kept in the offcut bin without a code instead of being thrown away; plan and PDF say for every offcut "back to stock", "into the offcut bin" or "throw away"
 - **Saved Cut Plans** -- every calculation is saved; switching between projects keeps your progress (what has already been cut). Re-optimizing keeps started boards, warns when parts or stock have changed, "Restart project" to cut it again
 - **Stock Reservation** -- saved plans reserve their pieces that haven't been started yet, so other projects don't plan them (can be switched off); "Discard plan" releases them
-- **Remnants First** -- optionally plan remnants first, then full bars/panels
+- **Remnants: use, first or don't use** -- plan remnants freely, use them up first or leave them alone
 - **Combined Plan** -- optimize one material for several projects at once (its own entry in the optimization work list), with a separate/combined comparison; cut parts count directly in their project
 - **Filler Parts** -- cut parts from other projects to fill up the waste of bars and panels (no extra material); once cut they count directly for their own project, any extra go to the finished parts
 - **Open Parts and Cut Jobs** -- "Parts" tab with everything still to be cut, grouped by material with a stock estimate; cut selected parts with "Cut now" as a cut job or take them into another project's remnants; finished parts per part
@@ -146,7 +146,7 @@ Guillotine cuts can be made with any standard saw. The remnants are always clean
 - **Saw blade kerf** -- subtracted at every cut
 - **Edge trimming** -- damaged edges removed before cutting
 - **Grain direction** -- parts placed only in orientations that match the wood grain
-- **Finite stock** -- prefers small pieces and remnants, reports parts that don't fit; with "remnants first", pieces marked as remnants are planned first
+- **Finite stock** -- prefers small pieces and remnants, reports parts that don't fit; with "remnants first", pieces marked as remnants are planned first, with "don't use" they stay put
 - **Reservation** -- pieces reserved by saved plans of other projects are not planned
 - **Defects** -- defect zones are avoided, pieces with defects are listed individually in the plan
 - **Material requirements** -- when parts don't fit, estimates how many additional boards/bars are needed

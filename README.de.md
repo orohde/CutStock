@@ -28,7 +28,7 @@ Webseite und Handbuch: **[cutstock.app](https://cutstock.app/)** · [Handbuch](h
 - **Abfallkiste** -- auf Wunsch werden Abschnitte unter dem Mindest-Restmass (ab einer Untergrenze) ohne Code in der Abfallkiste gefuehrt statt weggeworfen; Plan und PDF sagen bei jedem Abschnitt "ins Lager", "in die Abfallkiste" oder "wegwerfen"
 - **Gespeicherte Schnittplaene** -- jede Berechnung wird gespeichert; beim Wechsel zwischen Projekten bleibt der Stand erhalten (was schon gesaegt ist). Neu berechnen behaelt angefangene Bretter, Hinweis wenn sich Teile oder Lager geaendert haben, "Projekt neu starten" zum erneuten Saegen
 - **Lager-Reservierung** -- gespeicherte Plaene reservieren ihre noch nicht angefangenen Stuecke, andere Projekte verplanen sie nicht (abschaltbar); "Plan verwerfen" gibt sie frei
-- **Reste zuerst** -- auf Wunsch erst nur Reste verplanen, dann ganze Stangen/Platten
+- **Reste: verwenden, zuerst oder nicht verwenden** -- Reste frei mitverplanen, zuerst aufbrauchen oder liegen lassen
 - **Sammelplan** -- ein Material fuer mehrere Projekte gemeinsam optimieren (eigener Eintrag in der Arbeitsliste der Optimierung), mit Vergleich getrennt/gemeinsam; gesaegte Teile zaehlen direkt im jeweiligen Projekt
 - **Fuellteile** -- Teile anderer Projekte mitsaegen, um den Abfall von Stangen und Platten aufzufuellen (ohne zusaetzliches Material); gesaegt zaehlen sie direkt beim eigenen Projekt, Ueberzaehliges kommt zu den Fertigteilen
 - **Offene Teile und Saegeauftraege** -- Reiter "Teile" mit allem, was noch zu saegen ist, nach Material gruppiert mit Lager-Schaetzung; ausgewaehlte Teile mit "Jetzt saegen" als Saegeauftrag saegen oder in die Reste eines anderen Projekts mitnehmen; Fertigteile je Teil
@@ -147,7 +147,7 @@ Guillotine-Schnitte lassen sich mit jeder normalen Saege ausfuehren. Die Reste s
 - **Saegeblatt-Schnittbreite** -- wird bei jedem Schnitt abgezogen
 - **Besaeumung** -- beschaedigte Kanten werden vor dem Zuschnitt entfernt
 - **Maserungsrichtung** -- Teile werden nur in Orientierungen platziert, die zur Holzmaserung passen
-- **Endlicher Bestand** -- bevorzugt kleine Stuecke und Reste, meldet Teile, die nicht passen; mit "Reste zuerst" werden als Rest markierte Stuecke vorrangig verplant
+- **Endlicher Bestand** -- bevorzugt kleine Stuecke und Reste, meldet Teile, die nicht passen; mit "Reste zuerst" werden als Rest markierte Stuecke vorrangig verplant, mit "nicht verwenden" bleiben sie liegen
 - **Reservierung** -- von gespeicherten Plaenen anderer Projekte reservierte Stuecke werden nicht verplant
 - **Defekte** -- Defektzonen werden umgangen, Stuecke mit Defekt im Plan einzeln gekennzeichnet
 - **Materialbedarf** -- wenn Teile nicht passen, wird geschaetzt, wie viele zusaetzliche Bretter/Stangen benoetigt werden
